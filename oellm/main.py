@@ -39,6 +39,34 @@ class EvaluationJob:
     eval_suite: str
 
 
+def _detect_lmms_model_type(model_path: str) -> str:
+    """Detect the lmms-eval adapter class name from a model path or HF repo name.
+
+    lmms-eval requires --model <adapter_class> (e.g. llava_hf, qwen2_5_vl).
+    This is inferred from the model name so users never need to set it manually.
+    To add support for a new model family, add a pattern here.
+    """
+    name = str(model_path).lower()
+    if "qwen2.5-vl" in name or "qwen2_5_vl" in name or "qwen2.5vl" in name:
+        return "qwen2_5_vl"
+    if "qwen2-vl" in name or "qwen2_vl" in name:
+        return "qwen2_vl"
+    if "llava" in name:
+        return "llava_hf"
+    if "internvl" in name:
+        return "internvl2"
+    if "idefics" in name:
+        return "idefics3"
+    if "minicpm" in name:
+        return "minicpm_v"
+    if "qwen" in name:
+        return "qwen_vl"
+    raise ValueError(
+        f"Cannot auto-detect lmms-eval adapter class from model path '{model_path}'. "
+        "Add your model family to _detect_lmms_model_type() in main.py."
+    )
+
+
 @capture_third_party_output_from_kwarg("verbose")
 def schedule_evals(
     models: str | None = None,
@@ -192,6 +220,14 @@ def schedule_evals(
                         eval_suite=job.eval_suite,
                     )
                 )
+
+    # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
+    # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
+    for job in expanded_eval_jobs:
+        if job.eval_suite == "lmms_eval":
+            adapter = _detect_lmms_model_type(str(job.model_path))
+            job.eval_suite = f"lmms_eval:{adapter}"
+            logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
 
     if not skip_checks:
         hub_models: set[str | Path] = {
@@ -471,19 +507,23 @@ def collect_results(
             val, key = _first_matching_prefix(result_dict, metric.split(",")[0])
             if val is not None:
                 return val, key
+
+        # Last resort: pick the first numeric non-stderr value (catches lmms-eval
+        # benchmarks with non-standard metric names like mme_cognition_score)
+        for k, v in result_dict.items():
+            if isinstance(v, (int, float)) and "stderr" not in k and k not in ("alias", " ", ""):
+                return float(v), k
         return None, None
 
     results_path = Path(results_dir)
     if not results_path.exists():
         raise ValueError(f"Results directory does not exist: {results_dir}")
 
-    # Check if we need to look in a 'results' subdirectory
-    if (results_path / "results").exists() and (results_path / "results").is_dir():
-        # User passed the top-level directory, look in results subdirectory
-        json_files = list((results_path / "results").glob("*.json"))
-    else:
-        # User passed the results directory directly
-        json_files = list(results_path.glob("*.json"))
+    # lm-eval writes flat JSON files: results/<hex>.json
+    # lmms-eval writes nested dirs:  results/<hex>.json/<model>/<ts>_results.json
+    # rglob("*.json") + is_file() finds both without breaking backward compat.
+    search_root = (results_path / "results") if (results_path / "results").is_dir() else results_path
+    json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
 
     if not json_files:
         logging.warning(f"No JSON files found in {results_dir}")
@@ -518,6 +558,14 @@ def collect_results(
         # Extract results for each task
         results = data.get("results", {})
         n_shot_data = data.get("n-shot", {})
+
+        # lmms-eval has no "n-shot" dict; fall back to per-task config "num_fewshot"
+        if not n_shot_data:
+            for _task, _cfg in data.get("configs", {}).items():
+                if isinstance(_cfg, dict):
+                    shot = _cfg.get("num_fewshot")
+                    if shot is not None:
+                        n_shot_data[_task] = shot
 
         # Infer a global n_shot if exactly one unique value exists in this JSON
         global_n_shot = None
@@ -617,6 +665,10 @@ def collect_results(
                 if n_shot == "unknown" and global_n_shot is not None:
                     n_shot = global_n_shot
 
+            # Skip lmms-eval parent task placeholders (no numeric metrics, just alias)
+            if set(task_results.keys()) <= {"alias", " ", ""}:
+                continue
+
             # Get the primary metric (usually acc, acc_norm)
             performance, metric_name = _resolve_metric(task_name, task_results)
 
@@ -635,11 +687,13 @@ def collect_results(
                     }
                 )
             else:
-                # Debug: log cases where we have a task but no performance metric
-                if verbose:
-                    logging.debug(
-                        f"No performance metric found for {model_name} | {task_name} | n_shot={n_shot} in {json_file.name}"
-                    )
+                # Log missing metrics — for lmms-eval tasks this often means
+                # llm_as_judge_eval is null (no judge LLM configured) or the
+                # metric key is not yet listed in task_metrics in task-groups.yaml
+                logging.warning(
+                    f"No numeric metric for '{task_name}' in {json_file.name} "
+                    f"— value may be null (LLM judge not configured?) or metric key missing from task_metrics"
+                )
 
     if not rows and not check:
         logging.warning("No results extracted from JSON files")

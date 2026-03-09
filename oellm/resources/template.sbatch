@@ -91,7 +91,8 @@ do
         fi
     fi
 
-    suite_normalized=$(echo "$eval_suite" | tr '[:upper:]' '[:lower:]')
+    # Strip optional ":adapter" suffix before matching (e.g. "lmms_eval:qwen2_5_vl" -> "lmms_eval")
+    suite_normalized=$(echo "${{eval_suite%%:*}}" | tr '[:upper:]' '[:lower:]')
 
     # Helper function to run Python commands in the appropriate environment
     run_python() {{
@@ -159,16 +160,15 @@ do
             ;;
         lmms_eval|lmms-eval)
             # lmms-eval is used for image/video/audio benchmarks.
-            # Model type defaults to llava_hf (HuggingFace LLaVA-style VLMs).
-            # Override via LMMS_MODEL_TYPE in clusters.yaml or --slurm_template_var.
-            LMMS_MODEL_TYPE="${{LMMS_MODEL_TYPE:-llava_hf}}"
+            # Adapter class is encoded in eval_suite as "lmms_eval:<adapter>" by the oellm CLI.
+            _lmms_adapter="${{eval_suite#*:}}"
             OUTPUT_JSON="{evals_dir}/$(openssl rand -hex 5).json"
 
             if [ -n "$VENV_PATH" ]; then
                 source "$VENV_PATH/bin/activate"
                 python -m lmms_eval \
-                    --model "$LMMS_MODEL_TYPE" \
-                    --model_args "pretrained=$model_path" \
+                    --model "$_lmms_adapter" \
+                    --model_args "pretrained=$model_path,device_map=auto" \
                     --tasks "$task_path" \
                     --num_fewshot "$n_shot" \
                     --output_path "$OUTPUT_JSON" \
@@ -178,8 +178,8 @@ do
                     --bind $BIND_PATHS \
                     $EVAL_SIF_PATH \
                     python -m lmms_eval \
-                        --model "$LMMS_MODEL_TYPE" \
-                        --model_args "pretrained=$model_path" \
+                        --model "$_lmms_adapter" \
+                        --model_args "pretrained=$model_path,device_map=auto" \
                         --tasks "$task_path" \
                         --num_fewshot "$n_shot" \
                         --output_path "$OUTPUT_JSON" \

@@ -8,7 +8,7 @@ datasets<4.0.0
 
 # lmms-eval: image/video/audio evaluation engine (required for image-vqa task group)
 # lmms-eval is compatible with datasets<4.0.0; install alongside lm-eval.
-lmms-eval>=0.2.4
+lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git
 
 # lighteval must be installed separately as a uv tool to avoid datasets version conflict:
 # UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \

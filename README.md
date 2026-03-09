@@ -64,14 +64,39 @@ Super groups:
 
 ### Image
 
-| Group | Benchmarks | Engine |
+| Group | Benchmark | Engine |
 |---|---|---|
-| `image-vqa` | VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista | lmms-eval |
+| `image-vqa` | All 8 benchmarks combined | lmms-eval |
+| `image-vqav2` | VQAv2 | lmms-eval |
+| `image-mmbench` | MMBench | lmms-eval |
+| `image-mmmu` | MMMU | lmms-eval |
+| `image-chartqa` | ChartQA | lmms-eval |
+| `image-docvqa` | DocVQA | lmms-eval |
+| `image-textvqa` | TextVQA | lmms-eval |
+| `image-ocrbench` | OCRBench | lmms-eval |
+| `image-mathvista` | MathVista | lmms-eval |
 
-Image evaluation requires a container or venv with `lmms-eval` installed. Install the optional dependency:
+Image evaluation requires a venv with `lmms-eval` installed (see [docs/VENV.md](docs/VENV.md)). The lmms-eval adapter class (`llava_hf`, `qwen2_5_vl`, etc.) is auto-detected from the model name — no extra configuration needed.
 
 ```bash
-pip install "oellm[image]"
+# Run all 8 image benchmarks at once
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-vqa" \
+    --venv_path ~/elliot-venv
+
+# Smoke-test a single benchmark (fast, use --limit for a few samples)
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-mathvista" \
+    --venv_path ~/elliot-venv \
+    --limit 10
+
+# Mix image and text benchmarks in one submission
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-mmbench,open-sci-0.01" \
+    --venv_path ~/elliot-venv
 ```
 
 ```bash
@@ -83,9 +108,6 @@ oellm schedule-eval --models "model-name" --task_groups "belebele-eu-5-shot,glob
 
 # Use a super group
 oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
-
-# Image evaluation
-oellm schedule-eval --models "model-name" --task_groups "image-vqa"
 ```
 
 ## SLURM Overrides
