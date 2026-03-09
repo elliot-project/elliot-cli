@@ -111,8 +111,6 @@ git clone https://github.com/elliot-project/elliot-cli.git
 uv pip install -e ./elliot-cli
 ```
 
-Installing in editable mode means any changes you make to the source files are reflected immediately — no reinstall needed.
-
 ---
 
 ## 5. Set HuggingFace Cache Directory
@@ -121,7 +119,7 @@ Compute nodes have no internet access, so all models and datasets must be pre-do
 
 ```zsh
 mkdir -p $WORK/hf_cache
-echo 'export HF_HOME="$WORK/hf_cache"' >> ~/.bashrc
+echo 'export HF_HOME="$HOME/hf_cache"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
