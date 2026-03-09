@@ -62,7 +62,7 @@ Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/reso
 Super groups:
 - `oellm-multilingual` — all multilingual benchmarks combined
 
-### Image (lmms-eval)
+### Image
 
 | Group | Benchmarks | Engine |
 |---|---|---|
@@ -72,13 +72,6 @@ Image evaluation requires a container or venv with `lmms-eval` installed. Instal
 
 ```bash
 pip install "oellm[image]"
-```
-
-By default, the `llava_hf` model adapter is used (suitable for most HuggingFace VLMs). Override via `--slurm_template_var`:
-
-```bash
-oellm schedule-eval --models "path/to/vlm" --task_groups "image-vqa" \
-  --slurm_template_var '{"LMMS_MODEL_TYPE":"qwen_vl_chat"}'
 ```
 
 ```bash
@@ -92,7 +85,7 @@ oellm schedule-eval --models "model-name" --task_groups "belebele-eu-5-shot,glob
 oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
 
 # Image evaluation
-oellm schedule-eval --models "path/to/vlm" --task_groups "image-vqa"
+oellm schedule-eval --models "model-name" --task_groups "image-vqa"
 ```
 
 ## SLURM Overrides
