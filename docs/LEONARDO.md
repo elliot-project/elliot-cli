@@ -118,8 +118,8 @@ uv pip install -e ./elliot-cli
 Compute nodes have no internet access, so all models and datasets must be pre-downloaded. Set `HF_HOME` to point to your work storage:
 
 ```zsh
-mkdir -p $WORK/hf_cache
-echo 'export HF_HOME="$HOME/hf_cache"' >> ~/.bashrc
+mkdir -p $HOME/hf_cache
+export HF_HOME="$HOME/hf_cache"
 source ~/.bashrc
 ```
 
