@@ -20,7 +20,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 
 ```bash
 # Install the package
-uv tool install -p 3.12 git+https://github.com/OpenEuroLLM/oellm-cli.git
+uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
 # Run evaluations using a task group (recommended)
 oellm schedule-eval \
@@ -143,7 +143,7 @@ oellm schedule-eval --eval_csv_path custom_evals.csv
 ### General Installation
 
 ```bash
-uv tool install -p 3.12 git+https://github.com/OpenEuroLLM/oellm-cli.git
+uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 ```
 
 Update to latest:
@@ -162,8 +162,12 @@ export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python
 export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
 ```
 
-## Supported Clusters:
-We support: Leonardo, Lumi, and Jureca
+## Supported Clusters
+
+We support: Leonardo, LUMI, and JURECA
+
+Cluster-specific access guides:
+- [Leonardo HPC](docs/LEONARDO.md)
 
 ## CLI Options
 
@@ -175,8 +179,8 @@ oellm schedule-eval --help
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/OpenEuroLLM/oellm-cli.git
-cd oellm-cli
+git clone https://github.com/elliot-project/elliot-cli.git
+cd elliot-cli
 uv sync --extra dev
 
 # Run all unit tests
@@ -220,9 +224,9 @@ See `oellm/core/` for full interface documentation.
 
 ## Deploying containers
 
-Containers are deployed manually since [PR #46](https://github.com/OpenEuroLLM/oellm-cli/pull/46) to save costs.
+Containers are deployed manually since [PR #46](https://github.com/elliot-project/elliot-cli/pull/46) to save costs.
 
-To build and deploy them, select run workflow in [Actions](https://github.com/OpenEuroLLM/oellm-cli/actions/workflows/build-and-push-apptainer.yml).
+To build and deploy them, select run workflow in [Actions](https://github.com/elliot-project/elliot-cli/actions/workflows/build-and-push-apptainer.yml).
 
 
 ## Troubleshooting
