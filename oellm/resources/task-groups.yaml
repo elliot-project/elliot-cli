@@ -21,6 +21,20 @@ task_metrics:
   bigbench_operators_generate_until: exact_match
   bigbench_repeat_copy_logic_generate_until: exact_match
   bigbench_cs_algorithms_generate_until: exact_match
+  # lmms-eval image benchmark metrics
+  vqav2_val_all: vqa_score
+  mme: mme_cognition_score
+  mmbench_en_dev: acc
+  mmmu_val: acc
+  chartqa: relaxed_accuracy
+  docvqa_val: anls
+  textvqa_val: acc
+  ocrbench: score
+  # MathVista uses LLM-as-judge; null without judge LLM configured
+  mathvista_testmini: llm_as_judge_eval
+  mathvista_testmini_cot: llm_as_judge_eval
+  mathvista_testmini_format: llm_as_judge_eval
+  mathvista_testmini_solution: llm_as_judge_eval
 
 task_groups:
   open-sci-0.01:
@@ -303,6 +317,102 @@ task_groups:
         subset: Turkish
       - task: include_base_44_ukrainian
         subset: Ukrainian
+
+  # ── Image Modality (lmms-eval) ────────────────────────────────────────────
+  image-vqa:
+    description: "Image VQA benchmarks via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: vqav2_val_all
+        dataset: HuggingFaceM4/VQAv2
+      - task: mmbench_en_dev
+        dataset: HuggingFaceM4/MMBench_00
+      - task: mmmu_val
+        dataset: MMMU/MMMU
+      - task: chartqa
+        dataset: HuggingFaceM4/ChartQA
+      - task: docvqa_val
+        dataset: eliolio/docvqa
+      - task: textvqa_val
+        dataset: facebook/textvqa
+      - task: ocrbench
+        dataset: echo840/OCRBench
+      - task: mathvista_testmini
+        dataset: AI4Math/MathVista
+
+  # ── Individual Image Benchmarks (single-task groups for targeted runs) ──────
+  image-vqav2:
+    description: "VQAv2 visual question answering via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: vqav2_val_all
+        dataset: HuggingFaceM4/VQAv2
+
+  image-mmbench:
+    description: "MMBench multi-modal benchmark via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mmbench_en_dev
+        dataset: HuggingFaceM4/MMBench_00
+
+  image-mmmu:
+    description: "MMMU massive multi-discipline multimodal understanding via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mmmu_val
+        dataset: MMMU/MMMU
+
+  image-chartqa:
+    description: "ChartQA chart question answering via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: chartqa
+        dataset: HuggingFaceM4/ChartQA
+
+  image-docvqa:
+    description: "DocVQA document visual question answering via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: docvqa_val
+        dataset: eliolio/docvqa
+
+  image-textvqa:
+    description: "TextVQA text-based visual question answering via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: textvqa_val
+        dataset: facebook/textvqa
+
+  image-ocrbench:
+    description: "OCRBench optical character recognition benchmark via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: ocrbench
+        dataset: echo840/OCRBench
+
+  image-mme:
+    description: "MME multimodal evaluation benchmark via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mme
+        dataset: lmms-lab/MME
+
+  image-mathvista:
+    description: "MathVista mathematical reasoning in visual contexts via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mathvista_testmini
+        dataset: AI4Math/MathVista
 
   dclm-core-22:
     description: "DCLM core 22 evaluation tasks (lm-eval-harness, matching LLM Foundry task types)"

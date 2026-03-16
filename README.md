@@ -1,6 +1,6 @@
-# OpenEuroLLM CLI (oellm)
+# ELLIOT Evaluation Platform
 
-A lightweight CLI for scheduling LLM evaluations across multiple HPC clusters using SLURM job arrays and Singularity containers.
+A multimodal evaluation framework for scheduling LLM and VLM evaluations across HPC clusters. Extends the original oellm-cli with image modality support and a plugin interface for adding new benchmarks and modalities.
 
 ## Features
 
@@ -8,7 +8,9 @@ A lightweight CLI for scheduling LLM evaluations across multiple HPC clusters us
 - **Collect results** and check for missing evaluations: `oellm collect-results`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA)
-- **Automatic building and deployment of containers** 
+- **Image evaluation** via [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
+- **Plugin interface** (`BaseTask` / `BaseMetric` / `BaseModelAdapter`) for adding new benchmarks without touching core scheduling logic
+- **Automatic building and deployment of containers**
 
 ## Quick Start
 
@@ -18,7 +20,7 @@ A lightweight CLI for scheduling LLM evaluations across multiple HPC clusters us
 
 ```bash
 # Install the package
-uv tool install -p 3.12 git+https://github.com/OpenEuroLLM/oellm-cli.git
+uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
 # Run evaluations using a task group (recommended)
 oellm schedule-eval \
@@ -44,17 +46,58 @@ In case you do not want to rely on the containers provided on a given cluster or
 
 Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/resources/task-groups.yaml). Each group specifies tasks, their n-shot settings, and HuggingFace dataset mappings.
 
-Available task groups:
-- `open-sci-0.01` - Standard benchmarks (COPA, MMLU, HellaSwag, ARC, etc.)
-- `belebele-eu-5-shot` - Belebele European language tasks
-- `flores-200-eu-to-eng` / `flores-200-eng-to-eu` - Translation tasks
-- `global-mmlu-eu` - Global MMLU in EU languages
-- `mgsm-eu` - Multilingual GSM benchmarks
-- `generic-multilingual` - XWinograd, XCOPA, XStoryCloze
-- `include` - INCLUDE benchmarks
+### Text & Multilingual
 
-Super groups combine multiple task groups:
-- `oellm-multilingual` - All multilingual benchmarks combined
+| Group | Description | Engine |
+|---|---|---|
+| `open-sci-0.01` | COPA, MMLU, HellaSwag, ARC, etc. | lm-eval |
+| `belebele-eu-5-shot` | Belebele in 23 European languages | lm-eval |
+| `flores-200-eu-to-eng` | EU → English translation | lighteval |
+| `flores-200-eng-to-eu` | English → EU translation | lighteval |
+| `global-mmlu-eu` | Global MMLU in EU languages | lm-eval |
+| `mgsm-eu` | Multilingual GSM8K | lm-eval |
+| `generic-multilingual` | XWinograd, XCOPA, XStoryCloze | lm-eval |
+| `include` | INCLUDE benchmarks (44 languages) | lm-eval |
+
+Super groups:
+- `oellm-multilingual` — all multilingual benchmarks combined
+
+### Image
+
+| Group | Benchmark | Engine |
+|---|---|---|
+| `image-vqa` | All 8 benchmarks combined | lmms-eval |
+| `image-vqav2` | VQAv2 | lmms-eval |
+| `image-mmbench` | MMBench | lmms-eval |
+| `image-mmmu` | MMMU | lmms-eval |
+| `image-chartqa` | ChartQA | lmms-eval |
+| `image-docvqa` | DocVQA | lmms-eval |
+| `image-textvqa` | TextVQA | lmms-eval |
+| `image-ocrbench` | OCRBench | lmms-eval |
+| `image-mathvista` | MathVista | lmms-eval |
+
+Image evaluation requires a venv with `lmms-eval` installed (see [docs/VENV.md](docs/VENV.md)). The lmms-eval adapter class (`llava_hf`, `qwen2_5_vl`, etc.) is auto-detected from the model name — no extra configuration needed.
+
+```bash
+# Run all 8 image benchmarks at once
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-vqa" \
+    --venv_path ~/elliot-venv
+
+# Smoke-test a single benchmark (fast, use --limit for a few samples)
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-mathvista" \
+    --venv_path ~/elliot-venv \
+    --limit 10
+
+# Mix image and text benchmarks in one submission
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-mmbench,open-sci-0.01" \
+    --venv_path ~/elliot-venv
+```
 
 ```bash
 # Use a task group
@@ -122,7 +165,7 @@ oellm schedule-eval --eval_csv_path custom_evals.csv
 ### General Installation
 
 ```bash
-uv tool install -p 3.12 git+https://github.com/OpenEuroLLM/oellm-cli.git
+uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 ```
 
 Update to latest:
@@ -141,8 +184,12 @@ export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python
 export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
 ```
 
-## Supported Clusters:
-We support: Leonardo, Lumi, and Jureca
+## Supported Clusters
+
+We support: Leonardo, LUMI, and JURECA
+
+Cluster-specific access guides:
+- [Leonardo HPC](docs/LEONARDO.md)
 
 ## CLI Options
 
@@ -154,22 +201,54 @@ oellm schedule-eval --help
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/OpenEuroLLM/oellm-cli.git
-cd oellm-cli
+git clone https://github.com/elliot-project/elliot-cli.git
+cd elliot-cli
 uv sync --extra dev
 
-# Run dataset validation tests
+# Run all unit tests
+uv run pytest tests/ -v
+
+# Run dataset validation tests (requires network access)
 uv run pytest tests/test_datasets.py -v
 
 # Download-only mode for testing
 uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task_groups "open-sci-0.01" --download_only
 ```
 
+## Plugin Interface
+
+The `oellm.core` package provides abstract base classes for extending the platform without modifying core scheduling logic:
+
+```python
+from oellm.core import BaseTask, BaseMetric, BaseModelAdapter
+from oellm.task_groups import DatasetSpec
+
+# Register a new benchmark (one-liner if it's already in lmms-eval)
+class MyTask(BaseTask):
+    @property
+    def name(self) -> str:
+        return "my_benchmark"
+
+    @property
+    def suite(self) -> str:
+        return "lmms_eval"  # or "lm_eval" / "lighteval"
+
+    @property
+    def n_shots(self) -> list[int]:
+        return [0]
+
+    @property
+    def dataset_specs(self) -> list[DatasetSpec]:
+        return [DatasetSpec(repo_id="org/my-dataset")]
+```
+
+See `oellm/core/` for full interface documentation.
+
 ## Deploying containers
 
-Containers are deployed manually since [PR #46](https://github.com/OpenEuroLLM/oellm-cli/pull/46) to save costs.
+Containers are deployed manually since [PR #46](https://github.com/elliot-project/elliot-cli/pull/46) to save costs.
 
-To build and deploy them, select run workflow in [Actions](https://github.com/OpenEuroLLM/oellm-cli/actions/workflows/build-and-push-apptainer.yml).
+To build and deploy them, select run workflow in [Actions](https://github.com/elliot-project/elliot-cli/actions/workflows/build-and-push-apptainer.yml).
 
 
 ## Troubleshooting

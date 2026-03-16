@@ -101,7 +101,7 @@ do
 
     GPU_DEVICES=$(seq -s, 0 $(($GPUS_PER_NODE - 1)))
 
-    suite_normalized=$(echo "$eval_suite" | tr '[:upper:]' '[:lower:]')
+    suite_normalized=$(echo "${{eval_suite%%:*}}" | tr '[:upper:]' '[:lower:]')
 
     # Helper function to run Python commands in the appropriate environment
     run_python() {{
@@ -167,6 +167,34 @@ do
                         "$LIGHT_TASK_ARG" \
                         --output-dir "$RESULTS_SUBDIR" \
                         ${{LIMIT:+--max-samples $LIMIT}}
+            fi
+            ;;
+        lmms_eval|lmms-eval)
+            # lmms-eval is used for image/video/audio benchmarks.
+            # Adapter class is encoded in eval_suite as "lmms_eval:<adapter>" by the oellm CLI.
+            _lmms_adapter="${{eval_suite#*:}}"
+            OUTPUT_JSON="{evals_dir}/$(openssl rand -hex 5).json"
+
+            if [ -n "$VENV_PATH" ]; then
+                source "$VENV_PATH/bin/activate"
+                python -m lmms_eval \
+                    --model "$_lmms_adapter" \
+                    --model_args "pretrained=$model_path,device_map=auto" \
+                    --tasks "$task_path" \
+                    --num_fewshot "$n_shot" \
+                    --output_path "$OUTPUT_JSON" \
+                    ${{LIMIT:+--limit $LIMIT}}
+            else
+                singularity exec $SINGULARITY_ARGS \
+                    --bind $BIND_PATHS \
+                    $EVAL_SIF_PATH \
+                    python -m lmms_eval \
+                        --model "$_lmms_adapter" \
+                        --model_args "pretrained=$model_path,device_map=auto" \
+                        --tasks "$task_path" \
+                        --num_fewshot "$n_shot" \
+                        --output_path "$OUTPUT_JSON" \
+                        ${{LIMIT:+--limit $LIMIT}}
             fi
             ;;
         *)
