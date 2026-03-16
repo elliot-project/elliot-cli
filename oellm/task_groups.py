@@ -109,6 +109,15 @@ def _parse_task_groups(
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
 
+    # Merge contrib task groups, metrics, and super_groups from registered suite plugins.
+    # This is a one-time hook — adding a new benchmark never requires touching this file.
+    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+
+    _contrib = _contrib_task_groups()
+    data.setdefault("task_metrics", {}).update(_contrib.get("task_metrics", {}))
+    data.setdefault("task_groups", {}).update(_contrib.get("task_groups", {}))
+    data.setdefault("super_groups", {}).update(_contrib.get("super_groups", {}))
+
     task_groups: dict[str, TaskGroup] = {}
 
     for task_group_name, task_data in data["task_groups"].items():
@@ -261,8 +270,13 @@ def _lookup_dataset_specs_for_tasks(task_names: Iterable[str]) -> list[DatasetSp
 
 
 def get_all_task_group_names() -> list[str]:
-    """Return all available task group names (excluding super_groups)."""
+    """Return all available task group names (core + all contrib suites)."""
     data = (
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
-    return list(data.get("task_groups", {}).keys())
+    core_names = list(data.get("task_groups", {}).keys())
+
+    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+
+    contrib_names = list(_contrib_task_groups().get("task_groups", {}).keys())
+    return core_names + [n for n in contrib_names if n not in core_names]

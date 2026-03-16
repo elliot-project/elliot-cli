@@ -223,11 +223,27 @@ def schedule_evals(
 
     # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
     # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
+    # For contrib suites, the registry's detect_model_flags() provides the same service.
+    from oellm import registry as _registry  # noqa: PLC0415
+
     for job in expanded_eval_jobs:
         if job.eval_suite == "lmms_eval":
             adapter = _detect_lmms_model_type(str(job.model_path))
             job.eval_suite = f"lmms_eval:{adapter}"
             logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
+        else:
+            # Contrib suite: ask the registry for model-specific flags
+            try:
+                mod = _registry.get_suite(job.eval_suite)
+                if hasattr(mod, "detect_model_flags"):
+                    flags = mod.detect_model_flags(str(job.model_path))
+                    if flags:
+                        job.eval_suite = f"{job.eval_suite}:{flags}"
+                        logging.debug(
+                            f"Contrib suite flags for {job.model_path} ({mod.SUITE_NAME}): {flags}"
+                        )
+            except KeyError:
+                pass  # Not a registered contrib suite — pass eval_suite through unchanged
 
     if not skip_checks:
         hub_models: set[str | Path] = {
@@ -459,6 +475,12 @@ def collect_results(
     with open(str(task_groups_yaml)) as _f:
         _tg_cfg = yaml.safe_load(_f)
     task_metrics = _tg_cfg.get("task_metrics", {})
+
+    # Merge contrib task_metrics so that custom benchmarks registered via the
+    # plugin registry are resolved correctly by _resolve_metric() below.
+    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+
+    task_metrics.update(_contrib_task_groups().get("task_metrics", {}))
 
     def _resolve_metric(
         task_name: str, result_dict: dict

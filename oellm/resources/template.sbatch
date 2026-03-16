@@ -198,7 +198,31 @@ do
             fi
             ;;
         *)
-            echo "[warning] Unknown evaluation suite '$eval_suite'. Skipping."
+            # Contrib suite: dispatch to the Python plugin registry.
+            # This single case handles ALL registered contrib benchmarks — no
+            # further template.sbatch changes are needed when adding new ones.
+            # The suite module's run() writes a lmms-eval-compatible JSON file.
+            _CONTRIB_OUTPUT="{evals_dir}/$(openssl rand -hex 5).json"
+
+            if [ -n "$VENV_PATH" ]; then
+                source "$VENV_PATH/bin/activate"
+                python -m oellm.contrib.dispatch \
+                    --suite      "$eval_suite" \
+                    --model_path "$model_path" \
+                    --task       "$task_path" \
+                    --n_shot     "$n_shot" \
+                    --output_path "$_CONTRIB_OUTPUT"
+            else
+                singularity exec $SINGULARITY_ARGS \
+                    --bind $BIND_PATHS \
+                    $EVAL_SIF_PATH \
+                    python -m oellm.contrib.dispatch \
+                        --suite      "$eval_suite" \
+                        --model_path "$model_path" \
+                        --task       "$task_path" \
+                        --n_shot     "$n_shot" \
+                        --output_path "$_CONTRIB_OUTPUT"
+            fi
             ;;
     esac
 

@@ -112,6 +112,7 @@ class TestImageTaskGroupScheduleEvals:
         with (
             patch("oellm.main._load_cluster_env"),
             patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.main._detect_lmms_model_type", return_value="llava"),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(
@@ -136,6 +137,7 @@ class TestImageTaskGroupScheduleEvals:
         with (
             patch("oellm.main._load_cluster_env"),
             patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.main._detect_lmms_model_type", return_value="llava"),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(
@@ -149,5 +151,5 @@ class TestImageTaskGroupScheduleEvals:
         csv_files = list(tmp_path.glob("**/jobs.csv"))
         assert len(csv_files) == 1
         df = pd.read_csv(csv_files[0])
-        assert set(df["eval_suite"].unique()) == {"lmms_eval"}
+        assert all(s.startswith("lmms_eval") for s in df["eval_suite"].unique())
         assert set(df["task_path"].unique()) == EXPECTED_TASKS
