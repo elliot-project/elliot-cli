@@ -8,7 +8,6 @@ import pytest
 
 from oellm.main import collect_results
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -188,9 +187,7 @@ class TestCollectResultsLmmsEvalFormat:
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
             "results": {
-                "mathvista_testmini": {
-                    "mathvista_testmini/llm_as_judge_eval,none": 0.49
-                }
+                "mathvista_testmini": {"mathvista_testmini/llm_as_judge_eval,none": 0.49}
             },
             "n-shot": {"mathvista_testmini": 0},
         }

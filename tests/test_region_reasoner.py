@@ -25,6 +25,7 @@ RR_DATASET = "lmsdss/regionreasoner_data"
 # Task group integration (end-to-end: registry → task_groups merge → YAML)
 # ---------------------------------------------------------------------------
 
+
 class TestRegionReasonerTaskGroup:
     def test_task_group_present_in_all_names(self):
         assert RR_TASK_GROUP in get_all_task_group_names()
@@ -61,10 +62,12 @@ class TestRegionReasonerTaskGroup:
 # BaseTask subclass
 # ---------------------------------------------------------------------------
 
+
 class TestRegionReasonerTask:
     @pytest.fixture
     def task(self):
         from oellm.contrib.region_reasoner.task import RegionReasonerTask
+
         return RegionReasonerTask()
 
     def test_is_base_task_instance(self, task):
@@ -92,6 +95,7 @@ class TestRegionReasonerTask:
 # BaseMetric subclasses
 # ---------------------------------------------------------------------------
 
+
 def _box(x1, y1, x2, y2) -> str:
     """Helper: JSON-serialise a bbox for metric inputs."""
     return json.dumps([x1, y1, x2, y2])
@@ -101,6 +105,7 @@ class TestGIoU:
     @pytest.fixture
     def metric(self):
         from oellm.contrib.region_reasoner.metrics import GIoU
+
         return GIoU()
 
     def test_is_base_metric(self, metric):
@@ -120,15 +125,15 @@ class TestGIoU:
 
     def test_partial_overlap(self, metric):
         # Two boxes sharing a quarter of their area
-        pred = _box(0, 0, 1, 1)   # area = 1
-        ref  = _box(0.5, 0.5, 1.5, 1.5)  # area = 1, overlap = 0.25
+        pred = _box(0, 0, 1, 1)  # area = 1
+        ref = _box(0.5, 0.5, 1.5, 1.5)  # area = 1, overlap = 0.25
         iou = 0.25 / (1 + 1 - 0.25)  # ≈ 0.1429
         assert metric.compute([pred], [ref]) == pytest.approx(iou, abs=1e-4)
 
     def test_mean_over_multiple_samples(self, metric):
         perfect = _box(0, 0, 1, 1)
         no_overlap_pred = _box(0, 0, 0.5, 0.5)
-        no_overlap_ref  = _box(0.6, 0.6, 1.0, 1.0)
+        no_overlap_ref = _box(0.6, 0.6, 1.0, 1.0)
         score = metric.compute(
             [perfect, no_overlap_pred],
             [perfect, no_overlap_ref],
@@ -148,6 +153,7 @@ class TestCIoU:
     @pytest.fixture
     def metric(self):
         from oellm.contrib.region_reasoner.metrics import CIoU
+
         return CIoU()
 
     def test_is_base_metric(self, metric):
@@ -167,6 +173,7 @@ class TestCIoU:
 
     def test_cumulative_formula_differs_from_giou(self, metric):
         from oellm.contrib.region_reasoner.metrics import GIoU
+
         giou = GIoU()
         # Two samples: one perfect match, one 50% IoU
         p1 = _box(0, 0, 1, 1)
@@ -190,6 +197,7 @@ class TestBboxAP:
     @pytest.fixture
     def metric(self):
         from oellm.contrib.region_reasoner.metrics import BboxAP
+
         return BboxAP()
 
     def test_is_base_metric(self, metric):
@@ -204,13 +212,13 @@ class TestBboxAP:
 
     def test_none_correct(self, metric):
         pred = _box(0, 0, 0.3, 0.3)
-        ref  = _box(0.7, 0.7, 1.0, 1.0)
+        ref = _box(0.7, 0.7, 1.0, 1.0)
         assert metric.compute([pred], [ref]) == pytest.approx(0.0)
 
     def test_threshold_at_exactly_half_iou(self, metric):
         # Box with exactly 1/3 IoU (< 0.5 threshold → not counted)
         pred = _box(0, 0, 2, 1)
-        ref  = _box(1, 0, 3, 1)
+        ref = _box(1, 0, 3, 1)
         # overlap = 1×1 = 1, union = 2+2-1 = 3, IoU = 1/3
         assert metric.compute([pred], [ref]) == pytest.approx(0.0)
 
@@ -225,31 +233,36 @@ class TestPassRate:
 
     def test_name_includes_threshold(self, threshold):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         pr = PassRate(threshold)
         assert pr.name == f"pass_rate_{threshold}"
 
     def test_is_base_metric(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         assert isinstance(PassRate(0.5), BaseMetric)
 
     def test_all_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         box = _box(0, 0, 1, 1)
         pr = PassRate(0.5)
         assert pr.compute([box, box], [box, box]) == pytest.approx(1.0)
 
     def test_none_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         pred = _box(0, 0, 0.3, 0.3)
-        ref  = _box(0.8, 0.8, 1.0, 1.0)
+        ref = _box(0.8, 0.8, 1.0, 1.0)
         pr = PassRate(0.3)
         assert pr.compute([pred], [ref]) == pytest.approx(0.0)
 
     def test_half_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         perfect = _box(0, 0, 1, 1)
         no_overlap_pred = _box(0, 0, 0.1, 0.1)
-        no_overlap_ref  = _box(0.9, 0.9, 1.0, 1.0)
+        no_overlap_ref = _box(0.9, 0.9, 1.0, 1.0)
         pr = PassRate(0.5)
         score = pr.compute(
             [perfect, no_overlap_pred],
@@ -259,6 +272,7 @@ class TestPassRate:
 
     def test_invalid_threshold_raises(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         with pytest.raises(ValueError):
             PassRate(0.0)
         with pytest.raises(ValueError):
@@ -268,6 +282,7 @@ class TestPassRate:
 
     def test_empty_input(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
+
         assert PassRate(0.5).compute([], []) == pytest.approx(0.0)
 
 
@@ -275,10 +290,12 @@ class TestPassRate:
 # Suite plugin protocol
 # ---------------------------------------------------------------------------
 
+
 class TestSuiteProtocol:
     @pytest.fixture
     def suite(self):
         import oellm.contrib.region_reasoner.suite as s
+
         return s
 
     def test_suite_name(self, suite):
@@ -317,9 +334,7 @@ class TestSuiteProtocol:
                     "bbox_AP": 0.38,
                 }
             },
-            "configs": {
-                RR_TASK_NAME: {"num_fewshot": 0}
-            },
+            "configs": {RR_TASK_NAME: {"num_fewshot": 0}},
         }
         result = suite.parse_results(data)
         assert result is not None
@@ -333,9 +348,7 @@ class TestSuiteProtocol:
         # lm-eval output format — should not be parsed by this suite
         data = {
             "model_name": "some_model",
-            "results": {
-                "mmlu": {"acc,none": 0.55}
-            },
+            "results": {"mmlu": {"acc,none": 0.55}},
             "n-shot": {"mmlu": 5},
         }
         assert suite.parse_results(data) is None
@@ -348,9 +361,9 @@ class TestSuiteProtocol:
 # Schedule evals dry-run integration
 # ---------------------------------------------------------------------------
 
+
 class TestRegionReasonerSchedule:
     def test_schedule_evals_dry_run(self, tmp_path):
-        import pandas as pd
         from oellm.main import schedule_evals
 
         with (
@@ -374,6 +387,7 @@ class TestRegionReasonerSchedule:
 
     def test_jobs_csv_has_region_reasoner_suite(self, tmp_path):
         import pandas as pd
+
         from oellm.main import schedule_evals
 
         with (
@@ -401,11 +415,13 @@ class TestRegionReasonerSchedule:
 # collect_results compatibility
 # ---------------------------------------------------------------------------
 
+
 class TestCollectResultsCompatibility:
     """Verify collect_results() parses RegionReasoner output without modification."""
 
     def test_collect_results_parses_region_reasoner_json(self, tmp_path):
         import pandas as pd
+
         from oellm.main import collect_results
 
         results_dir = tmp_path / "results"
@@ -423,9 +439,7 @@ class TestCollectResultsCompatibility:
                     "pass_rate_0.5": 0.55,
                 }
             },
-            "configs": {
-                RR_TASK_NAME: {"num_fewshot": 0}
-            },
+            "configs": {RR_TASK_NAME: {"num_fewshot": 0}},
         }
         (results_dir / "abc123.json").write_text(json.dumps(mock_output))
 

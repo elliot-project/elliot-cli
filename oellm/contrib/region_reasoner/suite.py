@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -91,6 +90,7 @@ TASK_GROUPS: dict = {
 # Plugin protocol: optional — model-flag detection
 # ---------------------------------------------------------------------------
 
+
 def detect_model_flags(model_path: str) -> str | None:
     """Map a model path to the ``--model_type`` flag for the eval script.
 
@@ -116,6 +116,7 @@ def detect_model_flags(model_path: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Plugin protocol: required — run evaluation
 # ---------------------------------------------------------------------------
+
 
 def run(
     *,
@@ -154,7 +155,9 @@ def run(
             "Add them to clusters.yaml for this cluster."
         )
 
-    inference_script = Path(rr_dir) / "test" / "evaluation" / "evaluation_multi_segmentation.py"
+    inference_script = (
+        Path(rr_dir) / "test" / "evaluation" / "evaluation_multi_segmentation.py"
+    )
     if not inference_script.exists():
         raise FileNotFoundError(
             f"RegionReasoner inference script not found: {inference_script}\n"
@@ -170,13 +173,20 @@ def run(
             cmd = [
                 "python",
                 str(inference_script),
-                "--model_path", model_path,
-                "--model_type", model_type,
-                "--test_json", test_json,
-                "--output_dir", tmp_dir,
-                "--idx", str(idx),
-                "--num_parts", str(num_gpus),
-                "--batch_size", "2",
+                "--model_path",
+                model_path,
+                "--model_type",
+                model_type,
+                "--test_json",
+                test_json,
+                "--output_dir",
+                tmp_dir,
+                "--idx",
+                str(idx),
+                "--num_parts",
+                str(num_gpus),
+                "--batch_size",
+                "2",
             ]
             logger.info("Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd))
             proc = subprocess.Popen(cmd, env=shard_env)
@@ -245,7 +255,9 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
             predictions.append(json.dumps(pred) if pred is not None else "null")
             references.append(json.dumps(ref) if ref is not None else "null")
 
-    logger.info("Aggregating %d samples from %d shards", len(predictions), len(shard_files))
+    logger.info(
+        "Aggregating %d samples from %d shards", len(predictions), len(shard_files)
+    )
 
     metrics: dict[str, float] = {}
     for metric in [
@@ -267,6 +279,7 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
 # Plugin protocol: required — parse results JSON
 # ---------------------------------------------------------------------------
 
+
 def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
     """Try to parse *data* as a region_reasoner output JSON.
 
@@ -280,8 +293,6 @@ def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
     for task_name, task_results in results.items():
         if task_name.startswith("regionreasoner_") and "gIoU" in task_results:
             model_id = data.get("model_name_or_path") or data.get("model_name", "unknown")
-            n_shot = (
-                data.get("configs", {}).get(task_name, {}).get("num_fewshot", 0)
-            )
+            n_shot = data.get("configs", {}).get(task_name, {}).get("num_fewshot", 0)
             return model_id, task_name, int(n_shot), task_results
     return None

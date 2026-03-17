@@ -111,7 +111,9 @@ def _parse_task_groups(
 
     # Merge contrib task groups, metrics, and super_groups from registered suite plugins.
     # This is a one-time hook — adding a new benchmark never requires touching this file.
-    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
 
     _contrib = _contrib_task_groups()
     data.setdefault("task_metrics", {}).update(_contrib.get("task_metrics", {}))
@@ -276,7 +278,9 @@ def get_all_task_group_names() -> list[str]:
     )
     core_names = list(data.get("task_groups", {}).keys())
 
-    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
 
     contrib_names = list(_contrib_task_groups().get("task_groups", {}).keys())
     return core_names + [n for n in contrib_names if n not in core_names]

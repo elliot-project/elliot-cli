@@ -478,7 +478,9 @@ def collect_results(
 
     # Merge contrib task_metrics so that custom benchmarks registered via the
     # plugin registry are resolved correctly by _resolve_metric() below.
-    from oellm.registry import get_all_task_groups as _contrib_task_groups  # noqa: PLC0415
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
 
     task_metrics.update(_contrib_task_groups().get("task_metrics", {}))
 
@@ -493,8 +495,7 @@ def collect_results(
         # below sees "vqa_score,none" regardless of engine.  Keys without "/"
         # (lm-eval format) are passed through unchanged.
         result_dict = {
-            (k.split("/", 1)[1] if "/" in k else k): v
-            for k, v in result_dict.items()
+            (k.split("/", 1)[1] if "/" in k else k): v for k, v in result_dict.items()
         }
 
         # Skip non-metric keys; lm-eval uses suffixes like ",none" or ",remove_whitespace"
@@ -533,7 +534,11 @@ def collect_results(
         # Last resort: pick the first numeric non-stderr value (catches lmms-eval
         # benchmarks with non-standard metric names like mme_cognition_score)
         for k, v in result_dict.items():
-            if isinstance(v, (int, float)) and "stderr" not in k and k not in ("alias", " ", ""):
+            if (
+                isinstance(v, (int, float))
+                and "stderr" not in k
+                and k not in ("alias", " ", "")
+            ):
                 return float(v), k
         return None, None
 
@@ -544,7 +549,11 @@ def collect_results(
     # lm-eval writes flat JSON files: results/<hex>.json
     # lmms-eval writes nested dirs:  results/<hex>.json/<model>/<ts>_results.json
     # rglob("*.json") + is_file() finds both without breaking backward compat.
-    search_root = (results_path / "results") if (results_path / "results").is_dir() else results_path
+    search_root = (
+        (results_path / "results")
+        if (results_path / "results").is_dir()
+        else results_path
+    )
     json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
 
     if not json_files:

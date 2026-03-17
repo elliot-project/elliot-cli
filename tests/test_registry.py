@@ -38,7 +38,9 @@ class TestRegistryDiscovery:
         assert hasattr(mod, "SUITE_NAME"), "suite.py must expose SUITE_NAME"
         assert hasattr(mod, "TASK_GROUPS"), "suite.py must expose TASK_GROUPS"
         assert callable(getattr(mod, "run", None)), "suite.py must expose run()"
-        assert callable(getattr(mod, "parse_results", None)), "suite.py must expose parse_results()"
+        assert callable(getattr(mod, "parse_results", None)), (
+            "suite.py must expose parse_results()"
+        )
 
 
 class TestRegistryTaskGroupMerge:

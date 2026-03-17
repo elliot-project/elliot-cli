@@ -29,7 +29,7 @@ the shard output files produced by the pre-installed RegionReasoner inference
 script.  They are also used directly in the test suite.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 import json
 
@@ -39,6 +39,7 @@ from oellm.core.base_metric import BaseMetric
 # ---------------------------------------------------------------------------
 # Private helper
 # ---------------------------------------------------------------------------
+
 
 def _box_iou(box_a: list[float], box_b: list[float]) -> float:
     """Compute IoU between two axis-aligned bounding boxes.
@@ -79,7 +80,7 @@ def _parse_box(s: str) -> list[float] | None:
         val = json.loads(s)
         if isinstance(val, list) and len(val) == 4:
             return [float(v) for v in val]
-    except (json.JSONDecodeError, (ValueError, TypeError)):
+    except (json.JSONDecodeError, ValueError, TypeError):
         pass
     return None
 
@@ -87,7 +88,7 @@ def _parse_box(s: str) -> list[float] | None:
 def _compute_ious(predictions: list[str], references: list[str]) -> list[float]:
     """Return per-sample IoU values (0.0 for unparseable inputs)."""
     ious = []
-    for pred_s, ref_s in zip(predictions, references):
+    for pred_s, ref_s in zip(predictions, references, strict=True):
         pred = _parse_box(pred_s)
         ref = _parse_box(ref_s)
         if pred is None or ref is None:
@@ -100,6 +101,7 @@ def _compute_ious(predictions: list[str], references: list[str]) -> list[float]:
 # ---------------------------------------------------------------------------
 # Public metric classes
 # ---------------------------------------------------------------------------
+
 
 class GIoU(BaseMetric):
     """Mean per-sample IoU (gIoU as reported in the RegionReasoner paper).
@@ -132,7 +134,7 @@ class CIoU(BaseMetric):
     def compute(self, predictions: list[str], references: list[str]) -> float:
         total_intersection = 0.0
         total_union = 0.0
-        for pred_s, ref_s in zip(predictions, references):
+        for pred_s, ref_s in zip(predictions, references, strict=True):
             pred = _parse_box(pred_s)
             ref = _parse_box(ref_s)
             if pred is None or ref is None:

@@ -46,7 +46,7 @@ import importlib
 import logging
 import pkgutil
 import types
-from functools import lru_cache
+from functools import cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _discover() -> dict[str, types.ModuleType]:
     """Discover and return all suite modules, keyed by SUITE_NAME.
 

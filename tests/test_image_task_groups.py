@@ -44,16 +44,12 @@ class TestImageTaskGroupInRegistry:
         assert IMAGE_TASK_GROUP in all_groups
 
     def test_image_vqa_suite_is_lmms_eval(self):
-        data = yaml.safe_load(
-            (files("oellm.resources") / "task-groups.yaml").read_text()
-        )
+        data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         suite = data["task_groups"][IMAGE_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
     def test_image_vqa_has_eight_tasks(self):
-        data = yaml.safe_load(
-            (files("oellm.resources") / "task-groups.yaml").read_text()
-        )
+        data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][IMAGE_TASK_GROUP]["tasks"]
         assert len(tasks) == 8
 
