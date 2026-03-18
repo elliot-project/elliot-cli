@@ -3,7 +3,6 @@ import pytest
 from oellm.core import BaseMetric, BaseModelAdapter, BaseTask
 from oellm.task_groups import DatasetSpec
 
-
 # ── Concrete implementations for testing ─────────────────────────────────────
 
 
@@ -41,7 +40,9 @@ class ExactMatchMetric(BaseMetric):
     def compute(self, predictions: list[str], references: list[str]) -> float:
         if not predictions:
             return 0.0
-        return sum(p == r for p, r in zip(predictions, references)) / len(predictions)
+        return sum(p == r for p, r in zip(predictions, references, strict=True)) / len(
+            predictions
+        )
 
 
 class HFAdapter(BaseModelAdapter):

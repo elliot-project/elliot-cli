@@ -2,6 +2,7 @@
 #SBATCH --job-name=oellm-eval
 #SBATCH --time={time_limit}
 #SBATCH --gres=gpu:$GPUS_PER_NODE
+#SBATCH --mem=$MEM_PER_NODE
 #SBATCH --output={log_dir}/%x-%A-%a.out
 #SBATCH --partition=$PARTITION
 #SBATCH --account=$ACCOUNT
@@ -101,6 +102,7 @@ do
 
     GPU_DEVICES=$(seq -s, 0 $(($GPUS_PER_NODE - 1)))
 
+    # Strip optional model-flags suffix ("region_reasoner:vision_reasoner" → "region_reasoner")
     suite_normalized=$(echo "${{eval_suite%%:*}}" | tr '[:upper:]' '[:lower:]')
 
     # Helper function to run Python commands in the appropriate environment
@@ -198,7 +200,31 @@ do
             fi
             ;;
         *)
-            echo "[warning] Unknown evaluation suite '$eval_suite'. Skipping."
+            # Contrib suite: dispatch to the Python plugin registry.
+            # This single case handles ALL registered contrib benchmarks — no
+            # further template.sbatch changes are needed when adding new ones.
+            # The suite module's run() writes a lmms-eval-compatible JSON file.
+            _CONTRIB_OUTPUT="{evals_dir}/$(openssl rand -hex 5).json"
+
+            if [ -n "$VENV_PATH" ]; then
+                source "$VENV_PATH/bin/activate"
+                python -m oellm.contrib.dispatch \
+                    --suite      "$eval_suite" \
+                    --model_path "$model_path" \
+                    --task       "$task_path" \
+                    --n_shot     "$n_shot" \
+                    --output_path "$_CONTRIB_OUTPUT"
+            else
+                singularity exec $SINGULARITY_ARGS \
+                    --bind $BIND_PATHS \
+                    $EVAL_SIF_PATH \
+                    python -m oellm.contrib.dispatch \
+                        --suite      "$eval_suite" \
+                        --model_path "$model_path" \
+                        --task       "$task_path" \
+                        --n_shot     "$n_shot" \
+                        --output_path "$_CONTRIB_OUTPUT"
+            fi
             ;;
     esac
 

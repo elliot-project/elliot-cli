@@ -15,6 +15,8 @@ from jsonargparse import auto_cli
 
 from oellm.task_groups import (
     _collect_dataset_specs,
+    _collect_hf_dataset_files,
+    _collect_hf_model_repos,
     _expand_task_groups,
     _lookup_dataset_specs_for_tasks,
 )
@@ -25,6 +27,8 @@ from oellm.utils import (
     _load_cluster_env,
     _num_jobs_in_queue,
     _pre_download_datasets_from_specs,
+    _pre_download_hf_dataset_files,
+    _pre_download_hf_model_repos,
     _process_model_paths,
     _setup_logging,
     capture_third_party_output_from_kwarg,
@@ -223,11 +227,27 @@ def schedule_evals(
 
     # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
     # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
+    # For contrib suites, the registry's detect_model_flags() provides the same service.
+    from oellm import registry as _registry  # noqa: PLC0415
+
     for job in expanded_eval_jobs:
         if job.eval_suite == "lmms_eval":
             adapter = _detect_lmms_model_type(str(job.model_path))
             job.eval_suite = f"lmms_eval:{adapter}"
             logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
+        else:
+            # Contrib suite: ask the registry for model-specific flags
+            try:
+                mod = _registry.get_suite(job.eval_suite)
+                if hasattr(mod, "detect_model_flags"):
+                    flags = mod.detect_model_flags(str(job.model_path))
+                    if flags:
+                        job.eval_suite = f"{job.eval_suite}:{flags}"
+                        logging.debug(
+                            f"Contrib suite flags for {job.model_path} ({mod.SUITE_NAME}): {flags}"
+                        )
+            except KeyError:
+                pass  # Not a registered contrib suite — pass eval_suite through unchanged
 
     if not skip_checks:
         hub_models: set[str | Path] = {
@@ -270,6 +290,22 @@ def schedule_evals(
             _pre_download_datasets_from_specs(
                 dataset_specs, trust_remote_code=trust_remote_code
             )
+
+        hf_model_repos = []
+        if task_groups:
+            hf_model_repos = _collect_hf_model_repos(
+                [g.strip() for g in task_groups.split(",")]
+            )
+        if hf_model_repos:
+            _pre_download_hf_model_repos(hf_model_repos)
+
+        hf_dataset_files = []
+        if task_groups:
+            hf_dataset_files = _collect_hf_dataset_files(
+                [g.strip() for g in task_groups.split(",")]
+            )
+        if hf_dataset_files:
+            _pre_download_hf_dataset_files(hf_dataset_files)
     else:
         logging.info("Skipping dataset pre-download (--skip-checks enabled)")
 
@@ -460,6 +496,14 @@ def collect_results(
         _tg_cfg = yaml.safe_load(_f)
     task_metrics = _tg_cfg.get("task_metrics", {})
 
+    # Merge contrib task_metrics so that custom benchmarks registered via the
+    # plugin registry are resolved correctly by _resolve_metric() below.
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    task_metrics.update(_contrib_task_groups().get("task_metrics", {}))
+
     def _resolve_metric(
         task_name: str, result_dict: dict
     ) -> tuple[float | None, str | None]:
@@ -471,8 +515,7 @@ def collect_results(
         # below sees "vqa_score,none" regardless of engine.  Keys without "/"
         # (lm-eval format) are passed through unchanged.
         result_dict = {
-            (k.split("/", 1)[1] if "/" in k else k): v
-            for k, v in result_dict.items()
+            (k.split("/", 1)[1] if "/" in k else k): v for k, v in result_dict.items()
         }
 
         # Skip non-metric keys; lm-eval uses suffixes like ",none" or ",remove_whitespace"
@@ -511,7 +554,11 @@ def collect_results(
         # Last resort: pick the first numeric non-stderr value (catches lmms-eval
         # benchmarks with non-standard metric names like mme_cognition_score)
         for k, v in result_dict.items():
-            if isinstance(v, (int, float)) and "stderr" not in k and k not in ("alias", " ", ""):
+            if (
+                isinstance(v, (int, float))
+                and "stderr" not in k
+                and k not in ("alias", " ", "")
+            ):
                 return float(v), k
         return None, None
 
@@ -522,7 +569,11 @@ def collect_results(
     # lm-eval writes flat JSON files: results/<hex>.json
     # lmms-eval writes nested dirs:  results/<hex>.json/<model>/<ts>_results.json
     # rglob("*.json") + is_file() finds both without breaking backward compat.
-    search_root = (results_path / "results") if (results_path / "results").is_dir() else results_path
+    search_root = (
+        (results_path / "results")
+        if (results_path / "results").is_dir()
+        else results_path
+    )
     json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
 
     if not json_files:

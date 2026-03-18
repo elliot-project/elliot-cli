@@ -17,6 +17,8 @@ class _Task:
     n_shots: list[int] | None = None
     dataset: str | None = None
     subset: str | None = None
+    hf_models: list[str] | None = None
+    hf_dataset_files: list[dict] | None = None
 
 
 @dataclass
@@ -47,12 +49,16 @@ class TaskGroup:
             task_n_shots = task_data.get("n_shots")
             task_dataset = task_data.get("dataset")
             task_subset = task_data.get("subset")
+            task_hf_models = task_data.get("hf_models")
+            task_hf_dataset_files = task_data.get("hf_dataset_files")
             tasks.append(
                 _Task(
                     name=task_name,
                     n_shots=task_n_shots,
                     dataset=task_dataset,
                     subset=task_subset,
+                    hf_models=task_hf_models,
+                    hf_dataset_files=task_hf_dataset_files,
                 )
             )
 
@@ -108,6 +114,17 @@ def _parse_task_groups(
     data = (
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
+
+    # Merge contrib task groups, metrics, and super_groups from registered suite plugins.
+    # This is a one-time hook — adding a new benchmark never requires touching this file.
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    _contrib = _contrib_task_groups()
+    data.setdefault("task_metrics", {}).update(_contrib.get("task_metrics", {}))
+    data.setdefault("task_groups", {}).update(_contrib.get("task_groups", {}))
+    data.setdefault("super_groups", {}).update(_contrib.get("super_groups", {}))
 
     task_groups: dict[str, TaskGroup] = {}
 
@@ -211,6 +228,57 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
     return specs
 
 
+def _collect_hf_model_repos(group_names: Iterable[str]) -> list[str]:
+    """Return deduplicated HF model repo IDs declared in task ``hf_models`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
+
+    repos: list[str] = []
+    seen: set[str] = set()
+
+    def add_repo(hf_models: list[str] | None) -> None:
+        for repo_id in hf_models or []:
+            if repo_id not in seen:
+                seen.add(repo_id)
+                repos.append(repo_id)
+
+    for _, group in parsed.items():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                add_repo(t.hf_models)
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    add_repo(t.hf_models)
+
+    return repos
+
+
+def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
+    """Return deduplicated HF dataset file specs declared in task ``hf_dataset_files`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
+
+    file_specs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_file_specs(hf_dataset_files: list[dict] | None) -> None:
+        for spec in hf_dataset_files or []:
+            repo_id = spec.get("repo_id", "")
+            if repo_id and repo_id not in seen:
+                seen.add(repo_id)
+                file_specs.append(spec)
+
+    for _, group in parsed.items():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                add_file_specs(t.hf_dataset_files)
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    add_file_specs(t.hf_dataset_files)
+
+    return file_specs
+
+
 def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
     """Build a mapping from task names to their dataset specs from all task groups."""
     data = (
@@ -261,8 +329,15 @@ def _lookup_dataset_specs_for_tasks(task_names: Iterable[str]) -> list[DatasetSp
 
 
 def get_all_task_group_names() -> list[str]:
-    """Return all available task group names (excluding super_groups)."""
+    """Return all available task group names (core + all contrib suites)."""
     data = (
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
-    return list(data.get("task_groups", {}).keys())
+    core_names = list(data.get("task_groups", {}).keys())
+
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    contrib_names = list(_contrib_task_groups().get("task_groups", {}).keys())
+    return core_names + [n for n in contrib_names if n not in core_names]
