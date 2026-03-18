@@ -17,6 +17,8 @@ class _Task:
     n_shots: list[int] | None = None
     dataset: str | None = None
     subset: str | None = None
+    hf_models: list[str] | None = None
+    hf_dataset_files: list[dict] | None = None
 
 
 @dataclass
@@ -47,12 +49,16 @@ class TaskGroup:
             task_n_shots = task_data.get("n_shots")
             task_dataset = task_data.get("dataset")
             task_subset = task_data.get("subset")
+            task_hf_models = task_data.get("hf_models")
+            task_hf_dataset_files = task_data.get("hf_dataset_files")
             tasks.append(
                 _Task(
                     name=task_name,
                     n_shots=task_n_shots,
                     dataset=task_dataset,
                     subset=task_subset,
+                    hf_models=task_hf_models,
+                    hf_dataset_files=task_hf_dataset_files,
                 )
             )
 
@@ -220,6 +226,57 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
                         add_spec(t.dataset, t.subset)
 
     return specs
+
+
+def _collect_hf_model_repos(group_names: Iterable[str]) -> list[str]:
+    """Return deduplicated HF model repo IDs declared in task ``hf_models`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
+
+    repos: list[str] = []
+    seen: set[str] = set()
+
+    def add_repo(hf_models: list[str] | None) -> None:
+        for repo_id in hf_models or []:
+            if repo_id not in seen:
+                seen.add(repo_id)
+                repos.append(repo_id)
+
+    for _, group in parsed.items():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                add_repo(t.hf_models)
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    add_repo(t.hf_models)
+
+    return repos
+
+
+def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
+    """Return deduplicated HF dataset file specs declared in task ``hf_dataset_files`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
+
+    file_specs: list[dict] = []
+    seen: set[str] = set()
+
+    def add_file_specs(hf_dataset_files: list[dict] | None) -> None:
+        for spec in hf_dataset_files or []:
+            repo_id = spec.get("repo_id", "")
+            if repo_id and repo_id not in seen:
+                seen.add(repo_id)
+                file_specs.append(spec)
+
+    for _, group in parsed.items():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                add_file_specs(t.hf_dataset_files)
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    add_file_specs(t.hf_dataset_files)
+
+    return file_specs
 
 
 def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:

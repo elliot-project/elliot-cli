@@ -12,13 +12,14 @@ from oellm.core.base_metric import BaseMetric
 from oellm.core.base_task import BaseTask
 from oellm.task_groups import (
     _collect_dataset_specs,
+    _collect_hf_dataset_files,
     _expand_task_groups,
     get_all_task_group_names,
 )
 
 RR_TASK_GROUP = "region-reasoner"
 RR_TASK_NAME = "regionreasoner_refcocog"
-RR_DATASET = "lmsdss/regionreasoner_data"
+RR_TEST_DATA_REPO = "lmsdss/regionreasoner_test_data"
 
 
 # ---------------------------------------------------------------------------
@@ -47,15 +48,36 @@ class TestRegionReasonerTaskGroup:
         for r in results:
             assert r.n_shot == 0
 
-    def test_dataset_spec_included_in_collect(self):
+    def test_no_dataset_pre_download(self):
+        # No HuggingFace dataset (load_dataset-style) is declared for this task group.
         specs = _collect_dataset_specs([RR_TASK_GROUP])
-        repo_ids = {s.repo_id for s in specs}
-        assert RR_DATASET in repo_ids
+        assert specs == []
 
-    def test_no_duplicate_dataset_specs(self):
-        specs = _collect_dataset_specs([RR_TASK_GROUP])
-        keys = [(s.repo_id, s.subset) for s in specs]
-        assert len(keys) == len(set(keys))
+    def test_hf_dataset_files_declared(self):
+        import oellm.contrib.region_reasoner.suite as s
+
+        tasks = s.TASK_GROUPS["task_groups"][RR_TASK_GROUP]["tasks"]
+        repo_ids = [
+            spec["repo_id"]
+            for task in tasks
+            for spec in task.get("hf_dataset_files", [])
+        ]
+        assert RR_TEST_DATA_REPO in repo_ids
+
+    def test_collect_hf_dataset_files_returns_correct_spec(self):
+        specs = _collect_hf_dataset_files([RR_TASK_GROUP])
+        assert len(specs) == 1
+        assert specs[0]["repo_id"] == RR_TEST_DATA_REPO
+        assert "raw/refcocog_multi_turn.json" in specs[0]["patterns"]
+
+    def test_task_groups_generated_from_task_class(self):
+        # TASK_GROUPS must be generated from RegionReasonerTask, not hardcoded.
+        from oellm.contrib.region_reasoner.task import RegionReasonerTask
+
+        generated = RegionReasonerTask.to_task_groups_dict()
+        import oellm.contrib.region_reasoner.suite as s
+
+        assert s.TASK_GROUPS == generated
 
 
 # ---------------------------------------------------------------------------
@@ -82,13 +104,34 @@ class TestRegionReasonerTask:
     def test_n_shots(self, task):
         assert task.n_shots == [0]
 
-    def test_dataset_specs(self, task):
-        specs = task.dataset_specs
-        assert len(specs) == 1
-        assert specs[0].repo_id == RR_DATASET
+    def test_dataset_specs_empty(self, task):
+        # Data is accessed via hf_dataset_files (snapshot_download), not load_dataset.
+        assert task.dataset_specs == []
+
+    def test_hf_dataset_files(self, task):
+        repo_ids = [f["repo_id"] for f in task.hf_dataset_files]
+        assert RR_TEST_DATA_REPO in repo_ids
+
+    def test_hf_models(self, task):
+        assert "Ricky06662/TaskRouter-1.5B" in task.hf_models
+        assert "facebook/sam2-hiera-large" in task.hf_models
+
+    def test_primary_metric(self, task):
+        assert task.primary_metric == "gIoU"
+
+    def test_task_group_name(self, task):
+        assert task.task_group_name == RR_TASK_GROUP
 
     def test_engine_task_name_defaults_to_name(self, task):
         assert task.engine_task_name == task.name
+
+    def test_to_task_groups_dict_structure(self, task):
+        d = task.to_task_groups_dict()
+        assert "task_metrics" in d
+        assert d["task_metrics"][RR_TASK_NAME] == "gIoU"
+        assert RR_TASK_GROUP in d["task_groups"]
+        tasks = d["task_groups"][RR_TASK_GROUP]["tasks"]
+        assert any(t["task"] == RR_TASK_NAME for t in tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +346,6 @@ class TestSuiteProtocol:
 
     def test_cluster_env_vars_declared(self, suite):
         assert "REGION_REASONER_DIR" in suite.CLUSTER_ENV_VARS
-        assert "REGION_REASONER_TEST_JSON" in suite.CLUSTER_ENV_VARS
 
     def test_task_groups_structure(self, suite):
         tg = suite.TASK_GROUPS
@@ -355,6 +397,46 @@ class TestSuiteProtocol:
 
     def test_parse_results_empty_results_returns_none(self, suite):
         assert suite.parse_results({}) is None
+
+
+# ---------------------------------------------------------------------------
+# ModelAdapter
+# ---------------------------------------------------------------------------
+
+
+class TestRegionReasonerModelAdapter:
+    @pytest.fixture
+    def adapter_cls(self):
+        from oellm.contrib.region_reasoner.adapter import RegionReasonerModelAdapter
+        from oellm.core.base_model_adapter import BaseModelAdapter
+
+        return RegionReasonerModelAdapter, BaseModelAdapter
+
+    def test_is_base_model_adapter(self, adapter_cls):
+        cls, base = adapter_cls
+        assert issubclass(cls, base)
+
+    def test_contrib_flags_region_reasoner(self, adapter_cls):
+        cls, _ = adapter_cls
+        assert cls("lmsdss/RegionReasoner-7B").to_contrib_flags() == "vision_reasoner"
+
+    def test_contrib_flags_qwen2(self, adapter_cls):
+        cls, _ = adapter_cls
+        assert cls("Qwen/Qwen2.5-VL-7B").to_contrib_flags() == "qwen2"
+
+    def test_contrib_flags_qwen(self, adapter_cls):
+        cls, _ = adapter_cls
+        assert cls("Qwen/Qwen-VL-Chat").to_contrib_flags() == "qwen"
+
+    def test_contrib_flags_unknown_defaults_to_vision_reasoner(self, adapter_cls):
+        cls, _ = adapter_cls
+        assert cls("some/unknown-model").to_contrib_flags() == "vision_reasoner"
+
+    def test_detect_model_flags_delegates_to_adapter(self):
+        import oellm.contrib.region_reasoner.suite as s
+
+        assert s.detect_model_flags("lmsdss/RegionReasoner-7B") == "vision_reasoner"
+        assert s.detect_model_flags("Qwen/Qwen2.5-VL-7B") == "qwen2"
 
 
 # ---------------------------------------------------------------------------

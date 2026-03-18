@@ -13,10 +13,10 @@ cluster's module/profile system) before using the ``region-reasoner`` task group
     (https://github.com/lmsdss/RegionReasoner).  The eval scripts
     ``test/evaluation/evaluation_multi_segmentation.py`` must be present.
 
-``REGION_REASONER_TEST_JSON``
-    Absolute path to the prepared test JSON file (e.g.
-    ``refcocog_multi_turn.json``).  See the RegionReasoner repo for data
-    preparation instructions.
+``REGION_REASONER_TEST_JSON``  *(optional)*
+    Absolute path to the test JSON file (``refcocog_multi_turn.json``).
+    If not set, the file is downloaded automatically from
+    ``lmsdss/regionreasoner_test_data`` on the HF Hub before inference.
 
 ``REGION_REASONER_NUM_GPUS``  *(optional, default: 4)*
     Number of GPU shards to use for parallel inference.  Should match the
@@ -60,31 +60,11 @@ SUITE_NAME = "region_reasoner"
 
 CLUSTER_ENV_VARS = [
     "REGION_REASONER_DIR",
-    "REGION_REASONER_TEST_JSON",
 ]
 
-TASK_GROUPS: dict = {
-    "task_metrics": {
-        # Primary metric used by collect_results() for the results CSV
-        "regionreasoner_refcocog": "gIoU",
-    },
-    "task_groups": {
-        "region-reasoner": {
-            "description": (
-                "RegionReasoner multi-turn region grounding benchmark (RefCOCOg). "
-                "Requires REGION_REASONER_DIR and REGION_REASONER_TEST_JSON on cluster."
-            ),
-            "suite": "region_reasoner",
-            "n_shots": [0],
-            "tasks": [
-                {
-                    "task": "regionreasoner_refcocog",
-                    "dataset": "lmsdss/regionreasoner_data",
-                }
-            ],
-        }
-    },
-}
+from oellm.contrib.region_reasoner.task import RegionReasonerTask  # noqa: E402
+
+TASK_GROUPS: dict = RegionReasonerTask.to_task_groups_dict()
 
 # ---------------------------------------------------------------------------
 # Plugin protocol: optional — model-flag detection
@@ -92,25 +72,10 @@ TASK_GROUPS: dict = {
 
 
 def detect_model_flags(model_path: str) -> str | None:
-    """Map a model path to the ``--model_type`` flag for the eval script.
+    """Delegate to RegionReasonerModelAdapter.to_contrib_flags()."""
+    from oellm.contrib.region_reasoner.adapter import RegionReasonerModelAdapter
 
-    The returned string is appended to the ``eval_suite`` column as
-    ``region_reasoner:<flags>`` and passed back to :func:`run` as
-    *model_flags*.
-
-    ``vision_reasoner`` is the correct value for ``lmsdss/RegionReasoner-7B``.
-    ``qwen2`` / ``qwen`` cover evaluating baseline Qwen2.5-VL / Qwen-VL models
-    directly on the benchmark.
-    """
-    name = Path(model_path).name.lower()
-    if "regionreasoner" in name or "region_reasoner" in name:
-        return "vision_reasoner"
-    if "qwen2" in name:
-        return "qwen2"
-    if "qwen" in name:
-        return "qwen"
-    # Default: assume the model is a RegionReasoner-style checkpoint
-    return "vision_reasoner"
+    return RegionReasonerModelAdapter(model_path).to_contrib_flags()
 
 
 # ---------------------------------------------------------------------------
@@ -145,15 +110,25 @@ def run(
         env: Environment variables dict (from ``os.environ``).
     """
     rr_dir = env.get("REGION_REASONER_DIR", "")
-    test_json = env.get("REGION_REASONER_TEST_JSON", "")
     num_gpus = int(env.get("REGION_REASONER_NUM_GPUS", "4"))
     model_type = model_flags or "vision_reasoner"
 
-    if not rr_dir or not test_json:
+    if not rr_dir:
         raise RuntimeError(
-            "REGION_REASONER_DIR and REGION_REASONER_TEST_JSON must be set. "
-            "Add them to clusters.yaml for this cluster."
+            "REGION_REASONER_DIR must be set. "
+            "Add it to clusters.yaml for this cluster."
         )
+
+    test_json = env.get("REGION_REASONER_TEST_JSON")
+    if not test_json:
+        from huggingface_hub import snapshot_download
+        local_dir = snapshot_download(
+            repo_id="lmsdss/regionreasoner_test_data",
+            repo_type="dataset",
+            allow_patterns=["raw/refcocog_multi_turn.json"],
+            cache_dir=Path(env["HF_HOME"]) / "hub" if "HF_HOME" in env else None,
+        )
+        test_json = str(Path(local_dir) / "raw" / "refcocog_multi_turn.json")
 
     inference_script = (
         Path(rr_dir) / "test" / "evaluation" / "evaluation_multi_segmentation.py"
@@ -170,26 +145,31 @@ def run(
         for idx in range(num_gpus):
             shard_env = dict(env)
             shard_env["CUDA_VISIBLE_DEVICES"] = str(idx)
+            shard_output = str(Path(tmp_dir) / f"shard_{idx}.json")
             cmd = [
                 "python",
                 str(inference_script),
                 "--model_path",
                 model_path,
-                "--model_type",
+                "--model",
                 model_type,
-                "--test_json",
+                "--test_data_path",
                 test_json,
-                "--output_dir",
-                tmp_dir,
+                "--output_path",
+                shard_output,
+                "--vis_output_path",
+                str(Path(tmp_dir) / f"vis_{idx}"),
                 "--idx",
                 str(idx),
                 "--num_parts",
                 str(num_gpus),
                 "--batch_size",
                 "2",
+                "--task_router_model_path",
+                "Ricky06662/TaskRouter-1.5B",
             ]
             logger.info("Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd))
-            proc = subprocess.Popen(cmd, env=shard_env)
+            proc = subprocess.Popen(cmd, env=shard_env, cwd=str(Path(test_json).parent))
             procs.append(proc)
 
         for idx, proc in enumerate(procs):

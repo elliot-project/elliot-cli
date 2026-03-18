@@ -15,6 +15,8 @@ from jsonargparse import auto_cli
 
 from oellm.task_groups import (
     _collect_dataset_specs,
+    _collect_hf_dataset_files,
+    _collect_hf_model_repos,
     _expand_task_groups,
     _lookup_dataset_specs_for_tasks,
 )
@@ -25,6 +27,8 @@ from oellm.utils import (
     _load_cluster_env,
     _num_jobs_in_queue,
     _pre_download_datasets_from_specs,
+    _pre_download_hf_dataset_files,
+    _pre_download_hf_model_repos,
     _process_model_paths,
     _setup_logging,
     capture_third_party_output_from_kwarg,
@@ -286,6 +290,22 @@ def schedule_evals(
             _pre_download_datasets_from_specs(
                 dataset_specs, trust_remote_code=trust_remote_code
             )
+
+        hf_model_repos = []
+        if task_groups:
+            hf_model_repos = _collect_hf_model_repos(
+                [g.strip() for g in task_groups.split(",")]
+            )
+        if hf_model_repos:
+            _pre_download_hf_model_repos(hf_model_repos)
+
+        hf_dataset_files = []
+        if task_groups:
+            hf_dataset_files = _collect_hf_dataset_files(
+                [g.strip() for g in task_groups.split(",")]
+            )
+        if hf_dataset_files:
+            _pre_download_hf_dataset_files(hf_dataset_files)
     else:
         logging.info("Skipping dataset pre-download (--skip-checks enabled)")
 

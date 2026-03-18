@@ -50,3 +50,14 @@ class BaseModelAdapter(ABC):
 
         Example: ``"pretrained=/path/to/model"``
         """
+
+    def to_contrib_flags(self) -> str | None:
+        """Return the model-type flag for contrib suite routing.
+
+        This is the value returned by ``detect_model_flags()`` in
+        ``suite.py``.  Override to distinguish between inference backends
+        for the same benchmark (e.g. ``"vision_reasoner"`` vs ``"qwen2"``).
+
+        Returns ``None`` by default (no model-type distinction needed).
+        """
+        return None

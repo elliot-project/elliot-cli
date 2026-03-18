@@ -5,8 +5,8 @@ class BaseMetric(ABC):
     """Abstract base class for custom metric implementations.
 
     Implement this when an evaluation task requires a metric not natively
-    supported by lm-eval or lmms-eval (e.g. custom safety scores for T4.4,
-    or domain-specific metrics for T4.3).
+    supported by lm-eval or lmms-eval (e.g. a custom IoU score for grounding
+    benchmarks, or a domain-specific accuracy metric).
 
     The ``compute`` method must return a scalar in [0, 1] by convention,
     though higher-range metrics (e.g. OCRBench score /1000) are allowed when

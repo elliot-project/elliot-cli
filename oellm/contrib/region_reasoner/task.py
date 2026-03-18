@@ -1,22 +1,13 @@
-"""RegionReasoner task definition.
-
-Uses the existing :class:`oellm.core.base_task.BaseTask` interface unchanged.
-"""
+"""RegionReasoner task definition — single source of truth for task metadata."""
 
 from oellm.core.base_task import BaseTask
-from oellm.task_groups import DatasetSpec
 
 
 class RegionReasonerTask(BaseTask):
     """Multi-turn region grounding benchmark on RefCOCOg.
 
-    The evaluation dataset is hosted at ``lmsdss/regionreasoner_data`` on the
-    Hugging Face Hub.  Pre-download is handled automatically by the scheduling
-    engine via :attr:`dataset_specs`.
-
-    The suite identifier ``"region_reasoner"`` routes execution through the
-    contrib dispatch system (``oellm/contrib/dispatch.py``) which calls
-    :func:`oellm.contrib.region_reasoner.suite.run`.
+    All task metadata lives here.  ``suite.py`` generates its ``TASK_GROUPS``
+    dict directly from :meth:`to_task_groups_dict` so nothing is duplicated.
     """
 
     @property
@@ -32,5 +23,32 @@ class RegionReasonerTask(BaseTask):
         return [0]
 
     @property
-    def dataset_specs(self) -> list[DatasetSpec]:
-        return [DatasetSpec(repo_id="lmsdss/regionreasoner_data")]
+    def task_group_name(self) -> str:
+        return "region-reasoner"
+
+    @property
+    def description(self) -> str:
+        return (
+            "RegionReasoner multi-turn region grounding benchmark (RefCOCOg). "
+            "Requires REGION_REASONER_DIR on cluster."
+        )
+
+    @property
+    def primary_metric(self) -> str:
+        return "gIoU"
+
+    @property
+    def hf_models(self) -> list[str]:
+        return ["Ricky06662/TaskRouter-1.5B", "facebook/sam2-hiera-large"]
+
+    @property
+    def hf_dataset_files(self) -> list[dict]:
+        return [
+            {
+                "repo_id": "lmsdss/regionreasoner_test_data",
+                "patterns": [
+                    "raw/refcocog_multi_turn.json",
+                    "raw/refcocog_test_multi_bbox_images/*",
+                ],
+            }
+        ]
