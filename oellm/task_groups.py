@@ -152,6 +152,20 @@ class TaskGroupResult:
     suite: str
 
 
+def _iter_all_tasks(
+    parsed: dict[str, TaskSuperGroup | TaskGroup],
+) -> Iterable[tuple[_Task, str]]:
+    """Yield ``(task, suite)`` pairs from a parsed group dict, flattening super groups."""
+    for group in parsed.values():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                yield t, group.suite
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    yield t, g.suite
+
+
 def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
     parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
     missing = {str(n).strip() for n in group_names if str(n).strip()} - set(parsed.keys())
@@ -159,23 +173,9 @@ def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
         raise ValueError(f"Unknown task group(s): {', '.join(sorted(missing))}")
 
     results: list[TaskGroupResult] = []
-
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            suite = group.suite
-            for t in group.tasks:
-                shots = [int(s) for s in (t.n_shots or [])]
-                for shot in shots:
-                    results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
-        else:
-            for g in group.task_groups:
-                suite = g.suite
-                for t in g.tasks:
-                    shots = [int(s) for s in (t.n_shots or [])]
-                    for shot in shots:
-                        results.append(
-                            TaskGroupResult(task=t.name, n_shot=shot, suite=suite)
-                        )
+    for t, suite in _iter_all_tasks(parsed):
+        for shot in (int(s) for s in (t.n_shots or [])):
+            results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
 
     return results
 
@@ -208,22 +208,12 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
             seen.add(key)
             specs.append(DatasetSpec(repo_id=dataset, subset=subset))
 
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                if t.dataset == "facebook/flores" and not t.subset:
-                    for lang in _extract_flores_subsets(t.name):
-                        add_spec(t.dataset, lang)
-                else:
-                    add_spec(t.dataset, t.subset)
+    for t, _ in _iter_all_tasks(parsed):
+        if t.dataset == "facebook/flores" and not t.subset:
+            for lang in _extract_flores_subsets(t.name):
+                add_spec(t.dataset, lang)
         else:
-            for g in group.task_groups:
-                for t in g.tasks:
-                    if t.dataset == "facebook/flores" and not t.subset:
-                        for lang in _extract_flores_subsets(t.name):
-                            add_spec(t.dataset, lang)
-                    else:
-                        add_spec(t.dataset, t.subset)
+            add_spec(t.dataset, t.subset)
 
     return specs
 
@@ -235,20 +225,11 @@ def _collect_hf_model_repos(group_names: Iterable[str]) -> list[str]:
     repos: list[str] = []
     seen: set[str] = set()
 
-    def add_repo(hf_models: list[str] | None) -> None:
-        for repo_id in hf_models or []:
+    for t, _ in _iter_all_tasks(parsed):
+        for repo_id in t.hf_models or []:
             if repo_id not in seen:
                 seen.add(repo_id)
                 repos.append(repo_id)
-
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                add_repo(t.hf_models)
-        else:
-            for g in group.task_groups:
-                for t in g.tasks:
-                    add_repo(t.hf_models)
 
     return repos
 
@@ -260,49 +241,37 @@ def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
     file_specs: list[dict] = []
     seen: set[str] = set()
 
-    def add_file_specs(hf_dataset_files: list[dict] | None) -> None:
-        for spec in hf_dataset_files or []:
+    for t, _ in _iter_all_tasks(parsed):
+        for spec in t.hf_dataset_files or []:
             repo_id = spec.get("repo_id", "")
             if repo_id and repo_id not in seen:
                 seen.add(repo_id)
                 file_specs.append(spec)
 
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                add_file_specs(t.hf_dataset_files)
-        else:
-            for g in group.task_groups:
-                for t in g.tasks:
-                    add_file_specs(t.hf_dataset_files)
-
     return file_specs
 
 
 def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
-    """Build a mapping from task names to their dataset specs from all task groups."""
-    data = (
-        yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
-    )
+    """Build a mapping from task names to their dataset specs from all task groups.
 
-    all_group_names = list(data.get("task_groups", {}).keys())
+    Includes both core YAML task groups and contrib task groups from the registry.
+    """
+    all_group_names = get_all_task_group_names()
     parsed = _parse_task_groups(all_group_names)
 
     task_map: dict[str, list[DatasetSpec]] = {}
 
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                if t.dataset and t.name not in task_map:
-                    if t.dataset == "facebook/flores" and not t.subset:
-                        task_map[t.name] = [
-                            DatasetSpec(repo_id=t.dataset, subset=lang)
-                            for lang in _extract_flores_subsets(t.name)
-                        ]
-                    else:
-                        task_map[t.name] = [
-                            DatasetSpec(repo_id=t.dataset, subset=t.subset)
-                        ]
+    for t, _ in _iter_all_tasks(parsed):
+        if t.dataset and t.name not in task_map:
+            if t.dataset == "facebook/flores" and not t.subset:
+                task_map[t.name] = [
+                    DatasetSpec(repo_id=t.dataset, subset=lang)
+                    for lang in _extract_flores_subsets(t.name)
+                ]
+            else:
+                task_map[t.name] = [
+                    DatasetSpec(repo_id=t.dataset, subset=t.subset)
+                ]
 
     return task_map
 

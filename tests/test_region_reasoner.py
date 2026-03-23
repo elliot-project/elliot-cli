@@ -58,9 +58,7 @@ class TestRegionReasonerTaskGroup:
 
         tasks = s.TASK_GROUPS["task_groups"][RR_TASK_GROUP]["tasks"]
         repo_ids = [
-            spec["repo_id"]
-            for task in tasks
-            for spec in task.get("hf_dataset_files", [])
+            spec["repo_id"] for task in tasks for spec in task.get("hf_dataset_files", [])
         ]
         assert RR_TEST_DATA_REPO in repo_ids
 

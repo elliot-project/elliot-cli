@@ -57,7 +57,14 @@ def _ensure_singularity_image(image_name: str | None) -> None:
             "or use --exec_mode=venv with a virtual environment."
         )
 
-    image_path = Path(os.getenv("EVAL_BASE_DIR")) / image_name
+    eval_base_dir = os.getenv("EVAL_BASE_DIR")
+    if not eval_base_dir:
+        raise RuntimeError(
+            "EVAL_BASE_DIR environment variable is not set. "
+            "It should be configured in clusters.yaml for this cluster."
+        )
+
+    image_path = Path(eval_base_dir) / image_name
 
     try:
         console = get_console()
@@ -95,8 +102,7 @@ def _setup_logging(verbose: bool = False):
 
     class RichFormatter(logging.Formatter):
         def format(self, record):
-            record.msg = f"{record.getMessage()}"
-            return record.msg
+            return record.getMessage()
 
     rich_handler.setFormatter(RichFormatter())
 
@@ -342,9 +348,7 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
                     else None,
                 )
             except Exception as e:
-                logging.warning(
-                    f"Failed to download dataset files from '{repo_id}': {e}"
-                )
+                logging.warning(f"Failed to download dataset files from '{repo_id}': {e}")
 
 
 def _pre_download_datasets_from_specs(

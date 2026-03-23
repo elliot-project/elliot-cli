@@ -138,14 +138,18 @@ def schedule_evals(
     else:
         logging.info("Skipping runtime environment check (--skip-checks enabled)")
 
-    if isinstance(models, str) and models is not None:
+    if isinstance(models, str):
         models = [m.strip() for m in models.split(",") if m.strip()]  # type: ignore
 
-    if isinstance(tasks, str) and tasks is not None:
+    if isinstance(tasks, str):
         tasks = [t.strip() for t in tasks.split(",") if t.strip()]  # type: ignore
 
-    if isinstance(n_shot, int) and n_shot is not None:
+    if isinstance(n_shot, int):
         n_shot = [n_shot]
+
+    group_names: list[str] | None = None
+    if task_groups:
+        group_names = [g.strip() for g in task_groups.split(",")]
 
     eval_jobs: list[EvaluationJob] = []
     if eval_csv_path:
@@ -165,8 +169,6 @@ def schedule_evals(
         else:
             df["eval_suite"] = df["eval_suite"].fillna("lm_eval")
 
-        # Always expand local model paths, even with skip_checks
-        df["model_path"].unique()
         eval_jobs.extend(
             [
                 EvaluationJob(
@@ -180,7 +182,7 @@ def schedule_evals(
         )
 
     elif models:
-        if task_groups is None:
+        if group_names is None:
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -195,7 +197,7 @@ def schedule_evals(
                 ]
             )
         else:
-            expanded = _expand_task_groups([g.strip() for g in task_groups.split(",")])
+            expanded = _expand_task_groups(group_names)
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -273,10 +275,8 @@ def schedule_evals(
     # network access on compute nodes.
     if not skip_checks:
         dataset_specs = []
-        if task_groups:
-            dataset_specs = _collect_dataset_specs(
-                [g.strip() for g in task_groups.split(",")]
-            )
+        if group_names:
+            dataset_specs = _collect_dataset_specs(group_names)
         else:
             # Look up individual tasks in task groups registry
             all_tasks = df["task_path"].unique().tolist()
@@ -292,18 +292,14 @@ def schedule_evals(
             )
 
         hf_model_repos = []
-        if task_groups:
-            hf_model_repos = _collect_hf_model_repos(
-                [g.strip() for g in task_groups.split(",")]
-            )
+        if group_names:
+            hf_model_repos = _collect_hf_model_repos(group_names)
         if hf_model_repos:
             _pre_download_hf_model_repos(hf_model_repos)
 
         hf_dataset_files = []
-        if task_groups:
-            hf_dataset_files = _collect_hf_dataset_files(
-                [g.strip() for g in task_groups.split(",")]
-            )
+        if group_names:
+            hf_dataset_files = _collect_hf_dataset_files(group_names)
         if hf_dataset_files:
             _pre_download_hf_dataset_files(hf_dataset_files)
     else:
@@ -363,6 +359,11 @@ def schedule_evals(
     hours_with_margin = min(hours_with_margin, 23)
     computed_time = f"{hours_with_margin:02d}:59:00"
     time_limit = computed_time
+
+    # clusters.yaml TIME_LIMIT overrides the computed value
+    if cluster_time_limit := os.environ.get("TIME_LIMIT"):
+        time_limit = cluster_time_limit
+        logging.info(f"Using TIME_LIMIT from clusters.yaml: {time_limit}")
 
     # Apply slurm_template_var overrides (JSON object)
     if slurm_template_var:

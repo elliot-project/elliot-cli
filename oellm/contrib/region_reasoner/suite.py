@@ -111,17 +111,18 @@ def run(
     """
     rr_dir = env.get("REGION_REASONER_DIR", "")
     num_gpus = int(env.get("REGION_REASONER_NUM_GPUS", "4"))
+    num_parts = int(env.get("REGION_REASONER_NUM_PARTS", str(num_gpus)))
     model_type = model_flags or "vision_reasoner"
 
     if not rr_dir:
         raise RuntimeError(
-            "REGION_REASONER_DIR must be set. "
-            "Add it to clusters.yaml for this cluster."
+            "REGION_REASONER_DIR must be set. Add it to clusters.yaml for this cluster."
         )
 
     test_json = env.get("REGION_REASONER_TEST_JSON")
     if not test_json:
         from huggingface_hub import snapshot_download
+
         local_dir = snapshot_download(
             repo_id="lmsdss/regionreasoner_test_data",
             repo_type="dataset",
@@ -145,7 +146,6 @@ def run(
         for idx in range(num_gpus):
             shard_env = dict(env)
             shard_env["CUDA_VISIBLE_DEVICES"] = str(idx)
-            shard_output = str(Path(tmp_dir) / f"shard_{idx}.json")
             cmd = [
                 "python",
                 str(inference_script),
@@ -156,13 +156,13 @@ def run(
                 "--test_data_path",
                 test_json,
                 "--output_path",
-                shard_output,
+                tmp_dir,  # script writes <tmp_dir>/output_{idx}.json
                 "--vis_output_path",
                 str(Path(tmp_dir) / f"vis_{idx}"),
                 "--idx",
                 str(idx),
                 "--num_parts",
-                str(num_gpus),
+                str(num_parts),
                 "--batch_size",
                 "2",
                 "--task_router_model_path",
@@ -197,61 +197,58 @@ def run(
 
 
 def _aggregate_shards(shard_dir: str) -> dict[str, float]:
-    """Read per-shard prediction files and compute all metrics.
+    """Read per-shard output files and compute all metrics.
 
-    Each shard writes a JSON file containing a list of samples, where each
-    sample has ``"pred_bbox"`` and ``"gt_bbox"`` keys (JSON-serialised
-    ``[x1, y1, x2, y2]`` lists).
+    The upstream ``evaluation_multi_segmentation.py`` script writes one entry
+    per conversational turn::
 
-    Returns a flat dict of ``{metric_name: value}`` for all six metrics.
+        {"intersection": <int>, "union": <int>, "bbox_iou": <float>, ...}
+
+    where ``intersection`` / ``union`` are mask pixel counts and ``bbox_iou``
+    is the pre-computed bbox IoU.
+
+    Returns a flat dict of ``{metric_name: value}`` for all seven metrics.
     """
-    from oellm.contrib.region_reasoner.metrics import (
-        BboxAP,
-        CIoU,
-        GIoU,
-        PassRate,
-    )
-
-    # Collect all predictions across shards
-    predictions: list[str] = []
-    references: list[str] = []
-
-    shard_files = sorted(Path(shard_dir).glob("*.json"))
+    shard_files = sorted(Path(shard_dir).glob("output_*.json"))
     if not shard_files:
         raise RuntimeError(
             f"No shard output files found in {shard_dir!r}. "
             "The inference script may have failed silently."
         )
 
+    intersections: list[float] = []
+    unions: list[float] = []
+    bbox_ious: list[float] = []
+
     for shard_file in shard_files:
         with open(shard_file) as f:
             shard_data = json.load(f)
-
-        # Expected format: list of {"pred_bbox": [...], "gt_bbox": [...]}
-        # Adjust key names below if the upstream script uses different names.
         for sample in shard_data:
-            pred = sample.get("pred_bbox") or sample.get("predicted_bbox")
-            ref = sample.get("gt_bbox") or sample.get("ground_truth_bbox")
-            predictions.append(json.dumps(pred) if pred is not None else "null")
-            references.append(json.dumps(ref) if ref is not None else "null")
+            intersections.append(float(sample.get("intersection", 0)))
+            unions.append(float(sample.get("union", 0)))
+            bbox_ious.append(float(sample.get("bbox_iou", 0.0)))
 
-    logger.info(
-        "Aggregating %d samples from %d shards", len(predictions), len(shard_files)
-    )
+    n = len(bbox_ious)
+    logger.info("Aggregating %d samples from %d shards", n, len(shard_files))
 
-    metrics: dict[str, float] = {}
-    for metric in [
-        GIoU(),
-        CIoU(),
-        BboxAP(),
-        PassRate(0.3),
-        PassRate(0.5),
-        PassRate(0.7),
-        PassRate(0.9),
-    ]:
-        metrics[metric.name] = metric.compute(predictions, references)
-        logger.debug("%s = %.4f", metric.name, metrics[metric.name])
+    if n == 0:
+        return {k: 0.0 for k in ("gIoU", "cIoU", "bbox_AP", "pass_rate_0.3", "pass_rate_0.5", "pass_rate_0.7", "pass_rate_0.9")}
 
+    giou = sum(i / u if u > 0 else 0.0 for i, u in zip(intersections, unions)) / n
+    total_u = sum(unions)
+    ciou = sum(intersections) / total_u if total_u > 0 else 0.0
+
+    metrics = {
+        "gIoU": giou,
+        "cIoU": ciou,
+        "bbox_AP": sum(iou > 0.5 for iou in bbox_ious) / n,
+        "pass_rate_0.3": sum(iou > 0.3 for iou in bbox_ious) / n,
+        "pass_rate_0.5": sum(iou > 0.5 for iou in bbox_ious) / n,
+        "pass_rate_0.7": sum(iou > 0.7 for iou in bbox_ious) / n,
+        "pass_rate_0.9": sum(iou > 0.9 for iou in bbox_ious) / n,
+    }
+    for name, val in metrics.items():
+        logger.debug("%s = %.4f", name, val)
     return metrics
 
 
