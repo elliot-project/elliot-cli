@@ -1,15 +1,16 @@
-"""RegionReasoner spatial metrics.
+"""Region-grounding benchmark metrics (model-agnostic).
 
-Implements the four metrics reported in the RegionReasoner paper
-(arXiv:2602.03733) as :class:`oellm.core.base_metric.BaseMetric` subclasses,
-reusing the existing ABC without modification.
+:class:`BaseMetric` subclasses that compute bounding-box IoU metrics for the
+region-grounding benchmark.  These are the **single source of truth** used by
+``suite._aggregate_shards()`` to score any model's predictions — not just
+RegionReasoner.  Any model that outputs ``predicted_bbox`` / ``gt_bbox`` pairs
+in ``[x1, y1, x2, y2]`` format can be evaluated with these metrics.
 
 Bbox format
 -----------
 Each bounding box is a JSON-serialised list ``"[x1, y1, x2, y2]"`` where
-coordinates are normalised to [0, 1] or in absolute pixels — the metric
-formulas are identical in either coordinate system as long as predictions and
-references use the same system.
+coordinates are in absolute pixels (or normalised — the formulas are
+identical as long as predictions and references use the same system).
 
 Inputs to ``compute()`` are ``list[str]`` (one JSON string per sample) to
 comply with the ``BaseMetric`` signature.  Empty strings or ``"null"`` are
@@ -23,10 +24,6 @@ Metrics
 - **PassRate**: fraction of samples where IoU > *threshold* (configurable).
 
 All return values are in [0, 1] (higher is better).
-
-These implementations are used by ``suite.run()`` to compute metrics from
-the shard output files produced by the pre-installed RegionReasoner inference
-script.  They are also used directly in the test suite.
 """
 
 from __future__ import annotations  # noqa: I001

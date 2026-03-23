@@ -47,11 +47,6 @@ import logging
 import pkgutil
 import types
 from functools import cache
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
 

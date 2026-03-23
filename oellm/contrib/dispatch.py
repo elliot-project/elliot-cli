@@ -40,13 +40,11 @@ def main(argv: list[str] | None = None) -> None:
 
     args = _parse_args(argv)
 
-    # Split "region_reasoner:vision_reasoner" → name="region_reasoner", flags="vision_reasoner"
     if ":" in args.suite:
         suite_name, model_flags = args.suite.split(":", 1)
     else:
         suite_name, model_flags = args.suite, None
 
-    # Resolve the registered suite module
     from oellm import registry
 
     try:
@@ -55,7 +53,6 @@ def main(argv: list[str] | None = None) -> None:
         logging.error(str(exc))
         sys.exit(1)
 
-    # Validate required cluster env vars
     missing_vars = []
     for var in getattr(mod, "CLUSTER_ENV_VARS", []):
         if not os.environ.get(var):
@@ -69,7 +66,6 @@ def main(argv: list[str] | None = None) -> None:
         )
         sys.exit(1)
 
-    # Ensure output directory exists
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
 
     logging.info(

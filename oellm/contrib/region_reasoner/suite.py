@@ -141,7 +141,6 @@ def run(
         )
 
     with tempfile.TemporaryDirectory(prefix="rr_shards_") as tmp_dir:
-        # --- Step 1: parallel GPU shards ---
         procs = []
         for idx in range(num_gpus):
             shard_env = dict(env)
@@ -181,10 +180,8 @@ def run(
 
         logger.info("All %d shards completed. Computing metrics.", num_gpus)
 
-        # --- Step 2: compute metrics from shard outputs ---
         metrics = _aggregate_shards(tmp_dir)
 
-    # --- Step 3: write lmms-eval-compatible JSON ---
     result_json = {
         "model_name_or_path": model_path,
         "results": {task: metrics},
@@ -197,18 +194,26 @@ def run(
 
 
 def _aggregate_shards(shard_dir: str) -> dict[str, float]:
-    """Read per-shard output files and compute all metrics.
+    """Read per-shard output files and compute all metrics via :mod:`metrics`.
 
     The upstream ``evaluation_multi_segmentation.py`` script writes one entry
-    per conversational turn::
+    per conversational turn containing ``predicted_bbox`` and ``gt_bbox``
+    (each ``[x1, y1, x2, y2]`` or ``null``).
 
-        {"intersection": <int>, "union": <int>, "bbox_iou": <float>, ...}
-
-    where ``intersection`` / ``union`` are mask pixel counts and ``bbox_iou``
-    is the pre-computed bbox IoU.
+    All metrics are computed through the :class:`BaseMetric` subclasses in
+    ``oellm.contrib.region_reasoner.metrics`` — the single source of truth.
+    This ensures that *any* model producing bboxes in the same JSON format can
+    be evaluated with identical logic.
 
     Returns a flat dict of ``{metric_name: value}`` for all seven metrics.
     """
+    from oellm.contrib.region_reasoner.metrics import (
+        BboxAP,
+        CIoU,
+        GIoU,
+        PassRate,
+    )
+
     shard_files = sorted(Path(shard_dir).glob("output_*.json"))
     if not shard_files:
         raise RuntimeError(
@@ -216,53 +221,34 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
             "The inference script may have failed silently."
         )
 
-    intersections: list[float] = []
-    unions: list[float] = []
-    bbox_ious: list[float] = []
+    predictions: list[str] = []
+    references: list[str] = []
 
     for shard_file in shard_files:
         with open(shard_file) as f:
             shard_data = json.load(f)
         for sample in shard_data:
-            intersections.append(float(sample.get("intersection", 0)))
-            unions.append(float(sample.get("union", 0)))
-            bbox_ious.append(float(sample.get("bbox_iou", 0.0)))
+            predictions.append(json.dumps(sample.get("predicted_bbox")))
+            references.append(json.dumps(sample.get("gt_bbox")))
 
-    n = len(bbox_ious)
+    n = len(predictions)
     logger.info("Aggregating %d samples from %d shards", n, len(shard_files))
 
-    if n == 0:
-        return dict.fromkeys(
-            (
-                "gIoU",
-                "cIoU",
-                "bbox_AP",
-                "pass_rate_0.3",
-                "pass_rate_0.5",
-                "pass_rate_0.7",
-                "pass_rate_0.9",
-            ),
-            0.0,
-        )
+    all_metrics = [
+        GIoU(),
+        CIoU(),
+        BboxAP(),
+        PassRate(0.3),
+        PassRate(0.5),
+        PassRate(0.7),
+        PassRate(0.9),
+    ]
 
-    giou = (
-        sum(i / u if u > 0 else 0.0 for i, u in zip(intersections, unions, strict=True))
-        / n
-    )
-    total_u = sum(unions)
-    ciou = sum(intersections) / total_u if total_u > 0 else 0.0
-
-    metrics = {
-        "gIoU": giou,
-        "cIoU": ciou,
-        "bbox_AP": sum(iou > 0.5 for iou in bbox_ious) / n,
-        "pass_rate_0.3": sum(iou > 0.3 for iou in bbox_ious) / n,
-        "pass_rate_0.5": sum(iou > 0.5 for iou in bbox_ious) / n,
-        "pass_rate_0.7": sum(iou > 0.7 for iou in bbox_ious) / n,
-        "pass_rate_0.9": sum(iou > 0.9 for iou in bbox_ious) / n,
-    }
-    for name, val in metrics.items():
-        logger.debug("%s = %.4f", name, val)
+    metrics = {}
+    for m in all_metrics:
+        val = m.compute(predictions, references)
+        metrics[m.name] = val
+        logger.debug("%s = %.4f", m.name, val)
     return metrics
 
 

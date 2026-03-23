@@ -115,8 +115,6 @@ def _parse_task_groups(
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
 
-    # Merge contrib task groups, metrics, and super_groups from registered suite plugins.
-    # This is a one-time hook — adding a new benchmark never requires touching this file.
     from oellm.registry import (
         get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
     )

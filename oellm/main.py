@@ -238,7 +238,6 @@ def schedule_evals(
             job.eval_suite = f"lmms_eval:{adapter}"
             logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
         else:
-            # Contrib suite: ask the registry for model-specific flags
             try:
                 mod = _registry.get_suite(job.eval_suite)
                 if hasattr(mod, "detect_model_flags"):
@@ -341,7 +340,6 @@ def schedule_evals(
 
     sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
 
-    # Calculate dynamic array size and time limits
     total_evals = len(df)
     minutes_per_eval = 10  # Budget 10 minutes per eval
     total_minutes = total_evals * minutes_per_eval
@@ -386,8 +384,7 @@ def schedule_evals(
                 os.environ[key] = str(value)
                 logging.info(f"Using slurm_template_var override: {key}={value}")
 
-    # Log the calculated values
-    logging.info("📊 Evaluation planning:")
+    logging.info("Evaluation planning:")
     logging.info(f"   Total evaluations: {total_evals}")
     logging.info(f"   Estimated time per eval: {minutes_per_eval} minutes")
     logging.info(
@@ -438,12 +435,11 @@ def schedule_evals(
     try:
         logging.info("Calling sbatch to launch the evaluations")
 
-        # Provide helpful information about job monitoring and file locations
-        logging.info(f"📁 Evaluation directory: {evals_dir}")
-        logging.info(f"📄 SLURM script: {sbatch_script_path}")
-        logging.info(f"📋 Job configuration: {csv_path}")
-        logging.info(f"📜 SLURM logs will be stored in: {slurm_logs_dir}")
-        logging.info(f"📊 Results will be stored in: {evals_dir / 'results'}")
+        logging.info(f"Evaluation directory: {evals_dir}")
+        logging.info(f"SLURM script: {sbatch_script_path}")
+        logging.info(f"Job configuration: {csv_path}")
+        logging.info(f"SLURM logs: {slurm_logs_dir}")
+        logging.info(f"Results: {evals_dir / 'results'}")
 
         result = subprocess.run(
             ["sbatch"],
@@ -458,9 +454,9 @@ def schedule_evals(
         job_id_match = re.search(r"Submitted batch job (\d+)", result.stdout)
         if job_id_match:
             job_id = job_id_match.group(1)
-            logging.info(f"🔍 Monitor job status: squeue -j {job_id}")
-            logging.info(f"📈 View job details: scontrol show job {job_id}")
-            logging.info(f"❌ Cancel job if needed: scancel {job_id}")
+            logging.info(f"Monitor job status: squeue -j {job_id}")
+            logging.info(f"View job details: scontrol show job {job_id}")
+            logging.info(f"Cancel job if needed: scancel {job_id}")
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to submit job: {e}")
         logging.error(f"sbatch stderr: {e.stderr}")
@@ -594,20 +590,17 @@ def collect_results(
             jobs_df = pd.read_csv(jobs_csv_path)
             logging.info(f"Found {len(jobs_df)} scheduled jobs in jobs.csv")
 
-    # Collect results
     rows = []
-    completed_jobs = set()  # Track (model, task, n_shot) tuples
+    completed_jobs = set()
 
     for json_file in json_files:
         with open(json_file) as f:
             data = json.load(f)
 
-        # Extract model name/path.
         # lmms-eval sets model_name to the adapter type (e.g. "llava_hf"),
         # not the checkpoint path; the actual path is in model_name_or_path.
         model_name = data.get("model_name_or_path") or data.get("model_name", "unknown")
 
-        # Extract results for each task
         results = data.get("results", {})
         n_shot_data = data.get("n-shot", {})
 
@@ -686,7 +679,6 @@ def collect_results(
             if task_name.startswith("global_mmlu_") and task_name.count("_") >= 4:
                 continue
 
-            # Get n_shot for this task
             n_shot = n_shot_data.get(task_name, "unknown")
 
             # If this is a group aggregate and n_shot is missing, derive from any subtask
@@ -721,11 +713,9 @@ def collect_results(
             if set(task_results.keys()) <= {"alias", " ", ""}:
                 continue
 
-            # Get the primary metric (usually acc, acc_norm)
             performance, metric_name = _resolve_metric(task_name, task_results)
 
             if performance is not None:
-                # Track completed job for check mode
                 if check:
                     completed_jobs.add((model_name, task_name, n_shot))
 
@@ -751,14 +741,12 @@ def collect_results(
         logging.warning("No results extracted from JSON files")
         return
 
-    # Create DataFrame and save to CSV (if we have results)
     if rows:
         df = pd.DataFrame(rows)
         df.to_csv(output_csv, index=False)
         logging.info(f"Results saved to {output_csv}")
         logging.info(f"Extracted {len(df)} evaluation results")
 
-        # Print summary statistics
         if verbose:
             logging.info("Summary:")
             logging.info(f"Unique models: {df['model_name'].nunique()}")
@@ -767,24 +755,19 @@ def collect_results(
                 f"N-shot values: {sorted(str(x) for x in df['n_shot'].unique())}"
             )
 
-    # Perform check analysis if requested
     if check:
         logging.info("=== Evaluation Status Check ===")
 
-        # Find missing jobs
         missing_jobs = []
 
         for _, job in jobs_df.iterrows():
             job_tuple = (job["model_path"], job["task_path"], job["n_shot"])
 
-            # Check if this job corresponds to one of our completed results
             is_completed = False
 
-            # Try exact matching first
             if job_tuple in completed_jobs:
                 is_completed = True
             else:
-                # Try fuzzy matching for model names
                 for completed_job in completed_jobs:
                     completed_model, completed_task, completed_n_shot = completed_job
 
@@ -817,7 +800,6 @@ def collect_results(
                 f"You can run these with: oellm schedule-eval --eval_csv_path {missing_csv}"
             )
 
-            # Show some examples if verbose
             if verbose and len(missing_jobs) > 0:
                 logging.info("Example missing jobs:")
                 for _i, (_, job) in enumerate(missing_df.head(5).iterrows()):
