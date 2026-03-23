@@ -232,9 +232,23 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
     logger.info("Aggregating %d samples from %d shards", n, len(shard_files))
 
     if n == 0:
-        return {k: 0.0 for k in ("gIoU", "cIoU", "bbox_AP", "pass_rate_0.3", "pass_rate_0.5", "pass_rate_0.7", "pass_rate_0.9")}
+        return dict.fromkeys(
+            (
+                "gIoU",
+                "cIoU",
+                "bbox_AP",
+                "pass_rate_0.3",
+                "pass_rate_0.5",
+                "pass_rate_0.7",
+                "pass_rate_0.9",
+            ),
+            0.0,
+        )
 
-    giou = sum(i / u if u > 0 else 0.0 for i, u in zip(intersections, unions)) / n
+    giou = (
+        sum(i / u if u > 0 else 0.0 for i, u in zip(intersections, unions, strict=True))
+        / n
+    )
     total_u = sum(unions)
     ciou = sum(intersections) / total_u if total_u > 0 else 0.0
 

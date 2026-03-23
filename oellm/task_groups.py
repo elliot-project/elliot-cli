@@ -269,9 +269,7 @@ def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
                     for lang in _extract_flores_subsets(t.name)
                 ]
             else:
-                task_map[t.name] = [
-                    DatasetSpec(repo_id=t.dataset, subset=t.subset)
-                ]
+                task_map[t.name] = [DatasetSpec(repo_id=t.dataset, subset=t.subset)]
 
     return task_map
 
