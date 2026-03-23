@@ -506,9 +506,13 @@ class TestAggregateShards:
     def test_perfect_overlap(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": [0, 0, 100, 100], "gt_bbox": [0, 0, 100, 100]},
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {"predicted_bbox": [0, 0, 100, 100], "gt_bbox": [0, 0, 100, 100]},
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(1.0)
         assert m["cIoU"] == pytest.approx(1.0)
@@ -519,9 +523,13 @@ class TestAggregateShards:
     def test_zero_overlap(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": [0, 0, 10, 10], "gt_bbox": [20, 20, 30, 30]},
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {"predicted_bbox": [0, 0, 10, 10], "gt_bbox": [20, 20, 30, 30]},
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(0.0)
         assert m["cIoU"] == pytest.approx(0.0)
@@ -534,10 +542,14 @@ class TestAggregateShards:
 
         # Sample 1: IoU = 1.0 (perfect)
         # Sample 2: IoU ≈ 0.1429 (partial: overlap=0.25, union=1.75)
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
-            {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0.5, 0.5, 1.5, 1.5]},
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
+                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0.5, 0.5, 1.5, 1.5]},
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         # IoU=1.0 passes all thresholds; IoU≈0.14 passes none
         assert m["pass_rate_0.3"] == pytest.approx(0.5)
@@ -551,10 +563,20 @@ class TestAggregateShards:
 
         # IoU ≈ 0.53 (overlap=80*80=6400, union=100*100+80*80-6400=12000)
         # passes 0.3 and 0.5, fails 0.7 and 0.9
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": [0, 0, 100, 100], "gt_bbox": [0, 0, 100, 100]},  # IoU=1.0
-            {"predicted_bbox": [0, 0, 100, 100], "gt_bbox": [20, 20, 100, 100]},  # IoU≈0.64
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {
+                    "predicted_bbox": [0, 0, 100, 100],
+                    "gt_bbox": [0, 0, 100, 100],
+                },  # IoU=1.0
+                {
+                    "predicted_bbox": [0, 0, 100, 100],
+                    "gt_bbox": [20, 20, 100, 100],
+                },  # IoU≈0.64
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         # IoU=1.0 passes all; IoU≈0.64 passes 0.3 and 0.5 but not 0.7, 0.9
         assert m["pass_rate_0.3"] == pytest.approx(1.0)
@@ -565,9 +587,13 @@ class TestAggregateShards:
     def test_null_prediction_treated_as_miss(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": None, "gt_bbox": [0, 0, 100, 100]},
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {"predicted_bbox": None, "gt_bbox": [0, 0, 100, 100]},
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(0.0)
         assert m["bbox_AP"] == pytest.approx(0.0)
@@ -575,12 +601,20 @@ class TestAggregateShards:
     def test_multiple_shards_aggregated(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        self._write_shard(tmp_path, 0, [
-            {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
-        ])
-        self._write_shard(tmp_path, 1, [
-            {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [10, 10, 11, 11]},
-        ])
+        self._write_shard(
+            tmp_path,
+            0,
+            [
+                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
+            ],
+        )
+        self._write_shard(
+            tmp_path,
+            1,
+            [
+                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [10, 10, 11, 11]},
+            ],
+        )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(0.5)
 
