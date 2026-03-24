@@ -196,14 +196,12 @@ def run(
 def _aggregate_shards(shard_dir: str) -> dict[str, float]:
     """Read per-shard output files and compute all metrics via :mod:`metrics`.
 
-    The upstream ``evaluation_multi_segmentation.py`` script writes one entry
-    per conversational turn containing ``predicted_bbox`` and ``gt_bbox``
-    (each ``[x1, y1, x2, y2]`` or ``null``).
+    Each shard file contains a list of per-sample dicts with pre-computed
+    ``intersection``, ``union``, and ``bbox_iou`` fields written by the
+    upstream ``evaluation_multi_segmentation.py`` script.
 
     All metrics are computed through the :class:`BaseMetric` subclasses in
-    ``oellm.contrib.region_reasoner.metrics`` — the single source of truth.
-    This ensures that *any* model producing bboxes in the same JSON format can
-    be evaluated with identical logic.
+    ``oellm.contrib.region_reasoner.metrics``.
 
     Returns a flat dict of ``{metric_name: value}`` for all seven metrics.
     """
@@ -221,19 +219,21 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
             "The inference script may have failed silently."
         )
 
-    predictions: list[str] = []
-    references: list[str] = []
-
+    samples: list[str] = []
     for shard_file in shard_files:
         with open(shard_file) as f:
             shard_data = json.load(f)
         for sample in shard_data:
-            predictions.append(json.dumps(sample.get("predicted_bbox")))
-            references.append(json.dumps(sample.get("gt_bbox")))
+            samples.append(json.dumps(sample))
 
-    n = len(predictions)
-    logger.info("Aggregating %d samples from %d shards", n, len(shard_files))
+    if not samples:
+        raise RuntimeError(
+            "No samples found across shard files. "
+            "The inference script produced empty output."
+        )
+    logger.info("Aggregating %d samples from %d shards", len(samples), len(shard_files))
 
+    empty_refs = [""] * len(samples)
     all_metrics = [
         GIoU(),
         CIoU(),
@@ -246,7 +246,7 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
 
     metrics = {}
     for m in all_metrics:
-        val = m.compute(predictions, references)
+        val = m.compute(samples, empty_refs)
         metrics[m.name] = val
         logger.debug("%s = %.4f", m.name, val)
     return metrics

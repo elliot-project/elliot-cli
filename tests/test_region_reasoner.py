@@ -137,9 +137,15 @@ class TestRegionReasonerTask:
 # ---------------------------------------------------------------------------
 
 
-def _box(x1, y1, x2, y2) -> str:
-    """Helper: JSON-serialise a bbox for metric inputs."""
-    return json.dumps([x1, y1, x2, y2])
+def _sample(intersection: int, union: int, bbox_iou: float = 0.0) -> str:
+    """Helper: JSON-serialise a sample dict for metric inputs."""
+    return json.dumps(
+        {
+            "intersection": intersection,
+            "union": union,
+            "bbox_iou": bbox_iou,
+        }
+    )
 
 
 class TestGIoU:
@@ -156,37 +162,28 @@ class TestGIoU:
         assert metric.name == "gIoU"
 
     def test_perfect_overlap(self, metric):
-        box = _box(0, 0, 1, 1)
-        assert metric.compute([box], [box]) == pytest.approx(1.0)
+        s = _sample(100, 100)
+        assert metric.compute([s], [""]) == pytest.approx(1.0)
 
     def test_zero_overlap(self, metric):
-        pred = _box(0, 0, 0.5, 0.5)
-        ref = _box(0.6, 0.6, 1.0, 1.0)
-        assert metric.compute([pred], [ref]) == pytest.approx(0.0)
+        s = _sample(0, 200)
+        assert metric.compute([s], [""]) == pytest.approx(0.0)
 
     def test_partial_overlap(self, metric):
-        # Two boxes sharing a quarter of their area
-        pred = _box(0, 0, 1, 1)  # area = 1
-        ref = _box(0.5, 0.5, 1.5, 1.5)  # area = 1, overlap = 0.25
-        iou = 0.25 / (1 + 1 - 0.25)  # ≈ 0.1429
-        assert metric.compute([pred], [ref]) == pytest.approx(iou, abs=1e-4)
+        s = _sample(25, 175)
+        assert metric.compute([s], [""]) == pytest.approx(25 / 175, abs=1e-4)
 
     def test_mean_over_multiple_samples(self, metric):
-        perfect = _box(0, 0, 1, 1)
-        no_overlap_pred = _box(0, 0, 0.5, 0.5)
-        no_overlap_ref = _box(0.6, 0.6, 1.0, 1.0)
-        score = metric.compute(
-            [perfect, no_overlap_pred],
-            [perfect, no_overlap_ref],
-        )
+        perfect = _sample(100, 100)
+        zero = _sample(0, 200)
+        score = metric.compute([perfect, zero], ["", ""])
         assert score == pytest.approx(0.5)
 
     def test_empty_input(self, metric):
         assert metric.compute([], []) == pytest.approx(0.0)
 
-    def test_null_prediction(self, metric):
-        # Missed detection returns IoU = 0
-        score = metric.compute(["null"], [_box(0, 0, 1, 1)])
+    def test_null_sample(self, metric):
+        score = metric.compute(["null"], [""])
         assert score == pytest.approx(0.0)
 
 
@@ -204,31 +201,28 @@ class TestCIoU:
         assert metric.name == "cIoU"
 
     def test_perfect_overlap(self, metric):
-        box = _box(0, 0, 1, 1)
-        assert metric.compute([box], [box]) == pytest.approx(1.0)
+        s = _sample(100, 100)
+        assert metric.compute([s], [""]) == pytest.approx(1.0)
 
     def test_zero_overlap(self, metric):
-        pred = _box(0, 0, 0.5, 0.5)
-        ref = _box(0.6, 0.6, 1.0, 1.0)
-        assert metric.compute([pred], [ref]) == pytest.approx(0.0)
+        s = _sample(0, 200)
+        assert metric.compute([s], [""]) == pytest.approx(0.0)
 
     def test_cumulative_formula_differs_from_giou(self, metric):
         from oellm.contrib.region_reasoner.metrics import GIoU
 
         giou = GIoU()
-        # Two samples: one perfect match, one 50% IoU
-        p1 = _box(0, 0, 1, 1)
-        p2 = _box(0, 0, 1, 0.5)
-        r2 = _box(0, 0, 1, 1)
-        preds = [p1, p2]
-        refs = [p1, r2]
-        ciou_val = metric.compute(preds, refs)
-        giou_val = giou.compute(preds, refs)
-        # cIoU weights samples by area; gIoU takes simple mean
-        # They are different measures — just check they're not identical for this case
-        # (could be equal only if all boxes have the same area)
-        assert isinstance(ciou_val, float)
-        assert isinstance(giou_val, float)
+        # Sample 1: IoU = 100/100 = 1.0
+        # Sample 2: IoU = 50/200 = 0.25
+        s1 = _sample(100, 100)
+        s2 = _sample(50, 200)
+        preds = [s1, s2]
+        refs = ["", ""]
+        ciou_val = metric.compute(preds, refs)  # (100+50)/(100+200) = 0.5
+        giou_val = giou.compute(preds, refs)  # (1.0+0.25)/2 = 0.625
+        assert ciou_val == pytest.approx(0.5)
+        assert giou_val == pytest.approx(0.625)
+        assert ciou_val != pytest.approx(giou_val)
 
     def test_empty_input(self, metric):
         assert metric.compute([], []) == pytest.approx(0.0)
@@ -248,20 +242,17 @@ class TestBboxAP:
         assert metric.name == "bbox_AP"
 
     def test_all_correct(self, metric):
-        box = _box(0, 0, 1, 1)
-        assert metric.compute([box, box], [box, box]) == pytest.approx(1.0)
+        s = _sample(100, 100, bbox_iou=0.9)
+        assert metric.compute([s, s], ["", ""]) == pytest.approx(1.0)
 
     def test_none_correct(self, metric):
-        pred = _box(0, 0, 0.3, 0.3)
-        ref = _box(0.7, 0.7, 1.0, 1.0)
-        assert metric.compute([pred], [ref]) == pytest.approx(0.0)
+        s = _sample(10, 200, bbox_iou=0.3)
+        assert metric.compute([s], [""]) == pytest.approx(0.0)
 
-    def test_threshold_at_exactly_half_iou(self, metric):
-        # Box with exactly 1/3 IoU (< 0.5 threshold → not counted)
-        pred = _box(0, 0, 2, 1)
-        ref = _box(1, 0, 3, 1)
-        # overlap = 1×1 = 1, union = 2+2-1 = 3, IoU = 1/3
-        assert metric.compute([pred], [ref]) == pytest.approx(0.0)
+    def test_threshold_at_half(self, metric):
+        above = _sample(80, 100, bbox_iou=0.6)
+        below = _sample(10, 100, bbox_iou=0.4)
+        assert metric.compute([above, below], ["", ""]) == pytest.approx(0.5)
 
     def test_empty_input(self, metric):
         assert metric.compute([], []) == pytest.approx(0.0)
@@ -286,29 +277,24 @@ class TestPassRate:
     def test_all_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
 
-        box = _box(0, 0, 1, 1)
+        s = _sample(100, 100)
         pr = PassRate(0.5)
-        assert pr.compute([box, box], [box, box]) == pytest.approx(1.0)
+        assert pr.compute([s, s], ["", ""]) == pytest.approx(1.0)
 
     def test_none_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
 
-        pred = _box(0, 0, 0.3, 0.3)
-        ref = _box(0.8, 0.8, 1.0, 1.0)
+        s = _sample(0, 100)
         pr = PassRate(0.3)
-        assert pr.compute([pred], [ref]) == pytest.approx(0.0)
+        assert pr.compute([s], [""]) == pytest.approx(0.0)
 
     def test_half_pass(self):
         from oellm.contrib.region_reasoner.metrics import PassRate
 
-        perfect = _box(0, 0, 1, 1)
-        no_overlap_pred = _box(0, 0, 0.1, 0.1)
-        no_overlap_ref = _box(0.9, 0.9, 1.0, 1.0)
+        perfect = _sample(100, 100)
+        zero = _sample(0, 100)
         pr = PassRate(0.5)
-        score = pr.compute(
-            [perfect, no_overlap_pred],
-            [perfect, no_overlap_ref],
-        )
+        score = pr.compute([perfect, zero], ["", ""])
         assert score == pytest.approx(0.5)
 
     def test_invalid_threshold_raises(self):
@@ -509,9 +495,7 @@ class TestAggregateShards:
         self._write_shard(
             tmp_path,
             0,
-            [
-                {"predicted_bbox": [0, 0, 100, 100], "gt_bbox": [0, 0, 100, 100]},
-            ],
+            [{"intersection": 100, "union": 100, "bbox_iou": 1.0}],
         )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(1.0)
@@ -526,9 +510,7 @@ class TestAggregateShards:
         self._write_shard(
             tmp_path,
             0,
-            [
-                {"predicted_bbox": [0, 0, 10, 10], "gt_bbox": [20, 20, 30, 30]},
-            ],
+            [{"intersection": 0, "union": 200, "bbox_iou": 0.0}],
         )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(0.0)
@@ -537,66 +519,40 @@ class TestAggregateShards:
         assert m["pass_rate_0.3"] == pytest.approx(0.0)
 
     def test_pass_rates_differ_across_thresholds(self, tmp_path):
-        """Pass rates must differ when IoU values span multiple thresholds."""
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        # Sample 1: IoU = 1.0 (perfect)
-        # Sample 2: IoU ≈ 0.1429 (partial: overlap=0.25, union=1.75)
         self._write_shard(
             tmp_path,
             0,
             [
-                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
-                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0.5, 0.5, 1.5, 1.5]},
+                {"intersection": 100, "union": 100, "bbox_iou": 1.0},
+                {"intersection": 10, "union": 200, "bbox_iou": 0.05},
             ],
         )
         m = _aggregate_shards(str(tmp_path))
-        # IoU=1.0 passes all thresholds; IoU≈0.14 passes none
+        # mask IoU=1.0 passes all; mask IoU=0.05 passes none
         assert m["pass_rate_0.3"] == pytest.approx(0.5)
         assert m["pass_rate_0.5"] == pytest.approx(0.5)
         assert m["pass_rate_0.7"] == pytest.approx(0.5)
         assert m["pass_rate_0.9"] == pytest.approx(0.5)
 
     def test_pass_rates_actually_differ(self, tmp_path):
-        """With varying IoU values, different thresholds give different rates."""
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
-        # IoU ≈ 0.53 (overlap=80*80=6400, union=100*100+80*80-6400=12000)
-        # passes 0.3 and 0.5, fails 0.7 and 0.9
         self._write_shard(
             tmp_path,
             0,
             [
-                {
-                    "predicted_bbox": [0, 0, 100, 100],
-                    "gt_bbox": [0, 0, 100, 100],
-                },  # IoU=1.0
-                {
-                    "predicted_bbox": [0, 0, 100, 100],
-                    "gt_bbox": [20, 20, 100, 100],
-                },  # IoU≈0.64
+                {"intersection": 100, "union": 100, "bbox_iou": 1.0},
+                {"intersection": 64, "union": 100, "bbox_iou": 0.64},
             ],
         )
         m = _aggregate_shards(str(tmp_path))
-        # IoU=1.0 passes all; IoU≈0.64 passes 0.3 and 0.5 but not 0.7, 0.9
+        # mask IoU=1.0 passes all; mask IoU=0.64 passes 0.3 and 0.5 but not 0.7, 0.9
         assert m["pass_rate_0.3"] == pytest.approx(1.0)
         assert m["pass_rate_0.5"] == pytest.approx(1.0)
         assert m["pass_rate_0.7"] == pytest.approx(0.5)
         assert m["pass_rate_0.9"] == pytest.approx(0.5)
-
-    def test_null_prediction_treated_as_miss(self, tmp_path):
-        from oellm.contrib.region_reasoner.suite import _aggregate_shards
-
-        self._write_shard(
-            tmp_path,
-            0,
-            [
-                {"predicted_bbox": None, "gt_bbox": [0, 0, 100, 100]},
-            ],
-        )
-        m = _aggregate_shards(str(tmp_path))
-        assert m["gIoU"] == pytest.approx(0.0)
-        assert m["bbox_AP"] == pytest.approx(0.0)
 
     def test_multiple_shards_aggregated(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
@@ -604,24 +560,28 @@ class TestAggregateShards:
         self._write_shard(
             tmp_path,
             0,
-            [
-                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [0, 0, 1, 1]},
-            ],
+            [{"intersection": 100, "union": 100, "bbox_iou": 1.0}],
         )
         self._write_shard(
             tmp_path,
             1,
-            [
-                {"predicted_bbox": [0, 0, 1, 1], "gt_bbox": [10, 10, 11, 11]},
-            ],
+            [{"intersection": 0, "union": 100, "bbox_iou": 0.0}],
         )
         m = _aggregate_shards(str(tmp_path))
         assert m["gIoU"] == pytest.approx(0.5)
+        assert m["cIoU"] == pytest.approx(0.5)
 
     def test_no_shard_files_raises(self, tmp_path):
         from oellm.contrib.region_reasoner.suite import _aggregate_shards
 
         with pytest.raises(RuntimeError, match="No shard output files"):
+            _aggregate_shards(str(tmp_path))
+
+    def test_empty_shard_raises(self, tmp_path):
+        from oellm.contrib.region_reasoner.suite import _aggregate_shards
+
+        self._write_shard(tmp_path, 0, [])
+        with pytest.raises(RuntimeError, match="No samples found"):
             _aggregate_shards(str(tmp_path))
 
 
