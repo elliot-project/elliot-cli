@@ -8,7 +8,6 @@ import pytest
 
 from oellm.main import collect_results
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -183,11 +182,13 @@ class TestCollectResultsLmmsEvalFormat:
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(512.0)
 
-    def test_mathvista_acc_metric(self, tmp_path):
+    def test_mathvista_llm_judge_metric(self, tmp_path):
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"mathvista_testmini": {"mathvista_testmini/acc,none": 0.49}},
+            "results": {
+                "mathvista_testmini": {"mathvista_testmini/llm_as_judge_eval,none": 0.49}
+            },
             "n-shot": {"mathvista_testmini": 0},
         }
         df = run_collect(tmp_path, data)

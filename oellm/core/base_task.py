@@ -6,44 +6,50 @@ from oellm.task_groups import DatasetSpec
 class BaseTask(ABC):
     """Abstract base class for evaluation task plugins.
 
-    Subclasses represent a single logical evaluation task and provide
-    the metadata needed for scheduling and dataset pre-download.
+    Example::
 
-    This class is forward-looking: it is not yet consumed by the scheduling
-    engine. Teams building T4.2–T4.5 integrations should subclass BaseTask
-    to register new tasks without touching the YAML or core scheduling logic.
-
-    Example (benchmark already in lmms-eval)::
-
-        class VQAv2Task(BaseTask):
+        class MyTask(BaseTask):
             @property
             def name(self) -> str:
-                return "vqav2_val_all"
+                return "my_task"
 
             @property
             def suite(self) -> str:
-                return "lmms_eval"
+                return "my_suite"
 
             @property
             def n_shots(self) -> list[int]:
                 return [0]
 
             @property
-            def dataset_specs(self) -> list[DatasetSpec]:
-                return [DatasetSpec(repo_id="HuggingFaceM4/VQAv2")]
+            def primary_metric(self) -> str | None:
+                return "my_metric"
+
+            @property
+            def hf_models(self) -> list[str]:
+                return ["org/aux-model"]
+
+            @property
+            def hf_dataset_files(self) -> list[dict]:
+                return [{"repo_id": "org/dataset", "patterns": ["data/*.json"]}]
     """
+
+    # ------------------------------------------------------------------
+    # Required
+    # ------------------------------------------------------------------
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Canonical task name, used as the CSV task_path column value."""
+        """Canonical task name — used as the CSV ``task_path`` column value."""
 
     @property
     @abstractmethod
     def suite(self) -> str:
         """Evaluation suite identifier.
 
-        Must be one of: ``lm_eval``, ``lighteval``, ``lmms_eval``.
+        One of: ``lm_eval``, ``lighteval``, ``lmms_eval``, or a contrib
+        ``SUITE_NAME`` (e.g. ``"region_reasoner"``).
         """
 
     @property
@@ -51,20 +57,106 @@ class BaseTask(ABC):
     def n_shots(self) -> list[int]:
         """List of n-shot values to evaluate at."""
 
+    # ------------------------------------------------------------------
+    # Optional — override as needed
+    # ------------------------------------------------------------------
+
     @property
     def engine_task_name(self) -> str:
         """Task name as passed to the eval engine CLI.
 
-        Defaults to ``name``. Override when the engine's registered task name
-        differs from the canonical task name used in the CSV / YAML.
+        Defaults to :attr:`name`. Override when the engine's registered task
+        name differs from the canonical name used in the CSV / YAML.
         """
         return self.name
 
     @property
-    def dataset_specs(self) -> list[DatasetSpec]:
-        """Dataset specifications for pre-download.
+    def description(self) -> str:
+        """Human-readable description shown in task group listings."""
+        return ""
 
-        Return an empty list if no pre-download is required (e.g. the dataset
-        is already available on the compute nodes or pre-downloaded elsewhere).
+    @property
+    def task_group_name(self) -> str:
+        """Key used for this task in the ``task_groups`` dict.
+
+        Defaults to :attr:`name` with underscores replaced by dashes.
+        """
+        return self.name.replace("_", "-")
+
+    @property
+    def primary_metric(self) -> str | None:
+        """Primary metric key written to the results CSV.
+
+        Maps to the ``task_metrics`` entry in the generated TASK_GROUPS dict.
+        Return ``None`` to omit (collect_results will use its fallback chain).
+        """
+        return None
+
+    @property
+    def dataset_specs(self) -> list[DatasetSpec]:
+        """HF datasets for pre-download via ``load_dataset()``.
+
+        Use for small datasets accessed through the ``datasets`` library.
+        For large files downloaded via ``snapshot_download()``, use
+        :attr:`hf_dataset_files` instead.
         """
         return []
+
+    @property
+    def hf_models(self) -> list[str]:
+        """Auxiliary HF model repos pre-downloaded via ``snapshot_download()``.
+
+        List repos required at eval time but not the primary model under
+        evaluation (e.g. a task router or segmentation model).
+        """
+        return []
+
+    @property
+    def hf_dataset_files(self) -> list[dict]:
+        """Specific dataset files pre-downloaded via ``snapshot_download()``.
+
+        Use instead of :attr:`dataset_specs` when only a subset of a large
+        dataset repo is needed, or when files are read directly (not via the
+        ``datasets`` library).
+
+        Each entry: ``{"repo_id": "org/dataset", "patterns": ["glob/..."]}``
+        """
+        return []
+
+    # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def to_task_groups_dict(cls) -> dict:
+        """Generate the ``TASK_GROUPS`` dict for use in ``suite.py``::
+
+            TASK_GROUPS: dict = MyTask.to_task_groups_dict()
+
+        Note:
+            The subclass must be instantiable with no arguments.
+        """
+        inst = cls()
+
+        task_entry: dict = {"task": inst.name}
+        if inst.dataset_specs:
+            task_entry["dataset"] = inst.dataset_specs[0].repo_id
+            if inst.dataset_specs[0].subset:
+                task_entry["subset"] = inst.dataset_specs[0].subset
+        if inst.hf_models:
+            task_entry["hf_models"] = inst.hf_models
+        if inst.hf_dataset_files:
+            task_entry["hf_dataset_files"] = inst.hf_dataset_files
+
+        task_group: dict = {
+            "suite": inst.suite,
+            "n_shots": inst.n_shots,
+            "tasks": [task_entry],
+        }
+        if inst.description:
+            task_group["description"] = inst.description
+
+        result: dict = {"task_groups": {inst.task_group_name: task_group}}
+        if inst.primary_metric:
+            result["task_metrics"] = {inst.name: inst.primary_metric}
+        return result

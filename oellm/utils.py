@@ -57,7 +57,14 @@ def _ensure_singularity_image(image_name: str | None) -> None:
             "or use --exec_mode=venv with a virtual environment."
         )
 
-    image_path = Path(os.getenv("EVAL_BASE_DIR")) / image_name
+    eval_base_dir = os.getenv("EVAL_BASE_DIR")
+    if not eval_base_dir:
+        raise RuntimeError(
+            "EVAL_BASE_DIR environment variable is not set. "
+            "It should be configured in clusters.yaml for this cluster."
+        )
+
+    image_path = Path(eval_base_dir) / image_name
 
     try:
         console = get_console()
@@ -95,8 +102,7 @@ def _setup_logging(verbose: bool = False):
 
     class RichFormatter(logging.Formatter):
         def format(self, record):
-            record.msg = f"{record.getMessage()}"
-            return record.msg
+            return record.getMessage()
 
     rich_handler.setFormatter(RichFormatter())
 
@@ -297,6 +303,52 @@ def _process_model_paths(models: Iterable[str]):
                 logging.warning(
                     f"Could not find any valid model for '{model}'. It will be skipped."
                 )
+
+
+def _pre_download_hf_model_repos(repo_ids: list[str]) -> None:
+    """Download auxiliary HF model repos (e.g. SAM2) required by contrib suites."""
+    from huggingface_hub import snapshot_download
+
+    console = get_console()
+    with console.status(
+        f"Downloading auxiliary models… {len(repo_ids)} repos", spinner="dots"
+    ) as status:
+        for idx, repo_id in enumerate(repo_ids, 1):
+            status.update(f"Downloading '{repo_id}' ({idx}/{len(repo_ids)})")
+            try:
+                snapshot_download(
+                    repo_id=repo_id,
+                    cache_dir=Path(os.getenv("HF_HOME")) / "hub"
+                    if "HF_HOME" in os.environ
+                    else None,
+                )
+            except Exception as e:
+                logging.warning(f"Failed to download auxiliary model '{repo_id}': {e}")
+
+
+def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
+    """Download specific files from HF dataset repos declared in task ``hf_dataset_files`` fields."""
+    from huggingface_hub import snapshot_download
+
+    console = get_console()
+    with console.status(
+        f"Downloading auxiliary dataset files… {len(dataset_files)} repos", spinner="dots"
+    ) as status:
+        for idx, spec in enumerate(dataset_files, 1):
+            repo_id = spec.get("repo_id", "")
+            patterns = spec.get("patterns")
+            status.update(f"Downloading '{repo_id}' ({idx}/{len(dataset_files)})")
+            try:
+                snapshot_download(
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    allow_patterns=patterns,
+                    cache_dir=Path(os.getenv("HF_HOME")) / "hub"
+                    if "HF_HOME" in os.environ
+                    else None,
+                )
+            except Exception as e:
+                logging.warning(f"Failed to download dataset files from '{repo_id}': {e}")
 
 
 def _pre_download_datasets_from_specs(

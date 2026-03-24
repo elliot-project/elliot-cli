@@ -44,16 +44,12 @@ class TestImageTaskGroupInRegistry:
         assert IMAGE_TASK_GROUP in all_groups
 
     def test_image_vqa_suite_is_lmms_eval(self):
-        data = yaml.safe_load(
-            (files("oellm.resources") / "task-groups.yaml").read_text()
-        )
+        data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         suite = data["task_groups"][IMAGE_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
     def test_image_vqa_has_eight_tasks(self):
-        data = yaml.safe_load(
-            (files("oellm.resources") / "task-groups.yaml").read_text()
-        )
+        data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][IMAGE_TASK_GROUP]["tasks"]
         assert len(tasks) == 8
 
@@ -112,6 +108,7 @@ class TestImageTaskGroupScheduleEvals:
         with (
             patch("oellm.main._load_cluster_env"),
             patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.main._detect_lmms_model_type", return_value="llava"),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(
@@ -136,6 +133,7 @@ class TestImageTaskGroupScheduleEvals:
         with (
             patch("oellm.main._load_cluster_env"),
             patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.main._detect_lmms_model_type", return_value="llava"),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(
@@ -149,5 +147,5 @@ class TestImageTaskGroupScheduleEvals:
         csv_files = list(tmp_path.glob("**/jobs.csv"))
         assert len(csv_files) == 1
         df = pd.read_csv(csv_files[0])
-        assert set(df["eval_suite"].unique()) == {"lmms_eval"}
+        assert all(s.startswith("lmms_eval") for s in df["eval_suite"].unique())
         assert set(df["task_path"].unique()) == EXPECTED_TASKS

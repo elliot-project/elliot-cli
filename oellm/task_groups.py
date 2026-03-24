@@ -17,6 +17,8 @@ class _Task:
     n_shots: list[int] | None = None
     dataset: str | None = None
     subset: str | None = None
+    hf_models: list[str] | None = None
+    hf_dataset_files: list[dict] | None = None
 
 
 @dataclass
@@ -47,12 +49,16 @@ class TaskGroup:
             task_n_shots = task_data.get("n_shots")
             task_dataset = task_data.get("dataset")
             task_subset = task_data.get("subset")
+            task_hf_models = task_data.get("hf_models")
+            task_hf_dataset_files = task_data.get("hf_dataset_files")
             tasks.append(
                 _Task(
                     name=task_name,
                     n_shots=task_n_shots,
                     dataset=task_dataset,
                     subset=task_subset,
+                    hf_models=task_hf_models,
+                    hf_dataset_files=task_hf_dataset_files,
                 )
             )
 
@@ -109,6 +115,15 @@ def _parse_task_groups(
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
 
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    _contrib = _contrib_task_groups()
+    data.setdefault("task_metrics", {}).update(_contrib.get("task_metrics", {}))
+    data.setdefault("task_groups", {}).update(_contrib.get("task_groups", {}))
+    data.setdefault("super_groups", {}).update(_contrib.get("super_groups", {}))
+
     task_groups: dict[str, TaskGroup] = {}
 
     for task_group_name, task_data in data["task_groups"].items():
@@ -135,6 +150,20 @@ class TaskGroupResult:
     suite: str
 
 
+def _iter_all_tasks(
+    parsed: dict[str, TaskSuperGroup | TaskGroup],
+) -> Iterable[tuple[_Task, str]]:
+    """Yield ``(task, suite)`` pairs from a parsed group dict, flattening super groups."""
+    for group in parsed.values():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                yield t, group.suite
+        else:
+            for g in group.task_groups:
+                for t in g.tasks:
+                    yield t, g.suite
+
+
 def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
     parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
     missing = {str(n).strip() for n in group_names if str(n).strip()} - set(parsed.keys())
@@ -142,23 +171,9 @@ def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
         raise ValueError(f"Unknown task group(s): {', '.join(sorted(missing))}")
 
     results: list[TaskGroupResult] = []
-
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            suite = group.suite
-            for t in group.tasks:
-                shots = [int(s) for s in (t.n_shots or [])]
-                for shot in shots:
-                    results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
-        else:
-            for g in group.task_groups:
-                suite = g.suite
-                for t in g.tasks:
-                    shots = [int(s) for s in (t.n_shots or [])]
-                    for shot in shots:
-                        results.append(
-                            TaskGroupResult(task=t.name, n_shot=shot, suite=suite)
-                        )
+    for t, suite in _iter_all_tasks(parsed):
+        for shot in (int(s) for s in (t.n_shots or [])):
+            results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
 
     return results
 
@@ -191,50 +206,68 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
             seen.add(key)
             specs.append(DatasetSpec(repo_id=dataset, subset=subset))
 
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                if t.dataset == "facebook/flores" and not t.subset:
-                    for lang in _extract_flores_subsets(t.name):
-                        add_spec(t.dataset, lang)
-                else:
-                    add_spec(t.dataset, t.subset)
+    for t, _ in _iter_all_tasks(parsed):
+        if t.dataset == "facebook/flores" and not t.subset:
+            for lang in _extract_flores_subsets(t.name):
+                add_spec(t.dataset, lang)
         else:
-            for g in group.task_groups:
-                for t in g.tasks:
-                    if t.dataset == "facebook/flores" and not t.subset:
-                        for lang in _extract_flores_subsets(t.name):
-                            add_spec(t.dataset, lang)
-                    else:
-                        add_spec(t.dataset, t.subset)
+            add_spec(t.dataset, t.subset)
 
     return specs
 
 
-def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
-    """Build a mapping from task names to their dataset specs from all task groups."""
-    data = (
-        yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
-    )
+def _collect_hf_model_repos(group_names: Iterable[str]) -> list[str]:
+    """Return deduplicated HF model repo IDs declared in task ``hf_models`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
 
-    all_group_names = list(data.get("task_groups", {}).keys())
+    repos: list[str] = []
+    seen: set[str] = set()
+
+    for t, _ in _iter_all_tasks(parsed):
+        for repo_id in t.hf_models or []:
+            if repo_id not in seen:
+                seen.add(repo_id)
+                repos.append(repo_id)
+
+    return repos
+
+
+def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
+    """Return deduplicated HF dataset file specs declared in task ``hf_dataset_files`` fields."""
+    parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
+
+    file_specs: list[dict] = []
+    seen: set[str] = set()
+
+    for t, _ in _iter_all_tasks(parsed):
+        for spec in t.hf_dataset_files or []:
+            repo_id = spec.get("repo_id", "")
+            if repo_id and repo_id not in seen:
+                seen.add(repo_id)
+                file_specs.append(spec)
+
+    return file_specs
+
+
+def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
+    """Build a mapping from task names to their dataset specs from all task groups.
+
+    Includes both core YAML task groups and contrib task groups from the registry.
+    """
+    all_group_names = get_all_task_group_names()
     parsed = _parse_task_groups(all_group_names)
 
     task_map: dict[str, list[DatasetSpec]] = {}
 
-    for _, group in parsed.items():
-        if isinstance(group, TaskGroup):
-            for t in group.tasks:
-                if t.dataset and t.name not in task_map:
-                    if t.dataset == "facebook/flores" and not t.subset:
-                        task_map[t.name] = [
-                            DatasetSpec(repo_id=t.dataset, subset=lang)
-                            for lang in _extract_flores_subsets(t.name)
-                        ]
-                    else:
-                        task_map[t.name] = [
-                            DatasetSpec(repo_id=t.dataset, subset=t.subset)
-                        ]
+    for t, _ in _iter_all_tasks(parsed):
+        if t.dataset and t.name not in task_map:
+            if t.dataset == "facebook/flores" and not t.subset:
+                task_map[t.name] = [
+                    DatasetSpec(repo_id=t.dataset, subset=lang)
+                    for lang in _extract_flores_subsets(t.name)
+                ]
+            else:
+                task_map[t.name] = [DatasetSpec(repo_id=t.dataset, subset=t.subset)]
 
     return task_map
 
@@ -261,8 +294,15 @@ def _lookup_dataset_specs_for_tasks(task_names: Iterable[str]) -> list[DatasetSp
 
 
 def get_all_task_group_names() -> list[str]:
-    """Return all available task group names (excluding super_groups)."""
+    """Return all available task group names (core + all contrib suites)."""
     data = (
         yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
     )
-    return list(data.get("task_groups", {}).keys())
+    core_names = list(data.get("task_groups", {}).keys())
+
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    contrib_names = list(_contrib_task_groups().get("task_groups", {}).keys())
+    return core_names + [n for n in contrib_names if n not in core_names]

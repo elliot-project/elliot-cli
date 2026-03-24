@@ -56,6 +56,9 @@ ignore = [
     "W191",  # indentation contains tabs
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["oellm"]
+
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 

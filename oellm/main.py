@@ -15,6 +15,8 @@ from jsonargparse import auto_cli
 
 from oellm.task_groups import (
     _collect_dataset_specs,
+    _collect_hf_dataset_files,
+    _collect_hf_model_repos,
     _expand_task_groups,
     _lookup_dataset_specs_for_tasks,
 )
@@ -25,6 +27,8 @@ from oellm.utils import (
     _load_cluster_env,
     _num_jobs_in_queue,
     _pre_download_datasets_from_specs,
+    _pre_download_hf_dataset_files,
+    _pre_download_hf_model_repos,
     _process_model_paths,
     _setup_logging,
     capture_third_party_output_from_kwarg,
@@ -134,14 +138,18 @@ def schedule_evals(
     else:
         logging.info("Skipping runtime environment check (--skip-checks enabled)")
 
-    if isinstance(models, str) and models is not None:
+    if isinstance(models, str):
         models = [m.strip() for m in models.split(",") if m.strip()]  # type: ignore
 
-    if isinstance(tasks, str) and tasks is not None:
+    if isinstance(tasks, str):
         tasks = [t.strip() for t in tasks.split(",") if t.strip()]  # type: ignore
 
-    if isinstance(n_shot, int) and n_shot is not None:
+    if isinstance(n_shot, int):
         n_shot = [n_shot]
+
+    group_names: list[str] | None = None
+    if task_groups:
+        group_names = [g.strip() for g in task_groups.split(",")]
 
     eval_jobs: list[EvaluationJob] = []
     if eval_csv_path:
@@ -161,8 +169,6 @@ def schedule_evals(
         else:
             df["eval_suite"] = df["eval_suite"].fillna("lm_eval")
 
-        # Always expand local model paths, even with skip_checks
-        df["model_path"].unique()
         eval_jobs.extend(
             [
                 EvaluationJob(
@@ -176,7 +182,7 @@ def schedule_evals(
         )
 
     elif models:
-        if task_groups is None:
+        if group_names is None:
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -191,7 +197,7 @@ def schedule_evals(
                 ]
             )
         else:
-            expanded = _expand_task_groups([g.strip() for g in task_groups.split(",")])
+            expanded = _expand_task_groups(group_names)
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -223,11 +229,26 @@ def schedule_evals(
 
     # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
     # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
+    # For contrib suites, the registry's detect_model_flags() provides the same service.
+    from oellm import registry as _registry  # noqa: PLC0415
+
     for job in expanded_eval_jobs:
         if job.eval_suite == "lmms_eval":
             adapter = _detect_lmms_model_type(str(job.model_path))
             job.eval_suite = f"lmms_eval:{adapter}"
             logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
+        else:
+            try:
+                mod = _registry.get_suite(job.eval_suite)
+                if hasattr(mod, "detect_model_flags"):
+                    flags = mod.detect_model_flags(str(job.model_path))
+                    if flags:
+                        job.eval_suite = f"{job.eval_suite}:{flags}"
+                        logging.debug(
+                            f"Contrib suite flags for {job.model_path} ({mod.SUITE_NAME}): {flags}"
+                        )
+            except KeyError:
+                pass  # Not a registered contrib suite — pass eval_suite through unchanged
 
     if not skip_checks:
         hub_models: set[str | Path] = {
@@ -253,10 +274,8 @@ def schedule_evals(
     # network access on compute nodes.
     if not skip_checks:
         dataset_specs = []
-        if task_groups:
-            dataset_specs = _collect_dataset_specs(
-                [g.strip() for g in task_groups.split(",")]
-            )
+        if group_names:
+            dataset_specs = _collect_dataset_specs(group_names)
         else:
             # Look up individual tasks in task groups registry
             all_tasks = df["task_path"].unique().tolist()
@@ -270,6 +289,18 @@ def schedule_evals(
             _pre_download_datasets_from_specs(
                 dataset_specs, trust_remote_code=trust_remote_code
             )
+
+        hf_model_repos = []
+        if group_names:
+            hf_model_repos = _collect_hf_model_repos(group_names)
+        if hf_model_repos:
+            _pre_download_hf_model_repos(hf_model_repos)
+
+        hf_dataset_files = []
+        if group_names:
+            hf_dataset_files = _collect_hf_dataset_files(group_names)
+        if hf_dataset_files:
+            _pre_download_hf_dataset_files(hf_dataset_files)
     else:
         logging.info("Skipping dataset pre-download (--skip-checks enabled)")
 
@@ -309,7 +340,6 @@ def schedule_evals(
 
     sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
 
-    # Calculate dynamic array size and time limits
     total_evals = len(df)
     minutes_per_eval = 10  # Budget 10 minutes per eval
     total_minutes = total_evals * minutes_per_eval
@@ -327,6 +357,11 @@ def schedule_evals(
     hours_with_margin = min(hours_with_margin, 23)
     computed_time = f"{hours_with_margin:02d}:59:00"
     time_limit = computed_time
+
+    # clusters.yaml TIME_LIMIT overrides the computed value
+    if cluster_time_limit := os.environ.get("TIME_LIMIT"):
+        time_limit = cluster_time_limit
+        logging.info(f"Using TIME_LIMIT from clusters.yaml: {time_limit}")
 
     # Apply slurm_template_var overrides (JSON object)
     if slurm_template_var:
@@ -349,8 +384,7 @@ def schedule_evals(
                 os.environ[key] = str(value)
                 logging.info(f"Using slurm_template_var override: {key}={value}")
 
-    # Log the calculated values
-    logging.info("📊 Evaluation planning:")
+    logging.info("Evaluation planning:")
     logging.info(f"   Total evaluations: {total_evals}")
     logging.info(f"   Estimated time per eval: {minutes_per_eval} minutes")
     logging.info(
@@ -401,12 +435,11 @@ def schedule_evals(
     try:
         logging.info("Calling sbatch to launch the evaluations")
 
-        # Provide helpful information about job monitoring and file locations
-        logging.info(f"📁 Evaluation directory: {evals_dir}")
-        logging.info(f"📄 SLURM script: {sbatch_script_path}")
-        logging.info(f"📋 Job configuration: {csv_path}")
-        logging.info(f"📜 SLURM logs will be stored in: {slurm_logs_dir}")
-        logging.info(f"📊 Results will be stored in: {evals_dir / 'results'}")
+        logging.info(f"Evaluation directory: {evals_dir}")
+        logging.info(f"SLURM script: {sbatch_script_path}")
+        logging.info(f"Job configuration: {csv_path}")
+        logging.info(f"SLURM logs: {slurm_logs_dir}")
+        logging.info(f"Results: {evals_dir / 'results'}")
 
         result = subprocess.run(
             ["sbatch"],
@@ -421,9 +454,9 @@ def schedule_evals(
         job_id_match = re.search(r"Submitted batch job (\d+)", result.stdout)
         if job_id_match:
             job_id = job_id_match.group(1)
-            logging.info(f"🔍 Monitor job status: squeue -j {job_id}")
-            logging.info(f"📈 View job details: scontrol show job {job_id}")
-            logging.info(f"❌ Cancel job if needed: scancel {job_id}")
+            logging.info(f"Monitor job status: squeue -j {job_id}")
+            logging.info(f"View job details: scontrol show job {job_id}")
+            logging.info(f"Cancel job if needed: scancel {job_id}")
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to submit job: {e}")
         logging.error(f"sbatch stderr: {e.stderr}")
@@ -460,6 +493,14 @@ def collect_results(
         _tg_cfg = yaml.safe_load(_f)
     task_metrics = _tg_cfg.get("task_metrics", {})
 
+    # Merge contrib task_metrics so that custom benchmarks registered via the
+    # plugin registry are resolved correctly by _resolve_metric() below.
+    from oellm.registry import (
+        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
+    )
+
+    task_metrics.update(_contrib_task_groups().get("task_metrics", {}))
+
     def _resolve_metric(
         task_name: str, result_dict: dict
     ) -> tuple[float | None, str | None]:
@@ -471,8 +512,7 @@ def collect_results(
         # below sees "vqa_score,none" regardless of engine.  Keys without "/"
         # (lm-eval format) are passed through unchanged.
         result_dict = {
-            (k.split("/", 1)[1] if "/" in k else k): v
-            for k, v in result_dict.items()
+            (k.split("/", 1)[1] if "/" in k else k): v for k, v in result_dict.items()
         }
 
         # Skip non-metric keys; lm-eval uses suffixes like ",none" or ",remove_whitespace"
@@ -511,7 +551,11 @@ def collect_results(
         # Last resort: pick the first numeric non-stderr value (catches lmms-eval
         # benchmarks with non-standard metric names like mme_cognition_score)
         for k, v in result_dict.items():
-            if isinstance(v, (int, float)) and "stderr" not in k and k not in ("alias", " ", ""):
+            if (
+                isinstance(v, (int, float))
+                and "stderr" not in k
+                and k not in ("alias", " ", "")
+            ):
                 return float(v), k
         return None, None
 
@@ -522,7 +566,11 @@ def collect_results(
     # lm-eval writes flat JSON files: results/<hex>.json
     # lmms-eval writes nested dirs:  results/<hex>.json/<model>/<ts>_results.json
     # rglob("*.json") + is_file() finds both without breaking backward compat.
-    search_root = (results_path / "results") if (results_path / "results").is_dir() else results_path
+    search_root = (
+        (results_path / "results")
+        if (results_path / "results").is_dir()
+        else results_path
+    )
     json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
 
     if not json_files:
@@ -542,20 +590,17 @@ def collect_results(
             jobs_df = pd.read_csv(jobs_csv_path)
             logging.info(f"Found {len(jobs_df)} scheduled jobs in jobs.csv")
 
-    # Collect results
     rows = []
-    completed_jobs = set()  # Track (model, task, n_shot) tuples
+    completed_jobs = set()
 
     for json_file in json_files:
         with open(json_file) as f:
             data = json.load(f)
 
-        # Extract model name/path.
         # lmms-eval sets model_name to the adapter type (e.g. "llava_hf"),
         # not the checkpoint path; the actual path is in model_name_or_path.
         model_name = data.get("model_name_or_path") or data.get("model_name", "unknown")
 
-        # Extract results for each task
         results = data.get("results", {})
         n_shot_data = data.get("n-shot", {})
 
@@ -634,7 +679,6 @@ def collect_results(
             if task_name.startswith("global_mmlu_") and task_name.count("_") >= 4:
                 continue
 
-            # Get n_shot for this task
             n_shot = n_shot_data.get(task_name, "unknown")
 
             # If this is a group aggregate and n_shot is missing, derive from any subtask
@@ -669,11 +713,9 @@ def collect_results(
             if set(task_results.keys()) <= {"alias", " ", ""}:
                 continue
 
-            # Get the primary metric (usually acc, acc_norm)
             performance, metric_name = _resolve_metric(task_name, task_results)
 
             if performance is not None:
-                # Track completed job for check mode
                 if check:
                     completed_jobs.add((model_name, task_name, n_shot))
 
@@ -699,14 +741,12 @@ def collect_results(
         logging.warning("No results extracted from JSON files")
         return
 
-    # Create DataFrame and save to CSV (if we have results)
     if rows:
         df = pd.DataFrame(rows)
         df.to_csv(output_csv, index=False)
         logging.info(f"Results saved to {output_csv}")
         logging.info(f"Extracted {len(df)} evaluation results")
 
-        # Print summary statistics
         if verbose:
             logging.info("Summary:")
             logging.info(f"Unique models: {df['model_name'].nunique()}")
@@ -715,24 +755,19 @@ def collect_results(
                 f"N-shot values: {sorted(str(x) for x in df['n_shot'].unique())}"
             )
 
-    # Perform check analysis if requested
     if check:
         logging.info("=== Evaluation Status Check ===")
 
-        # Find missing jobs
         missing_jobs = []
 
         for _, job in jobs_df.iterrows():
             job_tuple = (job["model_path"], job["task_path"], job["n_shot"])
 
-            # Check if this job corresponds to one of our completed results
             is_completed = False
 
-            # Try exact matching first
             if job_tuple in completed_jobs:
                 is_completed = True
             else:
-                # Try fuzzy matching for model names
                 for completed_job in completed_jobs:
                     completed_model, completed_task, completed_n_shot = completed_job
 
@@ -765,7 +800,6 @@ def collect_results(
                 f"You can run these with: oellm schedule-eval --eval_csv_path {missing_csv}"
             )
 
-            # Show some examples if verbose
             if verbose and len(missing_jobs) > 0:
                 logging.info("Example missing jobs:")
                 for _i, (_, job) in enumerate(missing_df.head(5).iterrows()):
