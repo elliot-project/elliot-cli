@@ -4,7 +4,6 @@ import math
 import os
 import re
 import subprocess
-from dataclasses import dataclass
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
@@ -13,6 +12,8 @@ from string import Template
 import pandas as pd
 from jsonargparse import auto_cli
 
+from oellm.constants import EvaluationJob, detect_lmms_model_type
+from oellm.results import collect_results
 from oellm.task_groups import (
     _collect_dataset_specs,
     _collect_hf_dataset_files,
@@ -34,41 +35,8 @@ from oellm.utils import (
     capture_third_party_output_from_kwarg,
 )
 
-
-@dataclass
-class EvaluationJob:
-    model_path: Path | str
-    task_path: str
-    n_shot: int
-    eval_suite: str
-
-
-def _detect_lmms_model_type(model_path: str) -> str:
-    """Detect the lmms-eval adapter class name from a model path or HF repo name.
-
-    lmms-eval requires --model <adapter_class> (e.g. llava_hf, qwen2_5_vl).
-    This is inferred from the model name so users never need to set it manually.
-    To add support for a new model family, add a pattern here.
-    """
-    name = str(model_path).lower()
-    if "qwen2.5-vl" in name or "qwen2_5_vl" in name or "qwen2.5vl" in name:
-        return "qwen2_5_vl"
-    if "qwen2-vl" in name or "qwen2_vl" in name:
-        return "qwen2_vl"
-    if "llava" in name:
-        return "llava_hf"
-    if "internvl" in name:
-        return "internvl2"
-    if "idefics" in name:
-        return "idefics3"
-    if "minicpm" in name:
-        return "minicpm_v"
-    if "qwen" in name:
-        return "qwen_vl"
-    raise ValueError(
-        f"Cannot auto-detect lmms-eval adapter class from model path '{model_path}'. "
-        "Add your model family to _detect_lmms_model_type() in main.py."
-    )
+# Backward-compatible alias
+_detect_lmms_model_type = detect_lmms_model_type
 
 
 @capture_third_party_output_from_kwarg("verbose")
@@ -341,27 +309,10 @@ def schedule_evals(
     sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
 
     total_evals = len(df)
-    minutes_per_eval = 10  # Budget 10 minutes per eval
-    total_minutes = total_evals * minutes_per_eval
-    max_minutes_per_job = 18 * 60  # 18 hours
-    min_array_size_for_time = max(1, int(math.ceil(total_minutes / max_minutes_per_job)))
-    desired_array_size = min(128, total_evals) if total_evals >= 128 else total_evals
-    if desired_array_size < min_array_size_for_time:
-        desired_array_size = min_array_size_for_time
-    actual_array_size = min(remaining_queue_capacity, desired_array_size, total_evals)
+    actual_array_size = min(remaining_queue_capacity, total_evals)
     evals_per_job = max(1, int(math.ceil(total_evals / actual_array_size)))
-    minutes_per_job = evals_per_job * minutes_per_eval
-    minutes_with_margin = int(minutes_per_job * 1.2)
-    hours_with_margin = max(1, int(math.ceil(minutes_with_margin / 60)))
-    hours_with_margin = max(hours_with_margin, 3)
-    hours_with_margin = min(hours_with_margin, 23)
-    computed_time = f"{hours_with_margin:02d}:59:00"
-    time_limit = computed_time
 
-    # clusters.yaml TIME_LIMIT overrides the computed value
-    if cluster_time_limit := os.environ.get("TIME_LIMIT"):
-        time_limit = cluster_time_limit
-        logging.info(f"Using TIME_LIMIT from clusters.yaml: {time_limit}")
+    time_limit = os.environ.get("TIME_LIMIT", "12:00:00")
 
     # Apply slurm_template_var overrides (JSON object)
     if slurm_template_var:
@@ -386,19 +337,11 @@ def schedule_evals(
 
     logging.info("Evaluation planning:")
     logging.info(f"   Total evaluations: {total_evals}")
-    logging.info(f"   Estimated time per eval: {minutes_per_eval} minutes")
     logging.info(
-        f"   Total estimated time: {total_minutes} minutes ({total_minutes / 60:.1f} hours)"
-    )
-    logging.info(f"   Desired array size: {desired_array_size}")
-    logging.info(
-        f"   Actual array size: {actual_array_size} (limited by queue capacity: {remaining_queue_capacity})"
+        f"   Array size: {actual_array_size} (queue capacity: {remaining_queue_capacity})"
     )
     logging.info(f"   Evaluations per job: {evals_per_job}")
-    logging.info(
-        f"   Time per job: {minutes_per_job} minutes ({minutes_per_job / 60:.1f} hours)"
-    )
-    logging.info(f"   Time limit with safety margin: {time_limit}")
+    logging.info(f"   Time limit: {time_limit}")
 
     sbatch_script = sbatch_template.format(
         csv_path=csv_path,
@@ -464,350 +407,6 @@ def schedule_evals(
         logging.error(
             "sbatch command not found. Please make sure you are on a system with SLURM installed."
         )
-
-
-def collect_results(
-    results_dir: str,
-    output_csv: str = "eval_results.csv",
-    *,
-    check: bool = False,
-    verbose: bool = False,
-) -> None:
-    """
-    Collect evaluation results from JSON files and export to CSV.
-
-    Args:
-        results_dir: Path to the directory containing result JSON files
-        output_csv: Output CSV filename (default: eval_results.csv)
-        check: Check for missing evaluations and create a missing jobs CSV
-        verbose: Enable verbose logging
-    """
-    import json
-
-    import yaml
-
-    _setup_logging(verbose)
-
-    task_groups_yaml = files("oellm.resources") / "task-groups.yaml"
-    with open(str(task_groups_yaml)) as _f:
-        _tg_cfg = yaml.safe_load(_f)
-    task_metrics = _tg_cfg.get("task_metrics", {})
-
-    # Merge contrib task_metrics so that custom benchmarks registered via the
-    # plugin registry are resolved correctly by _resolve_metric() below.
-    from oellm.registry import (
-        get_all_task_groups as _contrib_task_groups,  # noqa: PLC0415
-    )
-
-    task_metrics.update(_contrib_task_groups().get("task_metrics", {}))
-
-    def _resolve_metric(
-        task_name: str, result_dict: dict
-    ) -> tuple[float | None, str | None]:
-        """Return (value, metric_name) for task_name from result_dict."""
-
-        # Normalise lmms-eval task-scoped metric keys so lm-eval and lmms-eval
-        # output is handled identically.  lmms-eval writes keys like
-        # "vqav2/vqa_score,none"; strip the "task_name/" prefix so the lookup
-        # below sees "vqa_score,none" regardless of engine.  Keys without "/"
-        # (lm-eval format) are passed through unchanged.
-        result_dict = {
-            (k.split("/", 1)[1] if "/" in k else k): v for k, v in result_dict.items()
-        }
-
-        # Skip non-metric keys; lm-eval uses suffixes like ",none" or ",remove_whitespace"
-        def _first_numeric(d: dict, *candidates: str) -> tuple[float | None, str | None]:
-            for c in candidates:
-                if c in d and isinstance(d[c], (int, float)):
-                    return float(d[c]), c
-            return None, None
-
-        def _first_matching_prefix(
-            d: dict, prefix: str
-        ) -> tuple[float | None, str | None]:
-            for k, v in d.items():
-                if (k == prefix or k.startswith(prefix + ",")) and isinstance(
-                    v, (int, float)
-                ):
-                    return float(v), k
-            return None, None
-
-        preferred = task_metrics.get(task_name)
-        if preferred is not None:
-            val, key = _first_numeric(result_dict, f"{preferred},none", preferred)
-            if val is not None:
-                return val, key
-            val, key = _first_matching_prefix(result_dict, preferred)
-            return val, key
-
-        for metric in ["acc,none", "acc", "accuracy", "f1", "exact_match"]:
-            val, key = _first_numeric(result_dict, metric)
-            if val is not None:
-                return val, key
-            val, key = _first_matching_prefix(result_dict, metric.split(",")[0])
-            if val is not None:
-                return val, key
-
-        # Last resort: pick the first numeric non-stderr value (catches lmms-eval
-        # benchmarks with non-standard metric names like mme_cognition_score)
-        for k, v in result_dict.items():
-            if (
-                isinstance(v, (int, float))
-                and "stderr" not in k
-                and k not in ("alias", " ", "")
-            ):
-                return float(v), k
-        return None, None
-
-    results_path = Path(results_dir)
-    if not results_path.exists():
-        raise ValueError(f"Results directory does not exist: {results_dir}")
-
-    # lm-eval writes flat JSON files: results/<hex>.json
-    # lmms-eval writes nested dirs:  results/<hex>.json/<model>/<ts>_results.json
-    # rglob("*.json") + is_file() finds both without breaking backward compat.
-    search_root = (
-        (results_path / "results")
-        if (results_path / "results").is_dir()
-        else results_path
-    )
-    json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
-
-    if not json_files:
-        logging.warning(f"No JSON files found in {results_dir}")
-        if not check:
-            return
-
-    logging.info(f"Found {len(json_files)} result files")
-
-    # If check mode, also load the jobs.csv to compare
-    if check:
-        jobs_csv_path = results_path / "jobs.csv"
-        if not jobs_csv_path.exists():
-            logging.warning(f"No jobs.csv found in {results_dir}, cannot perform check")
-            check = False
-        else:
-            jobs_df = pd.read_csv(jobs_csv_path)
-            logging.info(f"Found {len(jobs_df)} scheduled jobs in jobs.csv")
-
-    rows = []
-    completed_jobs = set()
-
-    for json_file in json_files:
-        with open(json_file) as f:
-            data = json.load(f)
-
-        # lmms-eval sets model_name to the adapter type (e.g. "llava_hf"),
-        # not the checkpoint path; the actual path is in model_name_or_path.
-        model_name = data.get("model_name_or_path") or data.get("model_name", "unknown")
-
-        results = data.get("results", {})
-        n_shot_data = data.get("n-shot", {})
-
-        # lmms-eval has no "n-shot" dict; fall back to per-task config "num_fewshot"
-        if not n_shot_data:
-            for _task, _cfg in data.get("configs", {}).items():
-                if isinstance(_cfg, dict):
-                    shot = _cfg.get("num_fewshot")
-                    if shot is not None:
-                        n_shot_data[_task] = shot
-
-        # Infer a global n_shot if exactly one unique value exists in this JSON
-        global_n_shot = None
-        try:
-            candidate_values = []
-            for _v in n_shot_data.values():
-                if isinstance(_v, (int | float)):
-                    candidate_values.append(int(_v))
-                elif isinstance(_v, str) and _v.isdigit():
-                    candidate_values.append(int(_v))
-            unique_values = set(candidate_values)
-            if len(unique_values) == 1:
-                global_n_shot = next(iter(unique_values))
-        except Exception:
-            pass
-
-        # Aggregate groups (lm-eval harness)
-        groups_map = data.get("groups", {})
-        group_subtasks_map = data.get("group_subtasks", {})
-        group_aggregate_names = set(groups_map.keys()) | set(group_subtasks_map.keys())
-        group_subtask_names: set[str] = set()
-        for _agg, _subs in group_subtasks_map.items():
-            for _s in _subs:
-                group_subtask_names.add(_s)
-
-        # Prefer only the first aggregate metric from groups (simplified)
-        if groups_map:
-            group_name, group_results = next(iter(groups_map.items()))
-            n_shot = n_shot_data.get(group_name, "unknown")
-            if n_shot == "unknown":
-                for subtask_name in group_subtasks_map.get(group_name, []):
-                    if subtask_name in n_shot_data:
-                        n_shot = n_shot_data[subtask_name]
-                        break
-            if n_shot == "unknown" and global_n_shot is not None:
-                n_shot = global_n_shot
-            performance, metric_name = _resolve_metric(group_name, group_results)
-            if performance is not None:
-                if check:
-                    completed_jobs.add((model_name, group_name, n_shot))
-                rows.append(
-                    {
-                        "model_name": model_name,
-                        "task": group_name,
-                        "n_shot": n_shot,
-                        "performance": performance,
-                        "metric_name": metric_name if metric_name is not None else "",
-                    }
-                )
-                # Skip per-task iteration when groups are present
-                continue
-
-        for task_name, task_results in results.items():
-            # Skip entries already added from groups
-            if groups_map and task_name in group_aggregate_names:
-                continue
-            # Skip any lm-eval group subtasks; keep only aggregates
-            if task_name in group_subtask_names:
-                continue
-
-            # Skip MMLU subtasks - only keep the aggregate score
-            if task_name.startswith("mmlu_") and task_name != "mmlu":
-                continue
-
-            # Skip Global MMLU subtasks - keep only aggregates like global_mmlu_full_pt
-            if task_name.startswith("global_mmlu_") and task_name.count("_") >= 4:
-                continue
-
-            n_shot = n_shot_data.get(task_name, "unknown")
-
-            # If this is a group aggregate and n_shot is missing, derive from any subtask
-            if task_name in group_aggregate_names and n_shot == "unknown":
-                for subtask_name in group_subtasks_map.get(task_name, []):
-                    if subtask_name in n_shot_data:
-                        n_shot = n_shot_data[subtask_name]
-                        break
-            if n_shot == "unknown" and global_n_shot is not None:
-                n_shot = global_n_shot
-
-            # Special handling for MMLU aggregate - get n_shot from any MMLU subtask
-            if task_name == "mmlu" and n_shot == "unknown":
-                for key, value in n_shot_data.items():
-                    if key.startswith("mmlu_"):
-                        n_shot = value
-                        break
-                if n_shot == "unknown" and global_n_shot is not None:
-                    n_shot = global_n_shot
-
-            # Special handling for Global MMLU aggregates - get n_shot from subtasks
-            if task_name.startswith("global_mmlu_") and n_shot == "unknown":
-                prefix = f"{task_name}_"
-                for key, value in n_shot_data.items():
-                    if key.startswith(prefix):
-                        n_shot = value
-                        break
-                if n_shot == "unknown" and global_n_shot is not None:
-                    n_shot = global_n_shot
-
-            # Skip lmms-eval parent task placeholders (no numeric metrics, just alias)
-            if set(task_results.keys()) <= {"alias", " ", ""}:
-                continue
-
-            performance, metric_name = _resolve_metric(task_name, task_results)
-
-            if performance is not None:
-                if check:
-                    completed_jobs.add((model_name, task_name, n_shot))
-
-                rows.append(
-                    {
-                        "model_name": model_name,
-                        "task": task_name,
-                        "n_shot": n_shot,
-                        "performance": performance,
-                        "metric_name": metric_name if metric_name is not None else "",
-                    }
-                )
-            else:
-                # Log missing metrics — for lmms-eval tasks this often means
-                # llm_as_judge_eval is null (no judge LLM configured) or the
-                # metric key is not yet listed in task_metrics in task-groups.yaml
-                logging.warning(
-                    f"No numeric metric for '{task_name}' in {json_file.name} "
-                    f"— value may be null (LLM judge not configured?) or metric key missing from task_metrics"
-                )
-
-    if not rows and not check:
-        logging.warning("No results extracted from JSON files")
-        return
-
-    if rows:
-        df = pd.DataFrame(rows)
-        df.to_csv(output_csv, index=False)
-        logging.info(f"Results saved to {output_csv}")
-        logging.info(f"Extracted {len(df)} evaluation results")
-
-        if verbose:
-            logging.info("Summary:")
-            logging.info(f"Unique models: {df['model_name'].nunique()}")
-            logging.info(f"Unique tasks: {df['task'].nunique()}")
-            logging.info(
-                f"N-shot values: {sorted(str(x) for x in df['n_shot'].unique())}"
-            )
-
-    if check:
-        logging.info("=== Evaluation Status Check ===")
-
-        missing_jobs = []
-
-        for _, job in jobs_df.iterrows():
-            job_tuple = (job["model_path"], job["task_path"], job["n_shot"])
-
-            is_completed = False
-
-            if job_tuple in completed_jobs:
-                is_completed = True
-            else:
-                for completed_job in completed_jobs:
-                    completed_model, completed_task, completed_n_shot = completed_job
-
-                    if (
-                        job["n_shot"] == completed_n_shot
-                        and job["task_path"] == completed_task
-                        and (
-                            str(job["model_path"]).endswith(completed_model)
-                            or completed_model in str(job["model_path"])
-                        )
-                    ):
-                        is_completed = True
-                        break
-
-            if not is_completed:
-                missing_jobs.append(job)
-
-        completed_count = len(jobs_df) - len(missing_jobs)
-
-        logging.info(f"Total scheduled jobs: {len(jobs_df)}")
-        logging.info(f"Completed jobs: {completed_count}")
-        logging.info(f"Missing jobs: {len(missing_jobs)}")
-
-        if len(missing_jobs) > 0:
-            missing_df = pd.DataFrame(missing_jobs)
-            missing_csv = output_csv.replace(".csv", "_missing.csv")
-            missing_df.to_csv(missing_csv, index=False)
-            logging.info(f"Missing jobs saved to: {missing_csv}")
-            logging.info(
-                f"You can run these with: oellm schedule-eval --eval_csv_path {missing_csv}"
-            )
-
-            if verbose and len(missing_jobs) > 0:
-                logging.info("Example missing jobs:")
-                for _i, (_, job) in enumerate(missing_df.head(5).iterrows()):
-                    logging.info(
-                        f"  - {job['model_path']} | {job['task_path']} | n_shot={job['n_shot']}"
-                    )
-                if len(missing_jobs) > 5:
-                    logging.info(f"  ... and {len(missing_jobs) - 5} more")
 
 
 def main():
