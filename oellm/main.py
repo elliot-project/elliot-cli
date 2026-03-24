@@ -337,7 +337,9 @@ def schedule_evals(
 
     logging.info("Evaluation planning:")
     logging.info(f"   Total evaluations: {total_evals}")
-    logging.info(f"   Array size: {actual_array_size} (queue capacity: {remaining_queue_capacity})")
+    logging.info(
+        f"   Array size: {actual_array_size} (queue capacity: {remaining_queue_capacity})"
+    )
     logging.info(f"   Evaluations per job: {evals_per_job}")
     logging.info(f"   Time limit: {time_limit}")
 

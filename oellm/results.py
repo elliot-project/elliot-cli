@@ -32,9 +32,7 @@ def _resolve_metric(
                 return float(d[c]), c
         return None, None
 
-    def _first_matching_prefix(
-        d: dict, prefix: str
-    ) -> tuple[float | None, str | None]:
+    def _first_matching_prefix(d: dict, prefix: str) -> tuple[float | None, str | None]:
         for k, v in d.items():
             if (k == prefix or k.startswith(prefix + ",")) and isinstance(
                 v, (int, float)
@@ -238,7 +236,9 @@ def collect_results(
                         break
             if n_shot == "unknown" and global_n_shot is not None:
                 n_shot = global_n_shot
-            performance, metric_name = _resolve_metric(group_name, group_results, task_metrics)
+            performance, metric_name = _resolve_metric(
+                group_name, group_results, task_metrics
+            )
             if performance is not None:
                 if check:
                     completed_jobs.add((model_name, group_name, n_shot))
@@ -271,15 +271,20 @@ def collect_results(
                 continue
 
             n_shot = _resolve_n_shot(
-                task_name, n_shot_data, group_subtasks_map,
-                group_aggregate_names, global_n_shot,
+                task_name,
+                n_shot_data,
+                group_subtasks_map,
+                group_aggregate_names,
+                global_n_shot,
             )
 
             # Skip lmms-eval parent task placeholders (no numeric metrics, just alias)
             if set(task_results.keys()) <= {"alias", " ", ""}:
                 continue
 
-            performance, metric_name = _resolve_metric(task_name, task_results, task_metrics)
+            performance, metric_name = _resolve_metric(
+                task_name, task_results, task_metrics
+            )
 
             if performance is not None:
                 if check:

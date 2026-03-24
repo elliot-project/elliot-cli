@@ -174,9 +174,7 @@ def _load_cluster_env() -> None:
         "GPUS_PER_NODE",
     ]
     missing = [
-        v
-        for v in _required_vars
-        if not os.environ.get(v) or "{" in os.environ.get(v, "")
+        v for v in _required_vars if not os.environ.get(v) or "{" in os.environ.get(v, "")
     ]
     if missing:
         raise RuntimeError(
