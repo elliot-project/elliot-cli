@@ -165,6 +165,25 @@ def _load_cluster_env() -> None:
     for k, v in final_env.items():
         os.environ.setdefault(k, v)
 
+    # Validate that critical sbatch variables resolved to real values.
+    _required_vars = [
+        "PARTITION",
+        "ACCOUNT",
+        "EVAL_BASE_DIR",
+        "EVAL_OUTPUT_DIR",
+        "GPUS_PER_NODE",
+    ]
+    missing = [
+        v
+        for v in _required_vars
+        if not os.environ.get(v) or "{" in os.environ.get(v, "")
+    ]
+    if missing:
+        raise RuntimeError(
+            f"Required cluster variables are missing or unresolved: {', '.join(missing)}. "
+            f"Check your clusters.yaml entry or set them in your environment."
+        )
+
 
 def _num_jobs_in_queue() -> int:
     user = os.environ.get("USER")
@@ -280,7 +299,9 @@ def _process_model_paths(models: Iterable[str]):
                     try:
                         snapshot_download(
                             repo_id=repo_id,
-                            cache_dir=Path(os.getenv("HF_HOME")) / "hub",
+                            cache_dir=Path(os.getenv("HF_HOME")) / "hub"
+                            if "HF_HOME" in os.environ
+                            else None,
                             **snapshot_kwargs,
                         )
                         per_model_paths.append(model)
