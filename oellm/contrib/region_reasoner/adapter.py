@@ -6,11 +6,7 @@ from oellm.core.base_model_adapter import BaseModelAdapter
 
 
 class RegionReasonerModelAdapter(BaseModelAdapter):
-    """Translates a model path into eval-engine argument strings.
-
-    Also implements :meth:`to_contrib_flags` so that ``detect_model_flags``
-    in ``suite.py`` has a single place to maintain model-type routing logic.
-    """
+    """Translates a model path into eval-engine argument strings."""
 
     def __init__(self, model_path: str) -> None:
         self._path = model_path

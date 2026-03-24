@@ -6,12 +6,6 @@ from oellm.task_groups import DatasetSpec
 class BaseTask(ABC):
     """Abstract base class for evaluation task plugins.
 
-    Subclasses are the **single source of truth** for a contrib benchmark.
-    Call :meth:`to_task_groups_dict` in ``suite.py`` to generate
-    ``TASK_GROUPS`` automatically — no manual duplication needed::
-
-        TASK_GROUPS: dict = MyTask.to_task_groups_dict()
-
     Example::
 
         class MyTask(BaseTask):

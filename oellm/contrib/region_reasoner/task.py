@@ -1,14 +1,10 @@
-"""RegionReasoner task definition — single source of truth for task metadata."""
+"""RegionReasoner task definition."""
 
 from oellm.core.base_task import BaseTask
 
 
 class RegionReasonerTask(BaseTask):
-    """Multi-turn region grounding benchmark on RefCOCOg.
-
-    All task metadata lives here.  ``suite.py`` generates its ``TASK_GROUPS``
-    dict directly from :meth:`to_task_groups_dict` so nothing is duplicated.
-    """
+    """Multi-turn region grounding benchmark on RefCOCOg."""
 
     @property
     def name(self) -> str:

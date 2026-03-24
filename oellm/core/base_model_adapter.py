@@ -5,14 +5,8 @@ from pathlib import Path
 class BaseModelAdapter(ABC):
     """Abstract base class for model adapters.
 
-    An adapter's sole responsibility is translating a model path/config into
-    the engine-specific argument strings passed on the command line.  The
-    scheduling engine reads these strings and injects them into the sbatch
-    template — adapters never call the engines directly.
-
-    This is the single integration point for adding new or proprietary models:
-    implement the two abstract methods and the adapter works with any engine
-    the platform supports.
+    Translates a model path/config into engine-specific argument strings
+    passed on the command line.
 
     Example::
 
