@@ -1,2 +1,2 @@
-# RegionReasoner contrib package.
+# RegionDial-Bench contrib package.
 # See suite.py for the plugin protocol implementation.

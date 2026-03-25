@@ -3,14 +3,14 @@
 Called from template.sbatch's ``*)`` catch-all case as::
 
     python -m oellm.contrib.dispatch \\
-        --suite      "region_reasoner:vision_reasoner" \\
+        --suite      "regiondial_bench:vision_reasoner" \\
         --model_path "/path/to/model" \\
-        --task       "regionreasoner_refcocog" \\
+        --task       "regiondial_refcocog" \\
         --n_shot     0 \\
         --output_path "/evals/dir/abc123.json"
 
 The suite name may include a model-flags suffix separated by ``:``, e.g.
-``region_reasoner:vision_reasoner``.  The suffix is passed to ``suite.run()``
+``regiondial_bench:vision_reasoner``.  The suffix is passed to ``suite.run()``
 as ``model_flags``.
 """
 

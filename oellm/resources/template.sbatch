@@ -102,7 +102,7 @@ do
 
     GPU_DEVICES=$(seq -s, 0 $(($GPUS_PER_NODE - 1)))
 
-    # Strip optional model-flags suffix ("region_reasoner:vision_reasoner" → "region_reasoner")
+    # Strip optional model-flags suffix ("regiondial_bench:vision_reasoner" → "regiondial_bench")
     suite_normalized=$(echo "${{eval_suite%%:*}}" | tr '[:upper:]' '[:lower:]')
 
     # Helper function to run Python commands in the appropriate environment

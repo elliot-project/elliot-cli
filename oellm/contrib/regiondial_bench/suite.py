@@ -1,22 +1,20 @@
-"""RegionReasoner contrib suite — plugin protocol implementation.
+"""RegionDial-Bench contrib suite — plugin protocol implementation.
 
 This module follows the plugin protocol defined in ``oellm/registry.py``.
 It is the reference implementation for custom benchmark integration.
 
+RegionDial-Bench (Zhao et al., ICLR 2026) is a multi-round benchmark for
+reference-grounded region reasoning, built on RefCOCO+ and RefCOCOg.
+
 Cluster setup
 -------------
 The following environment variables must be set in ``clusters.yaml`` (or the
-cluster's module/profile system) before using the ``region-reasoner`` task group:
+cluster's module/profile system) before using the ``regiondial-bench`` task group:
 
 ``REGION_REASONER_DIR``
     Absolute path to a local clone of the RegionReasoner repository
     (https://github.com/lmsdss/RegionReasoner).  The eval scripts
     ``test/evaluation/evaluation_multi_segmentation.py`` must be present.
-
-``REGION_REASONER_TEST_JSON``  *(optional)*
-    Absolute path to the test JSON file (``refcocog_multi_turn.json``).
-    If not set, the file is downloaded automatically from
-    ``lmsdss/regionreasoner_test_data`` on the HF Hub before inference.
 
 ``REGION_REASONER_NUM_GPUS``  *(optional, default: 4)*
     Number of GPU shards to use for parallel inference.  Should match the
@@ -30,14 +28,15 @@ Output format
     {
       "model_name_or_path": "<model_path>",
       "results": {
-        "regionreasoner_refcocog": {
+        "regiondial_refcocog": {
           "gIoU": 0.42, "cIoU": 0.45, "bbox_AP": 0.38,
           "pass_rate_0.3": 0.71, "pass_rate_0.5": 0.55,
-          "pass_rate_0.7": 0.31, "pass_rate_0.9": 0.08
+          "pass_rate_0.7": 0.31, "pass_rate_0.9": 0.08,
+          "gIoU_R1": 0.55, "gIoU_R2": 0.48, ...
         }
       },
       "configs": {
-        "regionreasoner_refcocog": {"num_fewshot": 0}
+        "regiondial_refcocog": {"num_fewshot": 0}
       }
     }
 """
@@ -48,6 +47,7 @@ import json
 import logging
 import subprocess
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -56,15 +56,56 @@ logger = logging.getLogger(__name__)
 # Plugin protocol: required constants
 # ---------------------------------------------------------------------------
 
-SUITE_NAME = "region_reasoner"
+SUITE_NAME = "regiondial_bench"
 
 CLUSTER_ENV_VARS = [
     "REGION_REASONER_DIR",
 ]
 
-from oellm.contrib.region_reasoner.task import RegionReasonerTask  # noqa: E402
+# ---------------------------------------------------------------------------
+# TASK_GROUPS — merged from two task classes (RefCOCOg + RefCOCO+)
+# ---------------------------------------------------------------------------
 
-TASK_GROUPS: dict = RegionReasonerTask.to_task_groups_dict()
+from oellm.contrib.regiondial_bench.task import (  # noqa: E402
+    RegionDialRefCOCOgTask,
+    RegionDialRefCOCOplusTask,
+)
+
+_refcocog = RegionDialRefCOCOgTask.to_task_groups_dict()
+_refcocoplus = RegionDialRefCOCOplusTask.to_task_groups_dict()
+
+# Both tasks share the same task_group_name ("regiondial-bench"), so merge
+# their tasks lists and task_metrics dicts into a single TASK_GROUPS.
+_group_name = "regiondial-bench"
+TASK_GROUPS: dict = {
+    "task_metrics": {
+        **_refcocog.get("task_metrics", {}),
+        **_refcocoplus.get("task_metrics", {}),
+    },
+    "task_groups": {
+        _group_name: {
+            "suite": SUITE_NAME,
+            "n_shots": [0],
+            "description": (
+                "RegionDial-Bench: multi-round region grounding benchmark on "
+                "RefCOCOg and RefCOCO+ (Zhao et al., ICLR 2026)."
+            ),
+            "tasks": (
+                _refcocog["task_groups"][_group_name]["tasks"]
+                + _refcocoplus["task_groups"][_group_name]["tasks"]
+            ),
+        },
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Task-name → test JSON filename mapping
+# ---------------------------------------------------------------------------
+
+_TASK_JSON_FILES: dict[str, str] = {
+    "regiondial_refcocog": "refcocog_multi_turn.json",
+    "regiondial_refcocoplus": "refcocoplus_multi_turn.json",
+}
 
 # ---------------------------------------------------------------------------
 # Plugin protocol: optional — model-flag detection
@@ -72,10 +113,10 @@ TASK_GROUPS: dict = RegionReasonerTask.to_task_groups_dict()
 
 
 def detect_model_flags(model_path: str) -> str | None:
-    """Delegate to RegionReasonerModelAdapter.to_contrib_flags()."""
-    from oellm.contrib.region_reasoner.adapter import RegionReasonerModelAdapter
+    """Delegate to RegionDialModelAdapter.to_contrib_flags()."""
+    from oellm.contrib.regiondial_bench.adapter import RegionDialModelAdapter
 
-    return RegionReasonerModelAdapter(model_path).to_contrib_flags()
+    return RegionDialModelAdapter(model_path).to_contrib_flags()
 
 
 # ---------------------------------------------------------------------------
@@ -92,18 +133,20 @@ def run(
     model_flags: str | None,
     env: dict[str, str],
 ) -> None:
-    """Execute the RegionReasoner evaluation and write results to *output_path*.
+    """Execute the RegionDial-Bench evaluation and write results to *output_path*.
 
     This function:
 
-    1. Runs ``evaluation_multi_segmentation.py`` in parallel GPU shards.
-    2. Computes gIoU, cIoU, bbox_AP, and pass_rate at four thresholds using
-       the :mod:`oellm.contrib.region_reasoner.metrics` implementations.
-    3. Writes a lmms-eval-compatible JSON to *output_path*.
+    1. Resolves the correct test JSON for the requested split (RefCOCOg or
+       RefCOCO+) based on the *task* name.
+    2. Runs ``evaluation_multi_segmentation.py`` in parallel GPU shards.
+    3. Computes aggregate and per-round (R1–R7) metrics using
+       :mod:`oellm.contrib.regiondial_bench.metrics`.
+    4. Writes a lmms-eval-compatible JSON to *output_path*.
 
     Args:
         model_path: Path or HF repo ID of the model checkpoint.
-        task: Task name (e.g. ``"regionreasoner_refcocog"``).
+        task: Task name (``"regiondial_refcocog"`` or ``"regiondial_refcocoplus"``).
         n_shot: Number of few-shot examples (always 0 for this benchmark).
         output_path: Where to write the results JSON.
         model_flags: Model type string (e.g. ``"vision_reasoner"``).
@@ -119,17 +162,14 @@ def run(
             "REGION_REASONER_DIR must be set. Add it to clusters.yaml for this cluster."
         )
 
-    test_json = env.get("REGION_REASONER_TEST_JSON")
-    if not test_json:
-        from huggingface_hub import snapshot_download
-
-        local_dir = snapshot_download(
-            repo_id="lmsdss/regionreasoner_test_data",
-            repo_type="dataset",
-            allow_patterns=["raw/refcocog_multi_turn.json"],
-            cache_dir=Path(env["HF_HOME"]) / "hub" if "HF_HOME" in env else None,
+    # Resolve test JSON for the requested split
+    json_filename = _TASK_JSON_FILES.get(task)
+    if not json_filename:
+        raise ValueError(
+            f"Unknown task {task!r}. Expected one of: {list(_TASK_JSON_FILES)}"
         )
-        test_json = str(Path(local_dir) / "raw" / "refcocog_multi_turn.json")
+
+    test_json = _resolve_test_json(task, json_filename, env)
 
     inference_script = (
         Path(rr_dir) / "test" / "evaluation" / "evaluation_multi_segmentation.py"
@@ -175,7 +215,7 @@ def run(
             ret = proc.wait()
             if ret != 0:
                 raise RuntimeError(
-                    f"RegionReasoner inference shard {idx} exited with code {ret}"
+                    f"RegionDial-Bench inference shard {idx} exited with code {ret}"
                 )
 
         logger.info("All %d shards completed. Computing metrics.", num_gpus)
@@ -193,19 +233,50 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
+def _resolve_test_json(
+    task: str, json_filename: str, env: dict[str, str]
+) -> str:
+    """Resolve the path to the test JSON for the given split.
+
+    Uses env-var overrides if present, otherwise auto-downloads from HF Hub.
+    """
+    # Per-split env var override: REGION_REASONER_TEST_JSON_REFCOCOG, etc.
+    split_key = task.replace("regiondial_", "").upper()
+    env_var = f"REGION_REASONER_TEST_JSON_{split_key}"
+    override = env.get(env_var)
+    if override:
+        return override
+
+    # Legacy single env var (backward compat for existing configs)
+    legacy = env.get("REGION_REASONER_TEST_JSON")
+    if legacy and json_filename in legacy:
+        return legacy
+
+    from huggingface_hub import snapshot_download
+
+    local_dir = snapshot_download(
+        repo_id="lmsdss/regionreasoner_test_data",
+        repo_type="dataset",
+        allow_patterns=[f"raw/{json_filename}"],
+        cache_dir=Path(env["HF_HOME"]) / "hub" if "HF_HOME" in env else None,
+    )
+    return str(Path(local_dir) / "raw" / json_filename)
+
+
 def _aggregate_shards(shard_dir: str) -> dict[str, float]:
-    """Read per-shard output files and compute all metrics via :mod:`metrics`.
+    """Read per-shard output files and compute all metrics.
 
     Each shard file contains a list of per-sample dicts with pre-computed
-    ``intersection``, ``union``, and ``bbox_iou`` fields written by the
-    upstream ``evaluation_multi_segmentation.py`` script.
+    ``intersection``, ``union``, ``bbox_iou``, and ``round`` fields written
+    by the upstream ``evaluation_multi_segmentation.py`` script.
 
-    All metrics are computed through the :class:`BaseMetric` subclasses in
-    ``oellm.contrib.region_reasoner.metrics``.
+    Computes:
+    - Aggregate metrics across all rounds: gIoU, cIoU, bbox_AP, pass_rate_*
+    - Per-round metrics (R1–R7): gIoU_R1..R7, bbox_AP_R1..R7
 
-    Returns a flat dict of ``{metric_name: value}`` for all seven metrics.
+    Returns a flat dict of ``{metric_name: value}``.
     """
-    from oellm.contrib.region_reasoner.metrics import (
+    from oellm.contrib.regiondial_bench.metrics import (
         BboxAP,
         CIoU,
         GIoU,
@@ -219,22 +290,24 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
             "The inference script may have failed silently."
         )
 
-    samples: list[str] = []
+    all_samples: list[dict] = []
     for shard_file in shard_files:
         with open(shard_file) as f:
             shard_data = json.load(f)
-        for sample in shard_data:
-            samples.append(json.dumps(sample))
+        all_samples.extend(shard_data)
 
-    if not samples:
+    if not all_samples:
         raise RuntimeError(
             "No samples found across shard files. "
             "The inference script produced empty output."
         )
-    logger.info("Aggregating %d samples from %d shards", len(samples), len(shard_files))
+    logger.info("Aggregating %d samples from %d shards", len(all_samples), len(shard_files))
 
+    # Serialize all samples for metric computation
+    samples = [json.dumps(s) for s in all_samples]
     empty_refs = [""] * len(samples)
-    all_metrics = [
+
+    aggregate_metrics = [
         GIoU(),
         CIoU(),
         BboxAP(),
@@ -244,11 +317,35 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         PassRate(0.9),
     ]
 
-    metrics = {}
-    for m in all_metrics:
+    metrics: dict[str, float] = {}
+    for m in aggregate_metrics:
         val = m.compute(samples, empty_refs)
         metrics[m.name] = val
         logger.debug("%s = %.4f", m.name, val)
+
+    # Per-round breakdown (R1–R7) — group samples by "round" field
+    rounds_map: dict[int, list[str]] = defaultdict(list)
+    for sample_dict, sample_str in zip(all_samples, samples):
+        rnd = sample_dict.get("round")
+        if rnd is not None:
+            rounds_map[int(rnd)].append(sample_str)
+
+    if rounds_map:
+        per_round_metrics = [GIoU(), BboxAP()]
+        for rnd in sorted(rounds_map):
+            rnd_samples = rounds_map[rnd]
+            rnd_refs = [""] * len(rnd_samples)
+            for m in per_round_metrics:
+                val = m.compute(rnd_samples, rnd_refs)
+                metrics[f"{m.name}_R{rnd}"] = val
+                logger.debug("%s_R%d = %.4f", m.name, rnd, val)
+    else:
+        logger.warning(
+            "No 'round' field found in samples — skipping per-round breakdown. "
+            "Per-round metrics (R1–R7) require the inference script to output "
+            "a 'round' field in each sample."
+        )
+
     return metrics
 
 
@@ -258,17 +355,17 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
 
 
 def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
-    """Try to parse *data* as a region_reasoner output JSON.
+    """Try to parse *data* as a RegionDial-Bench output JSON.
 
     Returns ``(model_id, task_name, n_shot, {metric: value})`` if the JSON
     matches this suite's format, otherwise ``None``.
 
     Detection heuristic: the ``results`` dict contains a key that starts with
-    ``"regionreasoner_"`` and the value dict contains ``"gIoU"``.
+    ``"regiondial_"`` and the value dict contains ``"gIoU"``.
     """
     results = data.get("results", {})
     for task_name, task_results in results.items():
-        if task_name.startswith("regionreasoner_") and "gIoU" in task_results:
+        if task_name.startswith("regiondial_") and "gIoU" in task_results:
             model_id = data.get("model_name_or_path") or data.get("model_name", "unknown")
             n_shot = data.get("configs", {}).get(task_name, {}).get("num_fewshot", 0)
             return model_id, task_name, int(n_shot), task_results

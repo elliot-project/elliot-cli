@@ -1,9 +1,16 @@
-# RegionReasoner Benchmark
+# RegionDial-Bench
 
-Multi-turn region grounding benchmark on RefCOCOg. Evaluates a model's ability
-to locate and segment objects described in multi-turn conversations.
+Multi-round region grounding benchmark on RefCOCOg and RefCOCO+
+(Sun et al., ICLR 2026). Evaluates a model's ability to locate and segment
+objects described in multi-turn conversations, measuring robustness to error
+accumulation across dialogue turns.
 
-**Metrics:** gIoU, cIoU, bbox_AP, pass_rate@0.3/0.5/0.7/0.9
+**Splits:**
+- RefCOCOg Multi-turn — 1,580 images, 4,405 turns
+- RefCOCO+ Multi-turn — 715 images, 2,355 turns
+
+**Metrics:** gIoU (primary), cIoU, bbox_AP, pass_rate@0.3/0.5/0.7/0.9,
+plus per-round breakdown (R1–R7) for gIoU and bbox_AP.
 
 ---
 
@@ -70,8 +77,10 @@ not need internet access):
 |---|---|---|
 | TaskRouter-1.5B | `Ricky06662/TaskRouter-1.5B` | ~3 GB |
 | SAM2 | `facebook/sam2-hiera-large` | ~1 GB |
-| Test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocog_multi_turn.json` | ~26 GB |
-| Test images | `lmsdss/regionreasoner_test_data` `raw/refcocog_test_multi_bbox_images/*` | ~1 GB |
+| RefCOCOg test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocog_multi_turn.json` | ~26 GB |
+| RefCOCOg test images | `lmsdss/regionreasoner_test_data` `raw/refcocog_test_multi_bbox_images/*` | ~1 GB |
+| RefCOCO+ test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_multi_turn.json` | TBD |
+| RefCOCO+ test images | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_test_multi_bbox_images/*` | TBD |
 
 All assets are cached under `$HF_HOME/hub`.
 
@@ -82,9 +91,11 @@ All assets are cached under `$HF_HOME/hub`.
 ```bash
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B \
-  --task_groups region-reasoner \
+  --task_groups regiondial-bench \
   --venv_path ~/elliot-venv
 ```
+
+This evaluates on **both** splits (RefCOCOg and RefCOCO+).
 
 ### Collecting results
 
@@ -94,7 +105,9 @@ oellm collect-results \
   --output results.csv
 ```
 
-The primary metric in the CSV is **gIoU**.
+The primary metric in the CSV is **gIoU**. Per-round metrics (e.g.
+`gIoU_R1`, `bbox_AP_R3`) are included when the inference script outputs
+a `round` field per sample.
 
 ---
 
@@ -107,7 +120,7 @@ model, just pass it to `--models`:
 ```bash
 oellm schedule-eval \
   --models Qwen/Qwen2.5-VL-7B-Instruct \
-  --task_groups region-reasoner \
+  --task_groups regiondial-bench \
   --venv_path ~/elliot-venv
 ```
 
@@ -125,7 +138,7 @@ To evaluate multiple models in one go:
 ```bash
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B Qwen/Qwen2.5-VL-7B-Instruct \
-  --task_groups region-reasoner \
+  --task_groups regiondial-bench \
   --venv_path ~/elliot-venv
 ```
 

@@ -56,7 +56,7 @@ oellm/contrib/my_suite/
 └── README.md
 ```
 
-See `oellm/contrib/region_reasoner/` as a complete reference.
+See `oellm/contrib/regiondial_bench/` as a complete reference.
 
 ---
 
@@ -261,7 +261,7 @@ Add `tests/test_my_suite.py`. Cover at minimum:
 - Task group expansion: correct `(task, n_shot, suite)` tuples
 - Dry-run `schedule_evals()` produces SBATCH with `oellm.contrib.dispatch`
 
-See `tests/test_region_reasoner.py` as a reference.
+See `tests/test_regiondial_bench.py` as a reference.
 
 ---
 

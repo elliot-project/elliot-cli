@@ -1,11 +1,11 @@
-"""RegionReasoner model adapter."""
+"""RegionDial-Bench model adapter."""
 
 from pathlib import Path
 
 from oellm.core.base_model_adapter import BaseModelAdapter
 
 
-class RegionReasonerModelAdapter(BaseModelAdapter):
+class RegionDialModelAdapter(BaseModelAdapter):
     """Translates a model path into eval-engine argument strings."""
 
     def __init__(self, model_path: str) -> None:

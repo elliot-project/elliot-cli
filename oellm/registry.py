@@ -10,7 +10,7 @@ A file ``oellm/contrib/<name>/suite.py`` is a plugin if it exposes:
 Required
 ~~~~~~~~
 ``SUITE_NAME: str``
-    Identifier used in the ``eval_suite`` CSV column, e.g. ``"region_reasoner"``.
+    Identifier used in the ``eval_suite`` CSV column, e.g. ``"regiondial_bench"``.
 
 ``TASK_GROUPS: dict``
     Task-group definitions in ``task-groups.yaml`` format.  Expected keys:
