@@ -2,7 +2,6 @@
 #SBATCH --job-name=oellm-eval
 #SBATCH --time={time_limit}
 #SBATCH --gres=gpu:$GPUS_PER_NODE
-#SBATCH --mem=$MEM_PER_NODE
 #SBATCH --output={log_dir}/%x-%A-%a.out
 #SBATCH --partition=$PARTITION
 #SBATCH --account=$ACCOUNT
