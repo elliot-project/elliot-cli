@@ -182,7 +182,9 @@ class TestRegionDialRefCOCOplusTask:
 # ---------------------------------------------------------------------------
 
 
-def _sample(intersection: int, union: int, bbox_iou: float = 0.0, round: int | None = None) -> str:
+def _sample(
+    intersection: int, union: int, bbox_iou: float = 0.0, round: int | None = None
+) -> str:
     """Helper: JSON-serialise a sample dict for metric inputs."""
     d = {
         "intersection": intersection,
@@ -696,12 +698,14 @@ class TestAggregateShards:
 
         samples = []
         for rnd in range(1, 8):
-            samples.append({
-                "intersection": 100 - rnd * 10,
-                "union": 100,
-                "bbox_iou": (100 - rnd * 10) / 100,
-                "round": rnd,
-            })
+            samples.append(
+                {
+                    "intersection": 100 - rnd * 10,
+                    "union": 100,
+                    "bbox_iou": (100 - rnd * 10) / 100,
+                    "round": rnd,
+                }
+            )
         self._write_shard(tmp_path, 0, samples)
         m = _aggregate_shards(str(tmp_path))
         for rnd in range(1, 8):

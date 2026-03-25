@@ -233,9 +233,7 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
-def _resolve_test_json(
-    task: str, json_filename: str, env: dict[str, str]
-) -> str:
+def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> str:
     """Resolve the path to the test JSON for the given split.
 
     Uses env-var overrides if present, otherwise auto-downloads from HF Hub.
@@ -301,7 +299,9 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
             "No samples found across shard files. "
             "The inference script produced empty output."
         )
-    logger.info("Aggregating %d samples from %d shards", len(all_samples), len(shard_files))
+    logger.info(
+        "Aggregating %d samples from %d shards", len(all_samples), len(shard_files)
+    )
 
     # Serialize all samples for metric computation
     samples = [json.dumps(s) for s in all_samples]
@@ -325,7 +325,7 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
 
     # Per-round breakdown (R1–R7) — group samples by "round" field
     rounds_map: dict[int, list[str]] = defaultdict(list)
-    for sample_dict, sample_str in zip(all_samples, samples):
+    for sample_dict, sample_str in zip(all_samples, samples, strict=True):
         rnd = sample_dict.get("round")
         if rnd is not None:
             rounds_map[int(rnd)].append(sample_str)
