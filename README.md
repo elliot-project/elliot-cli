@@ -1,6 +1,6 @@
 # ELLIOT Evaluation Platform
 
-A multimodal evaluation framework for scheduling LLM and VLM evaluations across HPC clusters. Extends the original oellm-cli with image modality support and a plugin interface for adding new benchmarks and modalities.
+A multimodal evaluation framework for scheduling LLM and VLM evaluations across HPC clusters. Built as an orchestration layer over [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness), [lighteval](https://github.com/huggingface/lighteval), and [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval), with a plugin system for contributing custom benchmarks.
 
 ## Features
 
@@ -8,39 +8,35 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Collect results** and check for missing evaluations: `oellm collect-results`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA)
-- **Image evaluation** via [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
-- **Plugin interface** (`BaseTask` / `BaseMetric` / `BaseModelAdapter`) for adding new benchmarks without touching core scheduling logic
-- **Automatic building and deployment of containers**
+- **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
+- **Plugin system** for contributing custom benchmarks without touching core code
+- **Automatic container builds** via GitHub Actions
 
 ## Quick Start
 
 **Prerequisites:**
 - Install [uv](https://docs.astral.sh/uv/#installation)
-- Set the `HF_HOME` environment variable to point to your HuggingFace cache directory (e.g. `export HF_HOME="/path/to/your/hf_home"`). This is where models and datasets will be cached. Compute nodes typically have no internet access, so all assets must be pre-downloaded into this directory.
+- Set `HF_HOME` to your HuggingFace cache directory (e.g. `export HF_HOME="/path/to/hf_home"`)
 
 ```bash
-# Install the package
+# Install
 uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
-# Run evaluations using a task group (recommended)
-oellm schedule-eval \
-    --models "microsoft/DialoGPT-medium,EleutherAI/pythia-160m" \
-    --task_groups "open-sci-0.01"
-
-# Or specify individual tasks
+# Run evaluations using a task group
 oellm schedule-eval \
     --models "EleutherAI/pythia-160m" \
-    --tasks "hellaswag,mmlu" \
-    --n_shot 5
+    --task_groups "open-sci-0.01"
+
+# Image evaluation (requires venv with lmms-eval)
+oellm schedule-eval \
+    --models "llava-hf/llava-1.5-7b-hf" \
+    --task_groups "image-vqa" \
+    --venv_path ~/elliot-venv
 ```
 
-This will automatically:
-- Detect your current HPC cluster (Leonardo, LUMI, or JURECA)
-- Download and cache the specified models
-- Pre-download datasets for known tasks (see warning below)
-- Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
+This will automatically detect your cluster, download models and datasets, and submit a SLURM job array with cluster-specific resources.
 
-In case you do not want to rely on the containers provided on a given cluster or try out specific package versions, you can use a custom environment by passing `--venv_path`, see [docs/VENV.md](docs/VENV.md).
+For custom environments instead of containers, pass `--venv_path` (see [docs/VENV.md](docs/VENV.md)).
 
 ## Task Groups
 
@@ -52,15 +48,14 @@ Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/reso
 |---|---|---|
 | `open-sci-0.01` | COPA, MMLU, HellaSwag, ARC, etc. | lm-eval |
 | `belebele-eu-5-shot` | Belebele in 23 European languages | lm-eval |
-| `flores-200-eu-to-eng` | EU → English translation | lighteval |
-| `flores-200-eng-to-eu` | English → EU translation | lighteval |
+| `flores-200-eu-to-eng` | EU to English translation | lighteval |
+| `flores-200-eng-to-eu` | English to EU translation | lighteval |
 | `global-mmlu-eu` | Global MMLU in EU languages | lm-eval |
 | `mgsm-eu` | Multilingual GSM8K | lm-eval |
 | `generic-multilingual` | XWinograd, XCOPA, XStoryCloze | lm-eval |
 | `include` | INCLUDE benchmarks (44 languages) | lm-eval |
 
-Super groups:
-- `oellm-multilingual` — all multilingual benchmarks combined
+Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 
 ### Image
 
@@ -76,67 +71,31 @@ Super groups:
 | `image-ocrbench` | OCRBench | lmms-eval |
 | `image-mathvista` | MathVista | lmms-eval |
 
-Image evaluation requires a venv with `lmms-eval` installed (see [docs/VENV.md](docs/VENV.md)). The lmms-eval adapter class (`llava_hf`, `qwen2_5_vl`, etc.) is auto-detected from the model name — no extra configuration needed.
+The lmms-eval adapter class (`llava_hf`, `qwen2_5_vl`, etc.) is auto-detected from the model name.
+
+### Custom Benchmarks (contrib)
+
+Community-contributed benchmarks that run outside the standard evaluation engines. See the [contrib registry](oellm/contrib/README.md) for the full list.
 
 ```bash
-# Run all 8 image benchmarks at once
+# Run all 8 image benchmarks
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task_groups "image-vqa" \
     --venv_path ~/elliot-venv
-
-# Smoke-test a single benchmark (fast, use --limit for a few samples)
-oellm schedule-eval \
-    --models "llava-hf/llava-1.5-7b-hf" \
-    --task_groups "image-mathvista" \
-    --venv_path ~/elliot-venv \
-    --limit 10
 
 # Mix image and text benchmarks in one submission
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task_groups "image-mmbench,open-sci-0.01" \
     --venv_path ~/elliot-venv
-```
 
-```bash
-# Use a task group
-oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01"
-
-# Use multiple task groups
+# Use multiple task groups or a super group
 oellm schedule-eval --models "model-name" --task_groups "belebele-eu-5-shot,global-mmlu-eu"
-
-# Use a super group
 oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
 ```
 
-## SLURM Overrides
-
-Override cluster defaults (partition, account, time limit, etc.) with `--slurm_template_var` (JSON object):
-
-```bash
-# Use a different partition (e.g. dev-g on LUMI when small-g is crowded)
-oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
-  --slurm_template_var '{"PARTITION":"dev-g"}'
-
-# Multiple overrides: partition, account, time limit, GPUs
-oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
-  --slurm_template_var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2}'
-```
-
-Use exact env var names: `PARTITION`, `ACCOUNT`, `GPUS_PER_NODE`. `TIME` (HH:MM:SS) overrides the time limit.
-
-## ⚠️ Dataset Pre-Download Warning
-
-**Datasets are only automatically pre-downloaded for tasks defined in [`task-groups.yaml`](oellm/resources/task-groups.yaml).**
-
-If you use custom tasks via `--tasks` that are not in the task groups registry, the CLI will attempt to look them up but **cannot guarantee the datasets will be cached**. This may cause failures on compute nodes that don't have network access.
-
-**Recommendation:** Use `--task_groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
-
 ## Collecting Results
-
-After evaluations complete, collect results into a CSV:
 
 ```bash
 # Basic collection
@@ -144,25 +103,12 @@ oellm collect-results /path/to/eval-output-dir
 
 # Check for missing evaluations and create a CSV for re-running them
 oellm collect-results /path/to/eval-output-dir --check --output_csv results.csv
-```
 
-The `--check` flag compares completed results against `jobs.csv` and outputs a `results_missing.csv` that can be used to re-schedule failed jobs:
-
-```bash
+# Re-schedule failed jobs
 oellm schedule-eval --eval_csv_path results_missing.csv
 ```
 
-## CSV-Based Scheduling
-
-For full control, provide a CSV file with columns: `model_path`, `task_path`, `n_shot`, and optionally `eval_suite`:
-
-```bash
-oellm schedule-eval --eval_csv_path custom_evals.csv
-```
-
 ## Installation
-
-### General Installation
 
 ```bash
 uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
@@ -173,34 +119,11 @@ Update to latest:
 uv tool upgrade oellm
 ```
 
-### JURECA/JSC Specifics
-
-Due to limited space in `$HOME` on JSC clusters, set these environment variables:
-
-```bash
-export UV_CACHE_DIR="/p/project1/<project>/$USER/.cache/uv-cache"
-export UV_INSTALL_DIR="/p/project1/<project>/$USER/.local"
-export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python"
-export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
-```
-
-## Supported Clusters
-
-We support: Leonardo, LUMI, and JURECA
-
-Cluster-specific access guides:
-- [Leonardo HPC](docs/LEONARDO.md)
-
-## CLI Options
-
-```bash
-oellm schedule-eval --help
-```
+For cluster-specific setup, see the [documentation](#documentation) section.
 
 ## Development
 
 ```bash
-# Clone and install in dev mode
 git clone https://github.com/elliot-project/elliot-cli.git
 cd elliot-cli
 uv sync --extra dev
@@ -208,51 +131,43 @@ uv sync --extra dev
 # Run all unit tests
 uv run pytest tests/ -v
 
-# Run dataset validation tests (requires network access)
-uv run pytest tests/test_datasets.py -v
-
 # Download-only mode for testing
 uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task_groups "open-sci-0.01" --download_only
 ```
 
-## Plugin Interface
+## Documentation
 
-The `oellm.core` package provides abstract base classes for extending the platform without modifying core scheduling logic:
+### Cluster Setup
 
-```python
-from oellm.core import BaseTask, BaseMetric, BaseModelAdapter
-from oellm.task_groups import DatasetSpec
+| Cluster | Guide |
+|---|---|
+| Leonardo (CINECA) | [docs/LEONARDO.md](docs/LEONARDO.md) |
+| LUMI, JURECA | Coming soon |
 
-# Register a new benchmark (one-liner if it's already in lmms-eval)
-class MyTask(BaseTask):
-    @property
-    def name(self) -> str:
-        return "my_benchmark"
+### Environment & Infrastructure
 
-    @property
-    def suite(self) -> str:
-        return "lmms_eval"  # or "lm_eval" / "lighteval"
+| Doc | Description |
+|---|---|
+| [Using a Virtual Environment](docs/VENV.md) | Setting up a custom venv with lm-eval, lmms-eval, and lighteval |
+| [Container Workflow](docs/CONTAINERS.md) | How Apptainer containers are built, deployed, and used |
 
-    @property
-    def n_shots(self) -> list[int]:
-        return [0]
+### Extending the Platform
 
-    @property
-    def dataset_specs(self) -> list[DatasetSpec]:
-        return [DatasetSpec(repo_id="org/my-dataset")]
-```
+| Doc | Description |
+|---|---|
+| [Adding Tasks & Task Groups](docs/TASKS.md) | YAML structure for defining new evaluation suites |
+| [Contributing Custom Benchmarks](oellm/contrib/CONTRIBUTING.md) | Step-by-step guide for adding a contrib plugin |
+| [Contrib Registry](oellm/contrib/README.md) | List of community-contributed benchmarks |
 
-See `oellm/core/` for full interface documentation.
+## Contributing Custom Benchmarks
 
-## Deploying containers
+ELLIOT supports two paths for adding benchmarks:
 
-Containers are deployed manually since [PR #46](https://github.com/elliot-project/elliot-cli/pull/46) to save costs.
+1. **Benchmark already in lm-eval / lighteval / lmms-eval** -- add a YAML entry to [`task-groups.yaml`](oellm/resources/task-groups.yaml)
+2. **Fully custom benchmark** -- drop a contrib plugin into [`oellm/contrib/`](oellm/contrib/)
 
-To build and deploy them, select run workflow in [Actions](https://github.com/elliot-project/elliot-cli/actions/workflows/build-and-push-apptainer.yml).
+See the [Contributing Guide](oellm/contrib/CONTRIBUTING.md) for step-by-step instructions.
 
+## Deploying Containers
 
-## Troubleshooting
-
-**HuggingFace quota issues**: Ensure you're logged in with `HF_TOKEN` and are part of the [OpenEuroLLM](https://huggingface.co/OpenEuroLLM) organization.
-
-**Dataset download failures on compute nodes**: Use `--task_groups` for automatic dataset caching, or pre-download datasets manually before scheduling.
+Containers are deployed manually since [PR #46](https://github.com/elliot-project/elliot-cli/pull/46). To build and deploy, select "Run workflow" in [Actions](https://github.com/elliot-project/elliot-cli/actions/workflows/build-and-push-apptainer.yml).
