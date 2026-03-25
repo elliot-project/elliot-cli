@@ -3,7 +3,7 @@
 This module follows the plugin protocol defined in ``oellm/registry.py``.
 It is the reference implementation for custom benchmark integration.
 
-RegionDial-Bench (Zhao et al., ICLR 2026) is a multi-round benchmark for
+RegionDial-Bench (Sun et al., ICLR 2026) is a multi-round benchmark for
 reference-grounded region reasoning, built on RefCOCO+ and RefCOCOg.
 
 Cluster setup
@@ -88,7 +88,7 @@ TASK_GROUPS: dict = {
             "n_shots": [0],
             "description": (
                 "RegionDial-Bench: multi-round region grounding benchmark on "
-                "RefCOCOg and RefCOCO+ (Zhao et al., ICLR 2026)."
+                "RefCOCOg and RefCOCO+ (Sun et al., ICLR 2026)."
             ),
             "tasks": (
                 _refcocog["task_groups"][_group_name]["tasks"]

@@ -1,6 +1,6 @@
 """RegionDial-Bench task definitions.
 
-Two splits from the RegionDial-Bench benchmark (Zhao et al., ICLR 2026):
+Two splits from the RegionDial-Bench benchmark (Sun et al., ICLR 2026):
 - RefCOCOg Multi-turn (1,580 images, 4,405 turns)
 - RefCOCO+ Multi-turn (715 images, 2,355 turns)
 """
