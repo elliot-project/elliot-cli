@@ -78,9 +78,9 @@ not need internet access):
 | TaskRouter-1.5B | `Ricky06662/TaskRouter-1.5B` | ~3 GB |
 | SAM2 | `facebook/sam2-hiera-large` | ~1 GB |
 | RefCOCOg test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocog_multi_turn.json` | ~26 GB |
-| RefCOCOg test images | `lmsdss/regionreasoner_test_data` `raw/refcocog_test_multi_bbox_images/*` | ~1 GB |
-| RefCOCO+ test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_multi_turn.json` | TBD |
-| RefCOCO+ test images | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_test_multi_bbox_images/*` | TBD |
+| RefCOCOg test images | `lmsdss/regionreasoner_test_data` `raw/refcocog_test_multi_bbox_images/*` | ~200 MB (1 580 images) |
+| RefCOCO+ test JSON | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_multi_turn.json` | ~13 GB |
+| RefCOCO+ test images | `lmsdss/regionreasoner_test_data` `raw/refcocoplus_test_multi_bbox_images/*` | ~93 MB (715 images) |
 
 All assets are cached under `$HF_HOME/hub`.
 
