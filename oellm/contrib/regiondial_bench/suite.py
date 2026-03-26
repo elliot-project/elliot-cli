@@ -51,19 +51,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Plugin protocol: required constants
-# ---------------------------------------------------------------------------
-
 SUITE_NAME = "regiondial_bench"
 
 CLUSTER_ENV_VARS = [
     "REGION_REASONER_DIR",
 ]
-
-# ---------------------------------------------------------------------------
-# TASK_GROUPS — merged from two task classes (RefCOCOg + RefCOCO+)
-# ---------------------------------------------------------------------------
 
 from oellm.contrib.regiondial_bench.task import (  # noqa: E402
     RegionDialRefCOCOgTask,
@@ -73,10 +65,6 @@ from oellm.contrib.regiondial_bench.task import (  # noqa: E402
 _refcocog = RegionDialRefCOCOgTask.to_task_groups_dict()
 _refcocoplus = RegionDialRefCOCOplusTask.to_task_groups_dict()
 
-# Three task groups:
-#   regiondial-bench          — both splits (RefCOCOg + RefCOCO+)
-#   regiondial-refcocog       — RefCOCOg only
-#   regiondial-refcocoplus    — RefCOCO+ only
 _all_name = "regiondial-bench"
 _all_metrics = {
     **_refcocog.get("task_metrics", {}),
@@ -118,30 +106,16 @@ TASK_GROUPS: dict = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Task-name → test JSON filename mapping
-# ---------------------------------------------------------------------------
-
 _TASK_JSON_FILES: dict[str, str] = {
     "regiondial_refcocog": "refcocog_multi_turn.json",
     "regiondial_refcocoplus": "refcocoplus_multi_turn.json",
 }
-
-# ---------------------------------------------------------------------------
-# Plugin protocol: optional — model-flag detection
-# ---------------------------------------------------------------------------
-
 
 def detect_model_flags(model_path: str) -> str | None:
     """Delegate to RegionDialModelAdapter.to_contrib_flags()."""
     from oellm.contrib.regiondial_bench.adapter import RegionDialModelAdapter
 
     return RegionDialModelAdapter(model_path).to_contrib_flags()
-
-
-# ---------------------------------------------------------------------------
-# Plugin protocol: required — run evaluation
-# ---------------------------------------------------------------------------
 
 
 def run(
@@ -174,7 +148,6 @@ def run(
     """
     rr_dir = env.get("REGION_REASONER_DIR", "")
     num_gpus = int(env.get("GPUS_PER_NODE", "1"))
-    num_parts = int(env.get("REGION_REASONER_NUM_PARTS", str(num_gpus)))
     model_type = model_flags or "vision_reasoner"
 
     if not rr_dir:
@@ -182,7 +155,6 @@ def run(
             "REGION_REASONER_DIR must be set. Add it to clusters.yaml for this cluster."
         )
 
-    # Resolve test JSON for the requested split
     json_filename = _TASK_JSON_FILES.get(task)
     if not json_filename:
         raise ValueError(
@@ -201,9 +173,6 @@ def run(
         )
 
     with tempfile.TemporaryDirectory(prefix="rr_shards_") as tmp_dir:
-        # Pre-shard the JSON using streaming (ijson) so we never hold
-        # the full ~26 GB file in memory.  Each shard gets its own
-        # small JSON file, then all GPUs run in parallel.
         shard_paths = _stream_preshard(test_json, tmp_dir, num_gpus)
 
         procs = []
@@ -307,24 +276,20 @@ def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> st
 
     Uses env-var overrides if present, otherwise auto-downloads from HF Hub.
     """
-    # Per-split env var override: REGION_REASONER_TEST_JSON_REFCOCOG, etc.
     split_key = task.replace("regiondial_", "").upper()
     env_var = f"REGION_REASONER_TEST_JSON_{split_key}"
     override = env.get(env_var)
     if override:
         return override
 
-    # Legacy single env var (backward compat for existing configs)
+    # Backward compat: single env var that contains the filename
     legacy = env.get("REGION_REASONER_TEST_JSON")
     if legacy and json_filename in legacy:
         return legacy
 
     from huggingface_hub import snapshot_download
 
-    # Derive the split prefix: "refcocog" or "refcocoplus"
     split_prefix = json_filename.replace("_multi_turn.json", "")
-
-    # Download the turn JSON + corresponding bbox images for this split
     local_dir = snapshot_download(
         repo_id="lmsdss/regionreasoner_test_data",
         repo_type="dataset",
@@ -379,7 +344,6 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         "Aggregating %d samples from %d shards", len(all_samples), len(shard_files)
     )
 
-    # Serialize all samples for metric computation
     samples = [json.dumps(s) for s in all_samples]
     empty_refs = [""] * len(samples)
 
@@ -399,7 +363,6 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         metrics[m.name] = val
         logger.debug("%s = %.4f", m.name, val)
 
-    # Per-round breakdown (R1–R7) — group samples by "round" field
     rounds_map: dict[int, list[str]] = defaultdict(list)
     for sample_dict, sample_str in zip(all_samples, samples, strict=True):
         rnd = sample_dict.get("round")
@@ -423,11 +386,6 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         )
 
     return metrics
-
-
-# ---------------------------------------------------------------------------
-# Plugin protocol: required — parse results JSON
-# ---------------------------------------------------------------------------
 
 
 def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
