@@ -16,9 +16,8 @@ cluster's module/profile system) before using the ``regiondial-bench`` task grou
     (https://github.com/lmsdss/RegionReasoner).  The eval scripts
     ``test/evaluation/evaluation_multi_segmentation.py`` must be present.
 
-``REGION_REASONER_NUM_GPUS``  *(optional, default: 4)*
-    Number of GPU shards to use for parallel inference.  Should match the
-    number of GPUs available on the compute node.
+The number of GPUs is read from ``GPUS_PER_NODE`` (set in ``clusters.yaml``),
+which also controls the SLURM ``--gres=gpu:`` request.
 
 Output format
 -------------
@@ -74,26 +73,47 @@ from oellm.contrib.regiondial_bench.task import (  # noqa: E402
 _refcocog = RegionDialRefCOCOgTask.to_task_groups_dict()
 _refcocoplus = RegionDialRefCOCOplusTask.to_task_groups_dict()
 
-# Both tasks share the same task_group_name ("regiondial-bench"), so merge
-# their tasks lists and task_metrics dicts into a single TASK_GROUPS.
-_group_name = "regiondial-bench"
+# Three task groups:
+#   regiondial-bench          — both splits (RefCOCOg + RefCOCO+)
+#   regiondial-refcocog       — RefCOCOg only
+#   regiondial-refcocoplus    — RefCOCO+ only
+_all_name = "regiondial-bench"
+_all_metrics = {
+    **_refcocog.get("task_metrics", {}),
+    **_refcocoplus.get("task_metrics", {}),
+}
+
+_group_kwargs = {"suite": SUITE_NAME, "n_shots": [0]}
+
 TASK_GROUPS: dict = {
-    "task_metrics": {
-        **_refcocog.get("task_metrics", {}),
-        **_refcocoplus.get("task_metrics", {}),
-    },
+    "task_metrics": _all_metrics,
     "task_groups": {
-        _group_name: {
-            "suite": SUITE_NAME,
-            "n_shots": [0],
+        _all_name: {
+            **_group_kwargs,
             "description": (
-                "RegionDial-Bench: multi-round region grounding benchmark on "
-                "RefCOCOg and RefCOCO+ (Sun et al., ICLR 2026)."
+                "RegionDial-Bench: both splits — RefCOCOg + RefCOCO+ "
+                "(Sun et al., ICLR 2026)."
             ),
             "tasks": (
-                _refcocog["task_groups"][_group_name]["tasks"]
-                + _refcocoplus["task_groups"][_group_name]["tasks"]
+                _refcocog["task_groups"][_all_name]["tasks"]
+                + _refcocoplus["task_groups"][_all_name]["tasks"]
             ),
+        },
+        "regiondial-refcocog": {
+            **_group_kwargs,
+            "description": (
+                "RegionDial-Bench: RefCOCOg Multi-turn only "
+                "(1,580 images, 4,405 turns)."
+            ),
+            "tasks": _refcocog["task_groups"][_all_name]["tasks"],
+        },
+        "regiondial-refcocoplus": {
+            **_group_kwargs,
+            "description": (
+                "RegionDial-Bench: RefCOCO+ Multi-turn only "
+                "(715 images, 2,355 turns)."
+            ),
+            "tasks": _refcocoplus["task_groups"][_all_name]["tasks"],
         },
     },
 }
@@ -153,7 +173,7 @@ def run(
         env: Environment variables dict (from ``os.environ``).
     """
     rr_dir = env.get("REGION_REASONER_DIR", "")
-    num_gpus = int(env.get("REGION_REASONER_NUM_GPUS", "4"))
+    num_gpus = int(env.get("GPUS_PER_NODE", "1"))
     num_parts = int(env.get("REGION_REASONER_NUM_PARTS", str(num_gpus)))
     model_type = model_flags or "vision_reasoner"
 
@@ -181,6 +201,11 @@ def run(
         )
 
     with tempfile.TemporaryDirectory(prefix="rr_shards_") as tmp_dir:
+        # Pre-shard the JSON using streaming (ijson) so we never hold
+        # the full ~26 GB file in memory.  Each shard gets its own
+        # small JSON file, then all GPUs run in parallel.
+        shard_paths = _stream_preshard(test_json, tmp_dir, num_gpus)
+
         procs = []
         for idx in range(num_gpus):
             shard_env = dict(env)
@@ -193,22 +218,26 @@ def run(
                 "--model",
                 model_type,
                 "--test_data_path",
-                test_json,
+                shard_paths[idx],
                 "--output_path",
-                tmp_dir,  # script writes <tmp_dir>/output_{idx}.json
+                tmp_dir,
                 "--vis_output_path",
                 str(Path(tmp_dir) / f"vis_{idx}"),
                 "--idx",
-                str(idx),
+                "0",
                 "--num_parts",
-                str(num_parts),
+                "1",
                 "--batch_size",
                 "2",
                 "--task_router_model_path",
                 "Ricky06662/TaskRouter-1.5B",
             ]
-            logger.info("Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd))
-            proc = subprocess.Popen(cmd, env=shard_env, cwd=str(Path(test_json).parent))
+            logger.info(
+                "Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd)
+            )
+            proc = subprocess.Popen(
+                cmd, env=shard_env, cwd=str(Path(test_json).parent)
+            )
             procs.append(proc)
 
         for idx, proc in enumerate(procs):
@@ -233,6 +262,46 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
+def _stream_preshard(
+    json_path: str, out_dir: str, num_shards: int
+) -> list[str]:
+    """Split a large JSON array into *num_shards* files using streaming.
+
+    Uses ``ijson`` to iterate over the top-level array without loading the
+    entire file into memory.  Items are distributed round-robin.
+
+    Returns a list of shard file paths.
+    """
+    import ijson
+
+    shard_files = []
+    shard_counts = [0] * num_shards
+    for idx in range(num_shards):
+        p = str(Path(out_dir) / f"shard_{idx}.json")
+        shard_files.append(open(p, "w"))  # noqa: SIM115
+        shard_files[-1].write("[\n")
+
+    logger.info("Streaming pre-shard of %s into %d files", json_path, num_shards)
+
+    with open(json_path, "rb") as f:
+        for i, item in enumerate(ijson.items(f, "item")):
+            shard_idx = i % num_shards
+            if shard_counts[shard_idx] > 0:
+                shard_files[shard_idx].write(",\n")
+            json.dump(item, shard_files[shard_idx])
+            shard_counts[shard_idx] += 1
+
+    shard_paths = []
+    for idx in range(num_shards):
+        shard_files[idx].write("\n]")
+        shard_files[idx].close()
+        shard_paths.append(str(Path(out_dir) / f"shard_{idx}.json"))
+        logger.info("Shard %d: %d samples", idx, shard_counts[idx])
+
+    logger.info("Pre-sharding complete: %d total samples", sum(shard_counts))
+    return shard_paths
+
+
 def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> str:
     """Resolve the path to the test JSON for the given split.
 
@@ -252,10 +321,17 @@ def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> st
 
     from huggingface_hub import snapshot_download
 
+    # Derive the split prefix: "refcocog" or "refcocoplus"
+    split_prefix = json_filename.replace("_multi_turn.json", "")
+
+    # Download the turn JSON + corresponding bbox images for this split
     local_dir = snapshot_download(
         repo_id="lmsdss/regionreasoner_test_data",
         repo_type="dataset",
-        allow_patterns=[f"raw/{json_filename}"],
+        allow_patterns=[
+            f"raw/{json_filename}",
+            f"raw/{split_prefix}_test_multi_bbox_images/*",
+        ],
         cache_dir=Path(env["HF_HOME"]) / "hub" if "HF_HOME" in env else None,
     )
     return str(Path(local_dir) / "raw" / json_filename)

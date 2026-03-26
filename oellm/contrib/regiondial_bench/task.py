@@ -7,7 +7,7 @@ Two splits from the RegionDial-Bench benchmark (Sun et al., ICLR 2026):
 
 from oellm.core.base_task import BaseTask
 
-_TASK_GROUP = "regiondial-bench"
+_TASK_GROUP_ALL = "regiondial-bench"
 _SUITE = "regiondial_bench"
 _HF_MODELS = ["Ricky06662/TaskRouter-1.5B", "facebook/sam2-hiera-large"]
 _HF_REPO = "lmsdss/regionreasoner_test_data"
@@ -30,7 +30,7 @@ class RegionDialRefCOCOgTask(BaseTask):
 
     @property
     def task_group_name(self) -> str:
-        return _TASK_GROUP
+        return _TASK_GROUP_ALL
 
     @property
     def description(self) -> str:
@@ -77,7 +77,7 @@ class RegionDialRefCOCOplusTask(BaseTask):
 
     @property
     def task_group_name(self) -> str:
-        return _TASK_GROUP
+        return _TASK_GROUP_ALL
 
     @property
     def description(self) -> str:

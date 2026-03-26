@@ -236,17 +236,24 @@ def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
     """Return deduplicated HF dataset file specs declared in task ``hf_dataset_files`` fields."""
     parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
 
-    file_specs: list[dict] = []
-    seen: set[str] = set()
+    # Merge patterns from all tasks that share the same repo_id so that
+    # a single snapshot_download fetches everything needed.
+    merged: dict[str, list[str]] = {}
 
     for t, _ in _iter_all_tasks(parsed):
         for spec in t.hf_dataset_files or []:
             repo_id = spec.get("repo_id", "")
-            if repo_id and repo_id not in seen:
-                seen.add(repo_id)
-                file_specs.append(spec)
+            if not repo_id:
+                continue
+            patterns = spec.get("patterns") or []
+            if repo_id not in merged:
+                merged[repo_id] = list(patterns)
+            else:
+                for p in patterns:
+                    if p not in merged[repo_id]:
+                        merged[repo_id].append(p)
 
-    return file_specs
+    return [{"repo_id": rid, "patterns": pats} for rid, pats in merged.items()]
 
 
 def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:

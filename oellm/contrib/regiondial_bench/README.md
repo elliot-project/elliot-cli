@@ -38,7 +38,7 @@ my-cluster:
   ...
   HF_HOME: "/path/to/large/filesystem/huggingface"   # must have ~30 GB free
   REGION_REASONER_DIR: "/path/to/RegionReasoner"
-  REGION_REASONER_NUM_GPUS: "4"                      # optional, default: 4
+  GPUS_PER_NODE: 4                                   # controls both SLURM --gres and shard count
 ```
 
 > **`HF_HOME`** must point to a filesystem with at least **30 GB** of free
@@ -88,14 +88,27 @@ All assets are cached under `$HF_HOME/hub`.
 
 ## Running
 
+Three task groups are available:
+
+| Task group | Splits |
+|---|---|
+| `regiondial-bench` | Both (RefCOCOg + RefCOCO+) |
+| `regiondial-refcocog` | RefCOCOg only (1,580 images, 4,405 turns) |
+| `regiondial-refcocoplus` | RefCOCO+ only (715 images, 2,355 turns) |
+
 ```bash
+# Both splits
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B \
   --task_groups regiondial-bench \
   --venv_path ~/elliot-venv
-```
 
-This evaluates on **both** splits (RefCOCOg and RefCOCO+).
+# Single split
+oellm schedule-eval \
+  --models lmsdss/RegionReasoner-7B \
+  --task_groups regiondial-refcocog \
+  --venv_path ~/elliot-venv
+```
 
 ### Collecting results
 
