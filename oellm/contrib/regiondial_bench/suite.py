@@ -90,16 +90,14 @@ TASK_GROUPS: dict = {
         "regiondial-refcocog": {
             **_group_kwargs,
             "description": (
-                "RegionDial-Bench: RefCOCOg Multi-turn only "
-                "(1,580 images, 4,405 turns)."
+                "RegionDial-Bench: RefCOCOg Multi-turn only (1,580 images, 4,405 turns)."
             ),
             "tasks": _refcocog["task_groups"][_all_name]["tasks"],
         },
         "regiondial-refcocoplus": {
             **_group_kwargs,
             "description": (
-                "RegionDial-Bench: RefCOCO+ Multi-turn only "
-                "(715 images, 2,355 turns)."
+                "RegionDial-Bench: RefCOCO+ Multi-turn only (715 images, 2,355 turns)."
             ),
             "tasks": _refcocoplus["task_groups"][_all_name]["tasks"],
         },
@@ -110,6 +108,7 @@ _TASK_JSON_FILES: dict[str, str] = {
     "regiondial_refcocog": "refcocog_multi_turn.json",
     "regiondial_refcocoplus": "refcocoplus_multi_turn.json",
 }
+
 
 def detect_model_flags(model_path: str) -> str | None:
     """Delegate to RegionDialModelAdapter.to_contrib_flags()."""
@@ -201,12 +200,8 @@ def run(
                 "--task_router_model_path",
                 "Ricky06662/TaskRouter-1.5B",
             ]
-            logger.info(
-                "Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd)
-            )
-            proc = subprocess.Popen(
-                cmd, env=shard_env, cwd=str(Path(test_json).parent)
-            )
+            logger.info("Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd))
+            proc = subprocess.Popen(cmd, env=shard_env, cwd=str(Path(test_json).parent))
             procs.append(proc)
 
         for idx, proc in enumerate(procs):
@@ -231,9 +226,7 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
-def _stream_preshard(
-    json_path: str, out_dir: str, num_shards: int
-) -> list[str]:
+def _stream_preshard(json_path: str, out_dir: str, num_shards: int) -> list[str]:
     """Split a large JSON array into *num_shards* files using streaming.
 
     Uses ``ijson`` to iterate over the top-level array without loading the

@@ -290,12 +290,8 @@ def schedule_evals(
 
     # Build a descriptive directory name: {models}_{task_groups}_{timestamp}
     timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    model_names = "+".join(
-        m.split("/")[-1].lower() for m in (models or [])
-    )
-    group_label = "+".join(
-        g.lower() for g in (group_names or [])
-    )
+    model_names = "+".join(m.split("/")[-1].lower() for m in (models or []))
+    group_label = "+".join(g.lower() for g in (group_names or []))
     parts = [p for p in [model_names, group_label, timestamp] if p]
     evals_dir = Path(os.environ["EVAL_OUTPUT_DIR"]) / "_".join(parts)
     evals_dir.mkdir(parents=True, exist_ok=True)
