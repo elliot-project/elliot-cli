@@ -75,12 +75,8 @@ Run with:
 oellm schedule-eval --models "path/to/vlm" --task_groups "my-image-benchmark"
 ```
 
-The model adapter defaults to `llava_hf`. Override via `--slurm_template_var`:
-
-```bash
-oellm schedule-eval --models "path/to/vlm" --task_groups "my-image-benchmark" \
-  --slurm_template_var '{"LMMS_MODEL_TYPE":"qwen_vl_chat"}'
-```
+The lmms-eval model adapter (e.g. `llava_hf`, `qwen2_vl`) is auto-detected
+from the model name. No manual override is needed.
 
 ## Field Reference
 
@@ -101,38 +97,10 @@ oellm schedule-eval --models "path/to/vlm" --task_groups "my-image-benchmark" \
 
 Tasks without a `dataset` field will not have their data pre-downloaded and are not covered by CI validation.
 
-## Plugin Interface (Advanced)
+## Custom Benchmarks (contrib plugins)
 
-For programmatic task registration without editing the YAML, use the `BaseTask` abstract base class from `oellm.core`:
-
-```python
-from oellm.core import BaseTask
-from oellm.task_groups import DatasetSpec
-
-class MyImageTask(BaseTask):
-    @property
-    def name(self) -> str:
-        return "my_benchmark"        # canonical name used in CSV scheduling
-
-    @property
-    def suite(self) -> str:
-        return "lmms_eval"           # or "lm_eval" / "lighteval"
-
-    @property
-    def n_shots(self) -> list[int]:
-        return [0]
-
-    @property
-    def dataset_specs(self) -> list[DatasetSpec]:
-        return [DatasetSpec(repo_id="org/my-dataset")]
-```
-
-Override `engine_task_name` if the engine uses a different name than `name`:
-
-```python
-    @property
-    def engine_task_name(self) -> str:
-        return "my_benchmark_v2"     # passed to --tasks; defaults to self.name
-```
-
-See `oellm/core/` for the full `BaseTask`, `BaseMetric`, and `BaseModelAdapter` interfaces.
+For benchmarks that have their own inference scripts, custom metrics, or
+are not part of lm-eval / lighteval / lmms-eval, use the contrib plugin
+system. See [`oellm/contrib/CONTRIBUTING.md`](../oellm/contrib/CONTRIBUTING.md)
+for the full guide and `oellm/contrib/regiondial_bench/` as a reference
+implementation.

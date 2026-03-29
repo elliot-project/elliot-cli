@@ -49,7 +49,7 @@ class BaseTask(ABC):
         """Evaluation suite identifier.
 
         One of: ``lm_eval``, ``lighteval``, ``lmms_eval``, or a contrib
-        ``SUITE_NAME`` (e.g. ``"region_reasoner"``).
+        ``SUITE_NAME`` (e.g. ``"regiondial_bench"``).
         """
 
     @property

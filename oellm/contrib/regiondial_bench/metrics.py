@@ -2,7 +2,7 @@
 
 :class:`BaseMetric` subclasses that compute region-grounding metrics from
 per-sample inference results.  These are used by ``suite._aggregate_shards()``
-to score any model's predictions.
+to score any model's predictions on RegionDial-Bench.
 
 Input format
 ------------
@@ -12,7 +12,8 @@ inference script::
     {
       "intersection": 12345,
       "union": 23456,
-      "bbox_iou": 0.73
+      "bbox_iou": 0.73,
+      "round": 1
     }
 
 ``predictions`` passed to ``compute()`` are ``list[str]`` — one JSON string
@@ -57,7 +58,7 @@ def _mask_iou(sample: dict) -> float:
 
 
 class GIoU(BaseMetric):
-    """Mean per-sample mask IoU (gIoU as reported in the RegionReasoner paper).
+    """Mean per-sample mask IoU (gIoU as reported in RegionDial-Bench).
 
     Formula: ``mean(intersection_i / union_i)`` over all samples.
     """
@@ -77,7 +78,7 @@ class GIoU(BaseMetric):
 
 
 class CIoU(BaseMetric):
-    """Cumulative IoU (cIoU as reported in the RegionReasoner paper).
+    """Cumulative IoU (cIoU as reported in RegionDial-Bench).
 
     Formula: ``sum(all intersections) / sum(all unions)``.
     """
