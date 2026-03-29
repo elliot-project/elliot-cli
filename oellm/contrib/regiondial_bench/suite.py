@@ -192,7 +192,7 @@ def run(
                 "--vis_output_path",
                 str(Path(tmp_dir) / f"vis_{idx}"),
                 "--idx",
-                "0",
+                str(idx),
                 "--num_parts",
                 "1",
                 "--batch_size",
