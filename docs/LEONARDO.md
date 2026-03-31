@@ -115,12 +115,32 @@ uv pip install -e ./elliot-cli
 
 ## 5. Set HuggingFace Cache Directory
 
-Compute nodes have no internet access, so all models and datasets must be pre-downloaded. Set `HF_HOME` to point to your work storage:
+Compute nodes have no internet access, so all models and datasets must be pre-downloaded. Set `HF_HOME` to point to a storage area large enough to hold your models and datasets.
+
+> **Warning:** `$HOME` on Leonardo has a quota of only **50 GB** — far too small for most LLMs and multimodal datasets. Do **not** use `$HOME` as your HF cache directory.
+
+Leonardo provides several larger storage areas ([full details](https://docs.hpc.cineca.it/hpc/hpc_data_storage.html)):
+
+| Area | Quota | Purge policy | Notes |
+|------|-------|--------------|-------|
+| `$WORK` | 1 TB | 6 months post-project | Persistent, parallel I/O, **recommended** |
+| `$FAST` | 1 TB | 6 months post-project | Faster I/O than `$WORK`, no extension option |
+| `$SCRATCH` | 20 TB | Files purged after **40 days** of inactivity | Temporary only |
+
+**Recommended:** use `$WORK` for persistent caches (models you reuse across runs):
 
 ```zsh
-mkdir -p $HOME/hf_cache
-export HF_HOME="$HOME/hf_cache"
+mkdir -p $WORK/hf_cache
+export HF_HOME="$WORK/hf_cache"
+echo 'export HF_HOME="$WORK/hf_cache"' >> ~/.bashrc
 source ~/.bashrc
+```
+
+If you need more space for a single campaign and don't need the cache long-term, `$SCRATCH` (up to 20 TB) is an option — but files are **automatically deleted after 40 days of inactivity** and must not be kept alive artificially with `touch`:
+
+```zsh
+mkdir -p $SCRATCH/hf_cache
+export HF_HOME="$SCRATCH/hf_cache"
 ```
 
 ---
