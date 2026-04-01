@@ -7,16 +7,16 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Schedule evaluations** on multiple models and tasks: `oellm schedule-eval`
 - **Collect results** and check for missing evaluations: `oellm collect-results`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
-- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA)
+- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Snellius)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
 - **Plugin system** for contributing custom benchmarks without touching core code
-- **Automatic container builds** via GitHub Actions
+- **Automatic building and deployment of containers**
 
 ## Quick Start
 
 **Prerequisites:**
 - Install [uv](https://docs.astral.sh/uv/#installation)
-- Set `HF_HOME` to your HuggingFace cache directory (e.g. `export HF_HOME="/path/to/hf_home"`)
+- Set the `HF_HOME` environment variable to point to your HuggingFace cache directory (e.g. `export HF_HOME="/path/to/your/hf_home"`, on LUMI use the path `/scratch/project_462000963/cache/huggingface`). This is where models and datasets will be cached. Compute nodes typically have no internet access, so all assets must be pre-downloaded into this directory.
 
 ```bash
 # Install
@@ -34,7 +34,11 @@ oellm schedule-eval \
     --venv_path ~/elliot-venv
 ```
 
-This will automatically detect your cluster, download models and datasets, and submit a SLURM job array with cluster-specific resources.
+This will automatically:
+- Detect your current HPC cluster (Leonardo, LUMI, JURECA, or Snellius)
+- Download and cache the specified models
+- Pre-download datasets for known tasks (see warning below)
+- Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
 
 For custom environments instead of containers, pass `--venv_path` (see [docs/VENV.md](docs/VENV.md)).
 
@@ -99,10 +103,10 @@ oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
 
 ```bash
 # Basic collection
-oellm collect-results /path/to/eval-output-dir
+oellm collect-results --results_dir /path/to/eval-output-dir
 
 # Check for missing evaluations and create a CSV for re-running them
-oellm collect-results /path/to/eval-output-dir --check --output_csv results.csv
+oellm collect-results --results_dir /path/to/eval-output-dir --check true --output_csv results.csv
 
 # Re-schedule failed jobs
 oellm schedule-eval --eval_csv_path results_missing.csv
@@ -119,7 +123,25 @@ Update to latest:
 uv tool upgrade oellm
 ```
 
-For cluster-specific setup, see the [documentation](#documentation) section.
+### JURECA/JSC Specifics
+
+Due to limited space in `$HOME` on JSC clusters, set these environment variables:
+
+```bash
+export UV_CACHE_DIR="/p/project1/<project>/$USER/.cache/uv-cache"
+export UV_INSTALL_DIR="/p/project1/<project>/$USER/.local"
+export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python"
+export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
+```
+
+## Supported Clusters:
+We support: Leonardo, Lumi, Jureca, Jupiter, and Snellius
+
+## CLI Options
+
+```bash
+oellm schedule-eval --help
+```
 
 ## Development
 
@@ -143,6 +165,7 @@ uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task_groups "open
 |---|---|
 | Leonardo (CINECA) | [docs/LEONARDO.md](docs/LEONARDO.md) |
 | LUMI, JURECA | Coming soon |
+| Snellius | Coming soon |
 
 ### Environment & Infrastructure
 
