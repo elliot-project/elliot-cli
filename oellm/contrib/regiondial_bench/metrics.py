@@ -23,7 +23,7 @@ already folded into the intersection/union computation by the inference script.
 Metrics
 -------
 - **GIoU**: mean of per-sample mask IoU (intersection / union).
-- **CIoU**: cumulative IoU — sum of all intersections / sum of all unions.
+- **CIoU**: sum of all intersections / sum of all unions.
 - **BboxAP**: fraction of samples where bbox IoU > 0.5.
 - **PassRate**: fraction of samples where mask IoU > *threshold*.
 """
@@ -78,7 +78,7 @@ class GIoU(BaseMetric):
 
 
 class CIoU(BaseMetric):
-    """Cumulative IoU (cIoU as reported in RegionDial-Bench).
+    """cIoU as reported in RegionDial-Bench.
 
     Formula: ``sum(all intersections) / sum(all unions)``.
     """
