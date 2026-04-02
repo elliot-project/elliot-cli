@@ -395,7 +395,7 @@ class TestSuiteProtocol:
         assert suite.detect_model_flags("lmsdss/RegionReasoner-7B") == "vision_reasoner"
 
     def test_detect_model_flags_qwen2_model(self, suite):
-        assert suite.detect_model_flags("Qwen/Qwen2.5-VL-7B-Instruct") == "qwen2"
+        assert suite.detect_model_flags("Qwen/Qwen2.5-VL-7B-Instruct") == "qwen2.5"
 
     def test_detect_model_flags_qwen1_model(self, suite):
         assert suite.detect_model_flags("Qwen/Qwen-VL-Chat") == "qwen"
@@ -476,7 +476,7 @@ class TestRegionDialModelAdapter:
 
     def test_contrib_flags_qwen2(self, adapter_cls):
         cls, _ = adapter_cls
-        assert cls("Qwen/Qwen2.5-VL-7B").to_contrib_flags() == "qwen2"
+        assert cls("Qwen/Qwen2.5-VL-7B").to_contrib_flags() == "qwen2.5"
 
     def test_contrib_flags_qwen(self, adapter_cls):
         cls, _ = adapter_cls
@@ -490,7 +490,7 @@ class TestRegionDialModelAdapter:
         import oellm.contrib.regiondial_bench.suite as s
 
         assert s.detect_model_flags("lmsdss/RegionReasoner-7B") == "vision_reasoner"
-        assert s.detect_model_flags("Qwen/Qwen2.5-VL-7B") == "qwen2"
+        assert s.detect_model_flags("Qwen/Qwen2.5-VL-7B") == "qwen2.5"
 
 
 # ---------------------------------------------------------------------------
@@ -651,17 +651,20 @@ class TestAggregateShards:
             _aggregate_shards(str(tmp_path))
 
     def test_per_round_metrics_present(self, tmp_path):
-        """Samples with 'round' field produce per-round gIoU and bbox_AP keys."""
+        """Two images with two turns each produce per-round gIoU and bbox_AP keys."""
         from oellm.contrib.regiondial_bench.suite import _aggregate_shards
 
+        # Turns are consecutive per image (img1 T1, img1 T2, img2 T1, img2 T2).
+        # The turn counter assigns: first occurrence of each image_id → R1,
+        # second occurrence → R2.
         self._write_shard(
             tmp_path,
             0,
             [
-                {"intersection": 100, "union": 100, "bbox_iou": 1.0, "round": 1},
-                {"intersection": 50, "union": 100, "bbox_iou": 0.6, "round": 1},
-                {"intersection": 0, "union": 100, "bbox_iou": 0.0, "round": 2},
-                {"intersection": 80, "union": 100, "bbox_iou": 0.8, "round": 2},
+                {"image_id": "img1", "intersection": 100, "union": 100, "bbox_iou": 1.0},
+                {"image_id": "img1", "intersection": 0, "union": 100, "bbox_iou": 0.0},
+                {"image_id": "img2", "intersection": 50, "union": 100, "bbox_iou": 0.6},
+                {"image_id": "img2", "intersection": 80, "union": 100, "bbox_iou": 0.8},
             ],
         )
         m = _aggregate_shards(str(tmp_path))
@@ -679,18 +682,18 @@ class TestAggregateShards:
         # R2 bbox_AP: one >0.5 (0.8), one =0.0 → 0.5
         assert m["bbox_AP_R2"] == pytest.approx(0.5)
 
-    def test_per_round_metrics_absent_without_round_field(self, tmp_path):
-        """Samples without 'round' field produce no per-round keys."""
+    def test_per_round_metrics_always_present(self, tmp_path):
+        """Per-round keys are always produced — turns are inferred from image_id order."""
         from oellm.contrib.regiondial_bench.suite import _aggregate_shards
 
         self._write_shard(
             tmp_path,
             0,
-            [{"intersection": 100, "union": 100, "bbox_iou": 1.0}],
+            [{"image_id": "img1", "intersection": 100, "union": 100, "bbox_iou": 1.0}],
         )
         m = _aggregate_shards(str(tmp_path))
-        round_keys = [k for k in m if "_R" in k]
-        assert round_keys == []
+        assert "gIoU_R1" in m
+        assert "bbox_AP_R1" in m
 
     def test_per_round_metrics_seven_rounds(self, tmp_path):
         """All 7 rounds produce per-round metrics when present."""
