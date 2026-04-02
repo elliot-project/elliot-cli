@@ -196,9 +196,10 @@ def run(
                 "--num_parts",
                 "1",
                 "--batch_size",
-                "2",
+                "1",
                 "--task_router_model_path",
                 "Ricky06662/TaskRouter-1.5B",
+                "--binarize_bbox_iou",
             ]
             logger.info("Starting shard %d/%d: %s", idx + 1, num_gpus, " ".join(cmd))
             proc = subprocess.Popen(cmd, env=shard_env, cwd=str(Path(test_json).parent))
@@ -356,27 +357,26 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         metrics[m.name] = val
         logger.debug("%s = %.4f", m.name, val)
 
+    # Infer per-round membership by counting each image_id's occurrence order in
+    # the output (mirrors calculate_iou_with_bbox_by_turns.py).  The inference
+    # script emits turns in sequential order per image, so the k-th time an
+    # image_id appears corresponds to turn k (1-indexed).
     rounds_map: dict[int, list[str]] = defaultdict(list)
+    image_turn_counter: dict[str, int] = {}
     for sample_dict, sample_str in zip(all_samples, samples, strict=True):
-        rnd = sample_dict.get("round")
-        if rnd is not None:
-            rounds_map[int(rnd)].append(sample_str)
+        image_id = str(sample_dict.get("image_id", ""))
+        image_turn_counter[image_id] = image_turn_counter.get(image_id, 0) + 1
+        rnd = image_turn_counter[image_id]
+        rounds_map[rnd].append(sample_str)
 
-    if rounds_map:
-        per_round_metrics = [GIoU(), BboxAP()]
-        for rnd in sorted(rounds_map):
-            rnd_samples = rounds_map[rnd]
-            rnd_refs = [""] * len(rnd_samples)
-            for m in per_round_metrics:
-                val = m.compute(rnd_samples, rnd_refs)
-                metrics[f"{m.name}_R{rnd}"] = val
-                logger.debug("%s_R%d = %.4f", m.name, rnd, val)
-    else:
-        logger.warning(
-            "No 'round' field found in samples — skipping per-round breakdown. "
-            "Per-round metrics (R1–R7) require the inference script to output "
-            "a 'round' field in each sample."
-        )
+    per_round_metrics = [GIoU(), BboxAP()]
+    for rnd in sorted(rounds_map):
+        rnd_samples = rounds_map[rnd]
+        rnd_refs = [""] * len(rnd_samples)
+        for m in per_round_metrics:
+            val = m.compute(rnd_samples, rnd_refs)
+            metrics[f"{m.name}_R{rnd}"] = val
+            logger.debug("%s_R%d = %.4f", m.name, rnd, val)
 
     return metrics
 

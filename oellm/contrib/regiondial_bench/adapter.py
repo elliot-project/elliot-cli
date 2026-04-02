@@ -25,6 +25,8 @@ class RegionDialModelAdapter(BaseModelAdapter):
         name = Path(self._path).name.lower()
         if "regionreasoner" in name or "region_reasoner" in name:
             return "vision_reasoner"
+        if "qwen2.5" in name:
+            return "qwen2.5"
         if "qwen2" in name:
             return "qwen2"
         if "qwen" in name:
