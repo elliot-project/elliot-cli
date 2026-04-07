@@ -240,7 +240,7 @@ task_groups:
     description: "EU Language GSM benchmarks in Aya Expanse"
     suite: lm-eval-harness
     n_shots: [5]
-    dataset: jbross-ibm-research/mgsm
+    dataset: juletxara/mgsm
     tasks:
       - task: mgsm_native_cot_en
         subset: en
@@ -329,7 +329,7 @@ task_groups:
       - task: vqav2_val_all
         dataset: HuggingFaceM4/VQAv2
       - task: mmbench_en_dev
-        dataset: HuggingFaceM4/MMBench_00
+        dataset: lmms-lab/MMBench
       - task: mmmu_val
         dataset: MMMU/MMMU
       - task: chartqa
@@ -358,7 +358,7 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: mmbench_en_dev
-        dataset: HuggingFaceM4/MMBench_00
+        dataset: lmms-lab/MMBench
 
   image-mmmu:
     description: "MMMU massive multi-discipline multimodal understanding via lmms-eval"
