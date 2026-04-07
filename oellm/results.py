@@ -1,7 +1,10 @@
-"""Result collection and metric resolution for evaluation outputs."""
+"""Result collection, metric resolution, and structured output for evaluation outputs."""
+
+from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 
@@ -379,3 +382,73 @@ def collect_results(
                     )
                 if len(missing_jobs) > 5:
                     logging.info(f"  ... and {len(missing_jobs) - 5} more")
+
+
+# ---------------------------------------------------------------------------
+# Structured output: versioned JSON and Markdown report
+# ---------------------------------------------------------------------------
+
+SCHEMA_VERSION = "1.0"
+
+
+def write_results_json(
+    rows: list[dict],
+    output_path: str | Path,
+) -> None:
+    """Write evaluation results as a versioned JSON file.
+
+    The schema is::
+
+        {
+            "version": "1.0",
+            "generated_at": "2026-04-02T12:00:00+00:00",
+            "results": [
+                {"model": ..., "task": ..., "n_shot": ..., "metric": ..., "performance": ...}
+            ]
+        }
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for row in rows:
+        results.append(
+            {
+                "model": row.get("model_name", ""),
+                "task": row.get("task", ""),
+                "n_shot": row.get("n_shot", 0),
+                "metric": row.get("metric_name", ""),
+                "performance": row.get("performance", 0.0),
+            }
+        )
+
+    envelope = {
+        "version": SCHEMA_VERSION,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "results": results,
+    }
+
+    output_path.write_text(json.dumps(envelope, indent=2))
+
+
+def write_results_markdown(
+    rows: list[dict],
+    output_path: str | Path,
+) -> None:
+    """Write evaluation results as a Markdown table."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        "| Model | Task | N-shot | Metric | Performance |",
+        "|-------|------|--------|--------|-------------|",
+    ]
+    for row in rows:
+        model = row.get("model_name", "")
+        task = row.get("task", "")
+        n_shot = row.get("n_shot", 0)
+        metric = row.get("metric_name", "")
+        perf = row.get("performance", 0.0)
+        lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf:.4f} |")
+
+    output_path.write_text("\n".join(lines) + "\n")

@@ -1,52 +1,41 @@
-import json
 import logging
-import math
-import os
-import re
-import subprocess
-from datetime import datetime
-from importlib.resources import files
 from pathlib import Path
-from string import Template
 
-import pandas as pd
-from jsonargparse import auto_cli
+import typer
+from typer import rich_utils
 
-from oellm.constants import EvaluationJob, detect_lmms_model_type
+from oellm.config import EvalConfig
 from oellm.results import collect_results
-from oellm.task_groups import (
-    _collect_dataset_specs,
-    _collect_hf_dataset_files,
-    _collect_hf_model_repos,
-    _expand_task_groups,
-    _lookup_dataset_specs_for_tasks,
+from oellm.utils import _filter_warnings, _setup_logging
+
+# Override Typer's default cyan colour scheme with colours that are readable
+# on both light (white) and dark terminal backgrounds.
+rich_utils.COLOR_OPTIONS_PANEL_TITLE = "bold blue"
+rich_utils.COLOR_ARGUMENTS_PANEL_TITLE = "bold blue"
+rich_utils.COLOR_COMMANDS_PANEL_TITLE = "bold blue"
+rich_utils.STYLE_OPTION = "bold blue"
+rich_utils.STYLE_SWITCH = "bold dark_green"
+rich_utils.STYLE_NEGATIVE_OPTION = "bold magenta"
+rich_utils.STYLE_NEGATIVE_SWITCH = "bold magenta"
+rich_utils.STYLE_METAVAR = "dark_orange3"
+rich_utils.STYLE_OPTION_DEFAULT = "dim"
+
+app = typer.Typer(
+    name="oellm",
+    help="ELLIOT: Multi-cluster evaluation tool for language models",
+    no_args_is_help=True,
+    pretty_exceptions_show_locals=False,
 )
-from oellm.utils import (
-    _ensure_runtime_environment,
-    _expand_local_model_paths,
-    _filter_warnings,
-    _load_cluster_env,
-    _num_jobs_in_queue,
-    _pre_download_datasets_from_specs,
-    _pre_download_hf_dataset_files,
-    _pre_download_hf_model_repos,
-    _process_model_paths,
-    _setup_logging,
-    capture_third_party_output_from_kwarg,
-)
-
-# Backward-compatible alias
-_detect_lmms_model_type = detect_lmms_model_type
 
 
-@capture_third_party_output_from_kwarg("verbose")
 def schedule_evals(
     models: str | None = None,
     tasks: str | None = None,
     task_groups: str | None = None,
-    n_shot: int | list[int] | None = None,
+    n_shot: list[int] | None = None,
     eval_csv_path: str | None = None,
     *,
+    config: str | None = None,
     max_array_len: int = 128,
     limit: int | None = None,
     verbose: bool = False,
@@ -57,367 +46,298 @@ def schedule_evals(
     venv_path: str | None = None,
     slurm_template_var: str | None = None,
 ) -> None:
-    """
-    Schedule evaluation jobs for a given set of models, tasks, and number of shots.
+    """Schedule evaluation jobs for a given set of models, tasks, and number of shots.
 
     Args:
-        models: A string of comma-separated model paths or Hugging Face model identifiers.
-            Warning: does not allow passing model args such as `EleutherAI/pythia-160m,revision=step100000`
-            since we split on commas. If you need to pass model args, use the `eval_csv_path` option.
-            For local paths:
-            - If a directory contains `.safetensors` files directly, it will be treated as a single model
-            - If a directory contains subdirectories with models (e.g., converted_checkpoints/),
-              all models in subdirectories will be automatically discovered
-            - For each model directory, if it has an `hf/iter_XXXXX` structure, all checkpoints will be expanded
-            - This allows passing a single directory containing multiple models to evaluate them all
-        tasks: A string of comma-separated task names (lm_eval) or paths.
-            Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
-        task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
-            Each group expands into concrete (task, n_shots, suite) entries; `n_shot` is ignored for groups.
-        n_shot: An integer or list of integers specifying the number of shots applied to `tasks`.
-        eval_csv_path: A path to a CSV file containing evaluation data.
-            Warning: exclusive argument. Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided.
-        max_array_len: The maximum number of jobs to schedule to run concurrently.
-            Warning: this is not the number of jobs in the array job. This is determined by the environment variable `QUEUE_LIMIT`.
-        limit: If set, limit the number of samples per task (useful for quick testing).
-            Passes --limit to lm_eval and --max_samples to lighteval.
-        download_only: If True, only download the datasets and models and exit.
-        dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
-        skip_checks: If True, skip container image, model validation, and dataset pre-download checks for faster execution.
-        trust_remote_code: If True, trust remote code when downloading datasets. Default is True. Workflow might fail if set to False.
-        venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
-            this venv instead of inside a Singularity/Apptainer container.
-        slurm_template_var: JSON object of template variable overrides. Use exact env var names
-            (PARTITION, ACCOUNT, GPUS_PER_NODE). "TIME" overrides the time limit.
-            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
+        models: Comma-separated model paths or Hugging Face model identifiers.
+            For local paths, directories are expanded to discover all checkpoints.
+            Cannot be combined with eval_csv_path.
+        tasks: Comma-separated task names (lm_eval) or paths. Requires n_shot.
+        task_groups: Comma-separated task group names from task-groups.yaml.
+            Expands into (task, n_shots, suite) tuples; n_shot is ignored.
+        n_shot: Number(s) of shots applied to tasks.
+        eval_csv_path: Path to a CSV with columns model_path, task_path, n_shot[, eval_suite].
+            Exclusive with models/tasks/task_groups/n_shot.
+        config: Path to a YAML config file. CLI flags override YAML values.
+        max_array_len: Maximum concurrent SLURM array jobs.
+        limit: Limit samples per task (passes --limit / --max_samples to the engine).
+        download_only: Only pre-download models and datasets, then exit.
+        dry_run: Generate the SLURM script without submitting.
+        skip_checks: Skip container/model/dataset validation for faster iteration.
+        trust_remote_code: Trust remote code when downloading datasets.
+        venv_path: Python venv path. When set, runs in venv instead of Singularity.
+        slurm_template_var: JSON object of SLURM overrides, e.g.
+            '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
     """
+    from oellm.scheduler import schedule_evals as _sched
+
+    cli_cfg = EvalConfig.from_cli_kwargs(
+        models=models,
+        tasks=tasks,
+        task_groups=task_groups,
+        n_shot=n_shot,
+        eval_csv_path=eval_csv_path,
+        max_array_len=max_array_len,
+        limit=limit,
+        verbose=verbose,
+        download_only=download_only,
+        dry_run=dry_run,
+        skip_checks=skip_checks,
+        trust_remote_code=trust_remote_code,
+        venv_path=venv_path,
+        slurm_template_var=slurm_template_var,
+    )
+
+    if config:
+        yaml_cfg = EvalConfig.from_yaml(config)
+        cfg = yaml_cfg.merge(cli_cfg)
+        logging.info(f"Loaded config from {config} (CLI flags override)")
+    else:
+        cfg = cli_cfg
+
+    cfg.validate()
+    _setup_logging(cfg.verbose)
+
+    models_str: str | None = None
+    if cfg._model_paths():
+        models_str = ",".join(cfg._model_paths())
+
+    _sched(
+        models=models_str,
+        tasks=",".join(cfg.tasks) if cfg.tasks else None,
+        task_groups=",".join(cfg.task_groups) if cfg.task_groups else None,
+        n_shot=cfg.n_shot,
+        eval_csv_path=cfg.eval_csv_path,
+        max_array_len=cfg.slurm.max_array_len,
+        limit=cfg.limit,
+        verbose=cfg.verbose,
+        download_only=cfg.download_only,
+        dry_run=cfg.dry_run,
+        skip_checks=cfg.skip_checks,
+        trust_remote_code=cfg.trust_remote_code,
+        venv_path=cfg.venv_path,
+        slurm_template_var=cfg.slurm_template_var_json,
+    )
+
+
+def list_tasks(*, group: str | None = None) -> None:
+    """List available task groups and their tasks.
+
+    Args:
+        group: If provided, show tasks within this specific group.
+    """
+    from rich.table import Table
+
+    from oellm.task_groups import TaskGroup, _parse_task_groups, get_all_task_group_names
+    from oellm.utils import get_console
+
+    console = get_console()
+    all_names = get_all_task_group_names()
+
+    if group:
+        all_names = [group]
+
+    parsed = _parse_task_groups(all_names)
+
+    table = Table(title="Available Task Groups")
+    table.add_column("Group", style="bold")
+    table.add_column("Suite")
+    table.add_column("Tasks", justify="right")
+    table.add_column("N-shots")
+    table.add_column("Description")
+
+    for name in sorted(parsed.keys()):
+        g = parsed[name]
+        if isinstance(g, TaskGroup):
+            n_shots_set = set()
+            for t in g.tasks:
+                for s in t.n_shots or []:
+                    n_shots_set.add(s)
+            n_shots_str = ", ".join(str(s) for s in sorted(n_shots_set))
+            table.add_row(
+                name,
+                g.suite,
+                str(len(g.tasks)),
+                n_shots_str,
+                g.description,
+            )
+        else:
+            # SuperGroup
+            total_tasks = sum(len(sg.tasks) for sg in g.task_groups)
+            table.add_row(
+                name,
+                "mixed",
+                str(total_tasks),
+                "",
+                g.description,
+            )
+
+    console.print(table)
+
+
+def compare(
+    result_a: str,
+    result_b: str,
+    *,
+    verbose: bool = False,
+) -> None:
+    """Compare two evaluation result files or directories.
+
+    Args:
+        result_a: Path to first results JSON file or directory containing results.json
+        result_b: Path to second results JSON file or directory containing results.json
+        verbose: Enable verbose logging
+    """
+    import json
+
+    from rich.table import Table
+
+    from oellm.utils import get_console
+
     _setup_logging(verbose)
 
-    _load_cluster_env()
+    def _load_results(path_str: str) -> list[dict]:
+        p = Path(path_str)
+        if p.is_dir():
+            p = p / "results.json"
+        if not p.exists():
+            raise FileNotFoundError(f"Results file not found: {p}")
+        data = json.loads(p.read_text())
+        return data.get("results", [])
 
-    use_venv = venv_path is not None
+    results_a = _load_results(result_a)
+    results_b = _load_results(result_b)
 
-    if not skip_checks:
-        _ensure_runtime_environment(
-            use_venv=use_venv,
-            container_image=os.environ.get("EVAL_CONTAINER_IMAGE"),
-            venv_path=venv_path,
-        )
-    else:
-        logging.info("Skipping runtime environment check (--skip-checks enabled)")
+    # Index by (task, n_shot, metric)
+    def _index(results: list[dict]) -> dict[tuple, float]:
+        idx = {}
+        for r in results:
+            key = (r.get("task", ""), r.get("n_shot", 0), r.get("metric", ""))
+            idx[key] = r.get("performance", 0.0)
+        return idx
 
-    if isinstance(models, str):
-        models = [m.strip() for m in models.split(",") if m.strip()]  # type: ignore
+    idx_a = _index(results_a)
+    idx_b = _index(results_b)
+    all_keys = sorted(set(idx_a.keys()) | set(idx_b.keys()))
 
-    if isinstance(tasks, str):
-        tasks = [t.strip() for t in tasks.split(",") if t.strip()]  # type: ignore
+    console = get_console()
+    table = Table(title="Comparison")
+    table.add_column("Task", style="bold")
+    table.add_column("N-shot", justify="right")
+    table.add_column("Metric")
+    table.add_column("A", justify="right")
+    table.add_column("B", justify="right")
+    table.add_column("\u0394", justify="right")  # Delta
 
-    if isinstance(n_shot, int):
-        n_shot = [n_shot]
-
-    group_names: list[str] | None = None
-    if task_groups:
-        group_names = [g.strip() for g in task_groups.split(",")]
-
-    eval_jobs: list[EvaluationJob] = []
-    if eval_csv_path:
-        if models or tasks or task_groups or n_shot:
-            raise ValueError(
-                "Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided."
-            )
-        df = pd.read_csv(eval_csv_path)
-        required_cols = {"model_path", "task_path", "n_shot"}
-        if not required_cols.issubset(df.columns):
-            raise ValueError(
-                f"CSV file must contain the columns: {', '.join(required_cols)}"
-            )
-
-        if "eval_suite" not in df.columns:
-            df["eval_suite"] = "lm_eval"
+    for task, n_shot, metric in all_keys:
+        val_a = idx_a.get((task, n_shot, metric))
+        val_b = idx_b.get((task, n_shot, metric))
+        str_a = f"{val_a:.4f}" if val_a is not None else "\u2014"
+        str_b = f"{val_b:.4f}" if val_b is not None else "\u2014"
+        if val_a is not None and val_b is not None:
+            delta = val_b - val_a
+            str_delta = f"{delta:+.4f}"
         else:
-            df["eval_suite"] = df["eval_suite"].fillna("lm_eval")
+            str_delta = "\u2014"
+        table.add_row(task, str(n_shot), metric, str_a, str_b, str_delta)
 
-        eval_jobs.extend(
-            [
-                EvaluationJob(
-                    model_path=row["model_path"],
-                    task_path=row["task_path"],
-                    n_shot=row["n_shot"],
-                    eval_suite=row["eval_suite"],
-                )
-                for _, row in df.iterrows()
-            ]
-        )
+    console.print(table)
 
-    elif models:
-        if group_names is None:
-            eval_jobs.extend(
-                [
-                    EvaluationJob(
-                        model_path=model,
-                        task_path=task,
-                        n_shot=shot,
-                        eval_suite="lm_eval",
-                    )
-                    for model in models
-                    for task in tasks
-                    for shot in n_shot
-                ]
-            )
-        else:
-            expanded = _expand_task_groups(group_names)
-            eval_jobs.extend(
-                [
-                    EvaluationJob(
-                        model_path=model,
-                        task_path=result.task,
-                        n_shot=result.n_shot,
-                        eval_suite=result.suite,
-                    )
-                    for model in models
-                    for result in expanded
-                ]
-            )
 
-    expanded_eval_jobs = []
-    for job in eval_jobs:
-        local_model_paths = _expand_local_model_paths(job.model_path)
-        if not local_model_paths:
-            expanded_eval_jobs.append(job)
-        else:
-            for path in local_model_paths:
-                expanded_eval_jobs.append(
-                    EvaluationJob(
-                        model_path=path,
-                        task_path=job.task_path,
-                        n_shot=job.n_shot,
-                        eval_suite=job.eval_suite,
-                    )
-                )
+def eval_command(
+    config: str | None = None,
+    *,
+    models: str | None = None,
+    tasks: str | None = None,
+    task_groups: str | None = None,
+    n_shot: list[int] | None = None,
+    eval_csv_path: str | None = None,
+    max_array_len: int = 128,
+    limit: int | None = None,
+    verbose: bool = False,
+    download_only: bool = False,
+    dry_run: bool = False,
+    skip_checks: bool = False,
+    trust_remote_code: bool = True,
+    venv_path: str | None = None,
+    slurm_template_var: str | None = None,
+) -> None:
+    """Run evaluations from a YAML config file.
 
-    # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
-    # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
-    # For contrib suites, the registry's detect_model_flags() provides the same service.
-    from oellm import registry as _registry  # noqa: PLC0415
+    All CLI flags override values in --config. Delegates to schedule-eval.
 
-    for job in expanded_eval_jobs:
-        if job.eval_suite == "lmms_eval":
-            adapter = _detect_lmms_model_type(str(job.model_path))
-            job.eval_suite = f"lmms_eval:{adapter}"
-            logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
-        else:
-            try:
-                mod = _registry.get_suite(job.eval_suite)
-                if hasattr(mod, "detect_model_flags"):
-                    flags = mod.detect_model_flags(str(job.model_path))
-                    if flags:
-                        job.eval_suite = f"{job.eval_suite}:{flags}"
-                        logging.debug(
-                            f"Contrib suite flags for {job.model_path} ({mod.SUITE_NAME}): {flags}"
-                        )
-            except KeyError:
-                pass  # Not a registered contrib suite — pass eval_suite through unchanged
+    Args:
+        config: Path to a YAML config file.
+        models: Comma-separated model paths or HF identifiers (overrides config).
+        tasks: Comma-separated task names (overrides config).
+        task_groups: Comma-separated task group names (overrides config).
+        n_shot: Number(s) of shots applied to tasks (overrides config).
+        eval_csv_path: Path to a CSV with evaluation jobs (overrides config).
+        max_array_len: Maximum concurrent SLURM array jobs.
+        limit: Limit samples per task.
+        download_only: Only pre-download models and datasets, then exit.
+        dry_run: Generate the SLURM script without submitting.
+        skip_checks: Skip container/model/dataset validation.
+        trust_remote_code: Trust remote code when downloading datasets.
+        venv_path: Python venv path. When set, runs in venv instead of Singularity.
+        slurm_template_var: JSON object of SLURM overrides.
+        verbose: Enable verbose logging.
+    """
+    from oellm.config import ModelConfig
+    from oellm.scheduler import schedule_evals as _sched
 
-    if not skip_checks:
-        hub_models: set[str | Path] = {
-            job.model_path
-            for job in expanded_eval_jobs
-            if not Path(job.model_path).exists()
-        }
-        _process_model_paths(hub_models)
-    else:
-        logging.info(
-            "Skipping model path processing and validation (--skip-checks enabled)"
-        )
-
-    df = pd.DataFrame(expanded_eval_jobs)
-
-    if df.empty:
-        logging.warning("No evaluation jobs to schedule.")
-        return None
-
-    df["eval_suite"] = df["eval_suite"].str.lower()
-
-    # Ensure that all datasets required by the tasks are cached locally to avoid
-    # network access on compute nodes.
-    if not skip_checks:
-        dataset_specs = []
-        if group_names:
-            dataset_specs = _collect_dataset_specs(group_names)
-        else:
-            # Look up individual tasks in task groups registry
-            all_tasks = df["task_path"].unique().tolist()
-            dataset_specs = _lookup_dataset_specs_for_tasks(all_tasks)
-            if not dataset_specs:
-                logging.info(
-                    "No dataset specs found for tasks; skipping dataset pre-download"
-                )
-
-        if dataset_specs:
-            _pre_download_datasets_from_specs(
-                dataset_specs, trust_remote_code=trust_remote_code
-            )
-
-        hf_model_repos = []
-        if group_names:
-            hf_model_repos = _collect_hf_model_repos(group_names)
-        if hf_model_repos:
-            _pre_download_hf_model_repos(hf_model_repos)
-
-        hf_dataset_files = []
-        if group_names:
-            hf_dataset_files = _collect_hf_dataset_files(group_names)
-        if hf_dataset_files:
-            _pre_download_hf_dataset_files(hf_dataset_files)
-    else:
-        logging.info("Skipping dataset pre-download (--skip-checks enabled)")
-
-    if download_only:
-        return None
-
-    remaining_queue_capacity = (
-        int(os.environ.get("QUEUE_LIMIT", 250)) - _num_jobs_in_queue()
-    )
-
-    if remaining_queue_capacity <= 0 and not dry_run:
-        logging.warning("No remaining queue capacity. Not scheduling any jobs.")
-        return None
-
-    logging.debug(
-        f"Remaining capacity in the queue: {remaining_queue_capacity}. Number of "
-        f"evals to schedule: {len(df)}."
-    )
-
-    # Build a descriptive directory name: {models}_{task_groups}_{timestamp}
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    model_names = "+".join(m.split("/")[-1].lower() for m in (models or []))
-    group_label = "+".join(g.lower() for g in (group_names or []))
-    parts = [p for p in [model_names, group_label, timestamp] if p]
-    evals_dir = Path(os.environ["EVAL_OUTPUT_DIR"]) / "_".join(parts)
-    evals_dir.mkdir(parents=True, exist_ok=True)
-
-    slurm_logs_dir = evals_dir / "slurm_logs"
-    slurm_logs_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = evals_dir / "jobs.csv"
-
-    # Shuffle the dataframe to distribute fast/slow evaluations evenly across array jobs
-    df = df.sample(frac=1, random_state=42).reset_index(drop=True)
-    logging.info(
-        "Shuffled evaluation jobs for even load distribution across array workers"
-    )
-
-    df.to_csv(csv_path, index=False)
-
-    sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
-
-    total_evals = len(df)
-    actual_array_size = min(remaining_queue_capacity, total_evals)
-    evals_per_job = max(1, int(math.ceil(total_evals / actual_array_size)))
-
-    time_limit = os.environ.get("TIME_LIMIT", "12:00:00")
-
-    # Apply slurm_template_var overrides (JSON object)
-    if slurm_template_var:
-        try:
-            opts = json.loads(slurm_template_var)
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"slurm_template_var must be a valid JSON object: {e}"
-            ) from e
-        if not isinstance(opts, dict):
-            raise ValueError(
-                "slurm_template_var must be a JSON object, e.g. "
-                '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00"}'
-            )
-        for key, value in opts.items():
-            if key.upper() == "TIME":
-                time_limit = str(value)
-                logging.info(f"Using time limit override: {time_limit}")
-            else:
-                os.environ[key] = str(value)
-                logging.info(f"Using slurm_template_var override: {key}={value}")
-
-    logging.info("Evaluation planning:")
-    logging.info(f"   Total evaluations: {total_evals}")
-    logging.info(
-        f"   Array size: {actual_array_size} (queue capacity: {remaining_queue_capacity})"
-    )
-    logging.info(f"   Evaluations per job: {evals_per_job}")
-    logging.info(f"   Time limit: {time_limit}")
-
-    sbatch_script = sbatch_template.format(
-        csv_path=csv_path,
+    cli_cfg = EvalConfig.from_cli_kwargs(
+        models=models,
+        tasks=tasks,
+        task_groups=task_groups,
+        n_shot=n_shot,
+        eval_csv_path=eval_csv_path,
         max_array_len=max_array_len,
-        array_limit=actual_array_size - 1,  # Array is 0-indexed
-        num_jobs=actual_array_size,  # This is the number of array jobs, not total evals
-        total_evals=len(df),  # Pass the total number of evaluations
-        log_dir=evals_dir / "slurm_logs",
-        evals_dir=str(evals_dir / "results"),
-        time_limit=time_limit,  # Dynamic time limit
-        limit=limit if limit else "",  # Sample limit for quick testing
-        venv_path=venv_path or "",
+        limit=limit,
+        verbose=verbose,
+        download_only=download_only,
+        dry_run=dry_run,
+        skip_checks=skip_checks,
+        trust_remote_code=trust_remote_code,
+        venv_path=venv_path,
+        slurm_template_var=slurm_template_var,
     )
 
-    # substitute any $ENV_VAR occurrences
-    sbatch_script = Template(sbatch_script).safe_substitute(os.environ)
+    merged = EvalConfig.from_yaml(config).merge(cli_cfg) if config else cli_cfg
+    merged.validate()
 
-    sbatch_script_path = evals_dir / "submit_evals.sbatch"
-
-    with open(sbatch_script_path, "w") as f:
-        f.write(sbatch_script)
-
-    if dry_run:
-        logging.info(f"Dry run mode: SLURM script generated at {sbatch_script_path}")
-        logging.info(
-            f"Would schedule {actual_array_size} array jobs to handle {len(df)} evaluations"
-        )
-        logging.info(
-            f"Each array job will handle ~{(len(df) + actual_array_size - 1) // actual_array_size} evaluations"
-        )
-        logging.info("To submit the job, run: sbatch " + str(sbatch_script_path))
-        return
-
-    try:
-        logging.info("Calling sbatch to launch the evaluations")
-
-        logging.info(f"Evaluation directory: {evals_dir}")
-        logging.info(f"SLURM script: {sbatch_script_path}")
-        logging.info(f"Job configuration: {csv_path}")
-        logging.info(f"SLURM logs: {slurm_logs_dir}")
-        logging.info(f"Results: {evals_dir / 'results'}")
-
-        result = subprocess.run(
-            ["sbatch"],
-            input=sbatch_script,
-            text=True,
-            check=True,
-            capture_output=True,
-            env=os.environ,
-        )
-        logging.info("Job submitted successfully.")
-        logging.info(result.stdout)
-        job_id_match = re.search(r"Submitted batch job (\d+)", result.stdout)
-        if job_id_match:
-            job_id = job_id_match.group(1)
-            logging.info(f"Monitor job status: squeue -j {job_id}")
-            logging.info(f"View job details: scontrol show job {job_id}")
-            logging.info(f"Cancel job if needed: scancel {job_id}")
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Failed to submit job: {e}")
-        logging.error(f"sbatch stderr: {e.stderr}")
-    except FileNotFoundError:
-        logging.error(
-            "sbatch command not found. Please make sure you are on a system with SLURM installed."
+    models_str: str | None = None
+    if merged.models:
+        models_str = ",".join(
+            m.path if isinstance(m, ModelConfig) else m for m in merged.models
         )
 
+    _sched(
+        models=models_str,
+        tasks=",".join(merged.tasks) if merged.tasks else None,
+        task_groups=",".join(merged.task_groups) if merged.task_groups else None,
+        n_shot=merged.n_shot,
+        eval_csv_path=merged.eval_csv_path,
+        max_array_len=merged.slurm.max_array_len,
+        limit=merged.limit,
+        verbose=merged.verbose,
+        download_only=merged.download_only,
+        dry_run=merged.dry_run,
+        skip_checks=merged.skip_checks,
+        trust_remote_code=merged.trust_remote_code,
+        venv_path=merged.venv_path,
+        slurm_template_var=merged.slurm_template_var_json,
+    )
 
-def main():
+
+# Register CLI commands
+app.command("schedule-eval")(schedule_evals)
+app.command("eval")(eval_command)
+app.command("collect-results")(collect_results)
+app.command("list-tasks")(list_tasks)
+app.command("compare")(compare)
+
+
+def main() -> None:
     _filter_warnings()
-    auto_cli(
-        {
-            "schedule-eval": schedule_evals,
-            "collect-results": collect_results,
-        },
-        as_positional=False,
-        description="OELLM: Multi-cluster evaluation tool for language models",
-    )
+    app()
