@@ -11,7 +11,8 @@ from string import Template
 
 import pandas as pd
 
-from oellm.constants import EvaluationJob, detect_lmms_model_type
+from oellm.constants import EvaluationJob
+from oellm.runner import EvalRunner
 from oellm.task_groups import (
     _collect_dataset_specs,
     _collect_hf_dataset_files,
@@ -31,8 +32,6 @@ from oellm.utils import (
     _setup_logging,
     capture_third_party_output_from_kwarg,
 )
-
-_detect_lmms_model_type = detect_lmms_model_type
 
 
 @capture_third_party_output_from_kwarg("verbose")
@@ -191,28 +190,10 @@ def schedule_evals(
                     )
                 )
 
-    # For lmms_eval jobs, encode the adapter class in eval_suite as "lmms_eval:<adapter>".
-    # This makes LMMS_MODEL_TYPE completely transparent — users never set it manually.
-    # For contrib suites, the registry's detect_model_flags() provides the same service.
-    from oellm import registry as _registry  # noqa: PLC0415
-
-    for job in expanded_eval_jobs:
-        if job.eval_suite == "lmms_eval":
-            adapter = _detect_lmms_model_type(str(job.model_path))
-            job.eval_suite = f"lmms_eval:{adapter}"
-            logging.debug(f"lmms-eval adapter for {job.model_path}: {adapter}")
-        else:
-            try:
-                mod = _registry.get_suite(job.eval_suite)
-                if hasattr(mod, "detect_model_flags"):
-                    flags = mod.detect_model_flags(str(job.model_path))
-                    if flags:
-                        job.eval_suite = f"{job.eval_suite}:{flags}"
-                        logging.debug(
-                            f"Contrib suite flags for {job.model_path} ({mod.SUITE_NAME}): {flags}"
-                        )
-            except KeyError:
-                pass  # Not a registered contrib suite — pass eval_suite through unchanged
+    # Resolve eval_suite for each job: auto-detect lmms-eval adapter classes
+    # and contrib suite model flags so users never set them manually.
+    runner = EvalRunner()
+    runner.prepare_jobs(expanded_eval_jobs)
 
     if not skip_checks:
         hub_models: set[str | Path] = {

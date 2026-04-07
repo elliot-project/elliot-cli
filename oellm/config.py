@@ -200,7 +200,7 @@ class EvalConfig:
     @classmethod
     def _from_dict(cls, raw: dict[str, Any]) -> EvalConfig:
         """Construct from a raw dict (YAML or programmatic)."""
-        slurm_raw = raw.pop("slurm", {}) or {}
+        slurm_raw = raw.get("slurm", {}) or {}
         slurm = SlurmOverrides(
             partition=slurm_raw.get("partition"),
             account=slurm_raw.get("account"),

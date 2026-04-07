@@ -319,6 +319,16 @@ def collect_results(
         df = pd.DataFrame(rows)
         df.to_csv(output_csv, index=False)
         logging.info(f"Results saved to {output_csv}")
+
+        # Write structured outputs alongside the CSV.
+        output_stem = Path(output_csv).with_suffix("")
+        json_path = Path(f"{output_stem}.json")
+        md_path = Path(f"{output_stem}.md")
+        write_results_json(rows, json_path)
+        write_results_markdown(rows, md_path)
+        logging.info(f"Results JSON: {json_path}")
+        logging.info(f"Results Markdown: {md_path}")
+
         logging.info(f"Extracted {len(df)} evaluation results")
 
         if verbose:

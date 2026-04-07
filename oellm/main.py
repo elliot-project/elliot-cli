@@ -283,15 +283,13 @@ def eval_command(
         slurm_template_var: JSON object of SLURM overrides.
         verbose: Enable verbose logging.
     """
-    from oellm.config import ModelConfig
-    from oellm.scheduler import schedule_evals as _sched
-
-    cli_cfg = EvalConfig.from_cli_kwargs(
+    schedule_evals(
         models=models,
         tasks=tasks,
         task_groups=task_groups,
         n_shot=n_shot,
         eval_csv_path=eval_csv_path,
+        config=config,
         max_array_len=max_array_len,
         limit=limit,
         verbose=verbose,
@@ -301,32 +299,6 @@ def eval_command(
         trust_remote_code=trust_remote_code,
         venv_path=venv_path,
         slurm_template_var=slurm_template_var,
-    )
-
-    merged = EvalConfig.from_yaml(config).merge(cli_cfg) if config else cli_cfg
-    merged.validate()
-
-    models_str: str | None = None
-    if merged.models:
-        models_str = ",".join(
-            m.path if isinstance(m, ModelConfig) else m for m in merged.models
-        )
-
-    _sched(
-        models=models_str,
-        tasks=",".join(merged.tasks) if merged.tasks else None,
-        task_groups=",".join(merged.task_groups) if merged.task_groups else None,
-        n_shot=merged.n_shot,
-        eval_csv_path=merged.eval_csv_path,
-        max_array_len=merged.slurm.max_array_len,
-        limit=merged.limit,
-        verbose=merged.verbose,
-        download_only=merged.download_only,
-        dry_run=merged.dry_run,
-        skip_checks=merged.skip_checks,
-        trust_remote_code=merged.trust_remote_code,
-        venv_path=merged.venv_path,
-        slurm_template_var=merged.slurm_template_var_json,
     )
 
 
