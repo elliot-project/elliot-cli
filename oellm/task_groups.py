@@ -19,6 +19,7 @@ class _Task:
     subset: str | None = None
     hf_models: list[str] | None = None
     hf_dataset_files: list[dict] | None = None
+    suite: str | None = None
 
 
 @dataclass
@@ -59,6 +60,7 @@ class TaskGroup:
                     subset=task_subset,
                     hf_models=task_hf_models,
                     hf_dataset_files=task_hf_dataset_files,
+                    suite=task_data.get("suite"),
                 )
             )
 
@@ -157,11 +159,11 @@ def _iter_all_tasks(
     for group in parsed.values():
         if isinstance(group, TaskGroup):
             for t in group.tasks:
-                yield t, group.suite
+                yield t, t.suite or group.suite
         else:
             for g in group.task_groups:
                 for t in g.tasks:
-                    yield t, g.suite
+                    yield t, t.suite or g.suite
 
 
 def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:

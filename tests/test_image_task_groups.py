@@ -28,7 +28,7 @@ EXPECTED_TASKS = {
 
 EXPECTED_DATASETS = {
     "HuggingFaceM4/VQAv2",
-    "HuggingFaceM4/MMBench_00",
+    "lmms-lab/MMBench",
     "MMMU/MMMU",
     "HuggingFaceM4/ChartQA",
     "eliolio/docvqa",

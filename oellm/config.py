@@ -78,6 +78,8 @@ class EvalConfig:
     skip_checks: bool = False
     trust_remote_code: bool = True
     venv_path: str | None = None
+    lm_eval_include_path: str | None = None
+    local: bool = False
 
     # ---- SLURM overrides ----
     slurm: SlurmOverrides = field(default_factory=SlurmOverrides)
@@ -131,6 +133,8 @@ class EvalConfig:
         skip_checks: bool = False,
         trust_remote_code: bool = True,
         venv_path: str | None = None,
+        lm_eval_include_path: str | None = None,
+        local: bool = False,
         slurm_template_var: str | None = None,
     ) -> EvalConfig:
         """Build an ``EvalConfig`` from the loose CLI parameters.
@@ -194,6 +198,8 @@ class EvalConfig:
             skip_checks=skip_checks,
             trust_remote_code=trust_remote_code,
             venv_path=venv_path,
+            lm_eval_include_path=lm_eval_include_path,
+            local=local,
             slurm=slurm,
         )
 
@@ -228,6 +234,8 @@ class EvalConfig:
             skip_checks=bool(raw.get("skip_checks", False)),
             trust_remote_code=bool(raw.get("trust_remote_code", True)),
             venv_path=raw.get("venv_path"),
+            lm_eval_include_path=raw.get("lm_eval_include_path"),
+            local=bool(raw.get("local", False)),
             slurm=slurm,
         )
 

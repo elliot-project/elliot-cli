@@ -99,6 +99,49 @@ oellm schedule-eval --models "model-name" --task_groups "belebele-eu-5-shot,glob
 oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
 ```
 
+## Running Locally (without SLURM)
+
+The `--local` flag lets you run evaluations directly on your machine without a cluster or Singularity container. It generates the same eval script and executes it with bash, injecting fake SLURM environment variables so all tasks run sequentially in a single process. This is useful for testing that tasks and models are correctly configured before submitting to a cluster.
+
+```bash
+# 1. Add eval dependencies to the project venv
+uv pip install lm-eval torch transformers accelerate "datasets<4.0.0"
+
+# 2. Run evaluations locally — useful for smoke-testing with a small sample
+oellm schedule-eval \
+    --models "EleutherAI/pythia-160m" \
+    --tasks "gsm8k" \
+    --n_shot 0 \
+    --venv_path .venv \
+    --local true \
+    --limit 1
+```
+
+Results are written to `./oellm-output/<timestamp>/results/`.
+
+## SLURM Overrides
+
+Override cluster defaults (partition, account, time limit, etc.) with `--slurm_template_var` (JSON object):
+
+```bash
+# Use a different partition (e.g. dev-g on LUMI when small-g is crowded)
+oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
+  --slurm_template_var '{"PARTITION":"dev-g"}'
+
+# Multiple overrides: partition, account, time limit, GPUs
+oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
+  --slurm_template_var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2}'
+```
+
+Use exact env var names: `PARTITION`, `ACCOUNT`, `GPUS_PER_NODE`. `TIME` (HH:MM:SS) overrides the time limit.
+
+## ⚠️ Dataset Pre-Download Warning
+
+**Datasets are only automatically pre-downloaded for tasks defined in [`task-groups.yaml`](oellm/resources/task-groups.yaml).**
+
+If you use custom tasks via `--tasks` that are not in the task groups registry, the CLI will attempt to look them up but **cannot guarantee the datasets will be cached**. This may cause failures on compute nodes that don't have network access.
+
+**Recommendation:** Use `--task_groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
 ## Collecting Results
 
 ```bash

@@ -44,30 +44,50 @@ def schedule_evals(
     skip_checks: bool = False,
     trust_remote_code: bool = True,
     venv_path: str | None = None,
+    lm_eval_include_path: str | None = None,
+    local: bool = False,
     slurm_template_var: str | None = None,
 ) -> None:
     """Schedule evaluation jobs for a given set of models, tasks, and number of shots.
 
     Args:
-        models: Comma-separated model paths or Hugging Face model identifiers.
-            For local paths, directories are expanded to discover all checkpoints.
-            Cannot be combined with eval_csv_path.
-        tasks: Comma-separated task names (lm_eval) or paths. Requires n_shot.
-        task_groups: Comma-separated task group names from task-groups.yaml.
-            Expands into (task, n_shots, suite) tuples; n_shot is ignored.
-        n_shot: Number(s) of shots applied to tasks.
-        eval_csv_path: Path to a CSV with columns model_path, task_path, n_shot[, eval_suite].
-            Exclusive with models/tasks/task_groups/n_shot.
+        models: A string of comma-separated model paths or Hugging Face model identifiers.
+            Warning: does not allow passing model args such as `EleutherAI/pythia-160m,revision=step100000`
+            since we split on commas. If you need to pass model args, use the `eval_csv_path` option.
+            For local paths:
+            - If a directory contains `.safetensors` files directly, it will be treated as a single model
+            - If a directory contains subdirectories with models (e.g., converted_checkpoints/),
+              all models in subdirectories will be automatically discovered
+            - For each model directory, if it has an `hf/iter_XXXXX` structure, all checkpoints will be expanded
+            - This allows passing a single directory containing multiple models to evaluate them all
+        tasks: A string of comma-separated task names (lm_eval) or paths.
+            Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
+        task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
+            Each group expands into concrete (task, n_shots, suite) entries; `n_shot` is ignored for groups.
+        n_shot: An integer or list of integers specifying the number of shots applied to `tasks`.
+        eval_csv_path: A path to a CSV file containing evaluation data.
+            Warning: exclusive argument. Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided.
         config: Path to a YAML config file. CLI flags override YAML values.
-        max_array_len: Maximum concurrent SLURM array jobs.
-        limit: Limit samples per task (passes --limit / --max_samples to the engine).
-        download_only: Only pre-download models and datasets, then exit.
-        dry_run: Generate the SLURM script without submitting.
-        skip_checks: Skip container/model/dataset validation for faster iteration.
-        trust_remote_code: Trust remote code when downloading datasets.
-        venv_path: Python venv path. When set, runs in venv instead of Singularity.
-        slurm_template_var: JSON object of SLURM overrides, e.g.
-            '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
+        max_array_len: The maximum number of jobs to schedule to run concurrently.
+            Warning: this is not the number of jobs in the array job. This is determined by the environment variable `QUEUE_LIMIT`.
+        limit: If set, limit the number of samples per task (useful for quick testing).
+            Passes --limit to lm_eval and --max_samples to lighteval.
+        download_only: If True, only download the datasets and models and exit.
+        dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
+        skip_checks: If True, skip container image, model validation, and dataset pre-download checks for faster execution.
+        trust_remote_code: If True, trust remote code when downloading datasets. Default is True. Workflow might fail if set to False.
+        venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
+            this venv instead of inside a Singularity/Apptainer container.
+        lm_eval_include_path: Path to a directory containing custom lm_eval task YAML definitions.
+            Passed as --include_path to lm_eval. Defaults to the bundled custom_lm_eval_tasks
+            directory shipped with the package, which overrides broken upstream tasks
+            (e.g. mgsm_native_cot_fr/de/es). Override to point at additional task YAMLs.
+        local: If True, run evaluations directly on the local machine using bash instead of
+            submitting to SLURM. Requires --venv_path. Skips cluster environment detection and
+            runs all evaluations sequentially in a single process.
+        slurm_template_var: JSON object of template variable overrides. Use exact env var names
+            (PARTITION, ACCOUNT, GPUS_PER_NODE). "TIME" overrides the time limit.
+            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
     """
     from oellm.scheduler import schedule_evals as _sched
 
@@ -85,6 +105,8 @@ def schedule_evals(
         skip_checks=skip_checks,
         trust_remote_code=trust_remote_code,
         venv_path=venv_path,
+        lm_eval_include_path=lm_eval_include_path,
+        local=local,
         slurm_template_var=slurm_template_var,
     )
 
@@ -116,6 +138,8 @@ def schedule_evals(
         skip_checks=cfg.skip_checks,
         trust_remote_code=cfg.trust_remote_code,
         venv_path=cfg.venv_path,
+        lm_eval_include_path=cfg.lm_eval_include_path,
+        local=cfg.local,
         slurm_template_var=cfg.slurm_template_var_json,
     )
 
@@ -260,6 +284,8 @@ def eval_command(
     skip_checks: bool = False,
     trust_remote_code: bool = True,
     venv_path: str | None = None,
+    lm_eval_include_path: str | None = None,
+    local: bool = False,
     slurm_template_var: str | None = None,
 ) -> None:
     """Run evaluations from a YAML config file.
@@ -280,6 +306,8 @@ def eval_command(
         skip_checks: Skip container/model/dataset validation.
         trust_remote_code: Trust remote code when downloading datasets.
         venv_path: Python venv path. When set, runs in venv instead of Singularity.
+        lm_eval_include_path: Path to custom lm_eval task YAML definitions directory.
+        local: Run evaluations locally instead of submitting to SLURM.
         slurm_template_var: JSON object of SLURM overrides.
         verbose: Enable verbose logging.
     """
@@ -298,6 +326,8 @@ def eval_command(
         skip_checks=skip_checks,
         trust_remote_code=trust_remote_code,
         venv_path=venv_path,
+        lm_eval_include_path=lm_eval_include_path,
+        local=local,
         slurm_template_var=slurm_template_var,
     )
 

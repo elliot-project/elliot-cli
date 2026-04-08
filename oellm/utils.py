@@ -309,12 +309,29 @@ def _process_model_paths(models: Iterable[str]):
                         )
                         logging.debug(e)
                 else:
+                    cache_dir = (
+                        Path(os.getenv("HF_HOME")) / "hub"
+                        if "HF_HOME" in os.environ
+                        else None
+                    )
+                    try:
+                        from huggingface_hub import try_to_load_from_cache
+
+                        cached = try_to_load_from_cache(
+                            model, "config.json", cache_dir=cache_dir
+                        )
+                        if isinstance(cached, str):
+                            logging.info(
+                                f"Model '{model}' already cached, skipping download"
+                            )
+                            per_model_paths.append(model)
+                            continue
+                    except Exception:
+                        pass
                     status.update(f"Downloading '{model}' ({idx}/{len(models_list)})")
                     snapshot_download(
                         repo_id=model,
-                        cache_dir=Path(os.getenv("HF_HOME")) / "hub"
-                        if "HF_HOME" in os.environ
-                        else None,
+                        cache_dir=cache_dir,
                     )
                     per_model_paths.append(model)
 
