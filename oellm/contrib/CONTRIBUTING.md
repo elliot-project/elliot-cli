@@ -25,8 +25,8 @@ task_groups:
 ```bash
 oellm schedule-eval \
   --models org/MyModel \
-  --task_groups my-benchmark \
-  --venv_path ~/elliot-venv
+  --task-groups my-benchmark \
+  --venv-path ~/elliot-venv
 ```
 
 Supported `suite` values:

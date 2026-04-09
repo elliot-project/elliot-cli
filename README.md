@@ -25,13 +25,13 @@ uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 # Run evaluations using a task group
 oellm schedule-eval \
     --models "EleutherAI/pythia-160m" \
-    --task_groups "open-sci-0.01"
+    --task-groups "open-sci-0.01"
 
 # Image evaluation (requires venv with lmms-eval)
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
-    --task_groups "image-vqa" \
-    --venv_path ~/elliot-venv
+    --task-groups "image-vqa" \
+    --venv-path ~/elliot-venv
 ```
 
 This will automatically:
@@ -40,7 +40,7 @@ This will automatically:
 - Pre-download datasets for known tasks (see warning below)
 - Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
 
-For custom environments instead of containers, pass `--venv_path` (see [docs/VENV.md](docs/VENV.md)).
+For custom environments instead of containers, pass `--venv-path` (see [docs/VENV.md](docs/VENV.md)).
 
 ## Task Groups
 
@@ -85,18 +85,18 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 # Run all 8 image benchmarks
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
-    --task_groups "image-vqa" \
-    --venv_path ~/elliot-venv
+    --task-groups "image-vqa" \
+    --venv-path ~/elliot-venv
 
 # Mix image and text benchmarks in one submission
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
-    --task_groups "image-mmbench,open-sci-0.01" \
-    --venv_path ~/elliot-venv
+    --task-groups "image-mmbench,open-sci-0.01" \
+    --venv-path ~/elliot-venv
 
 # Use multiple task groups or a super group
-oellm schedule-eval --models "model-name" --task_groups "belebele-eu-5-shot,global-mmlu-eu"
-oellm schedule-eval --models "model-name" --task_groups "oellm-multilingual"
+oellm schedule-eval --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
+oellm schedule-eval --models "model-name" --task-groups "oellm-multilingual"
 ```
 
 ## Running Locally (without SLURM)
@@ -111,8 +111,8 @@ uv pip install lm-eval torch transformers accelerate "datasets<4.0.0"
 oellm schedule-eval \
     --models "EleutherAI/pythia-160m" \
     --tasks "gsm8k" \
-    --n_shot 0 \
-    --venv_path .venv \
+    --n-shot 0 \
+    --venv-path .venv \
     --local true \
     --limit 1
 ```
@@ -121,16 +121,16 @@ Results are written to `./oellm-output/<timestamp>/results/`.
 
 ## SLURM Overrides
 
-Override cluster defaults (partition, account, time limit, etc.) with `--slurm_template_var` (JSON object):
+Override cluster defaults (partition, account, time limit, etc.) with `--slurm-template-var` (JSON object):
 
 ```bash
 # Use a different partition (e.g. dev-g on LUMI when small-g is crowded)
-oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
-  --slurm_template_var '{"PARTITION":"dev-g"}'
+oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+  --slurm-template-var '{"PARTITION":"dev-g"}'
 
 # Multiple overrides: partition, account, time limit, GPUs
-oellm schedule-eval --models "model-name" --task_groups "open-sci-0.01" \
-  --slurm_template_var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2}'
+oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+  --slurm-template-var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2}'
 ```
 
 Use exact env var names: `PARTITION`, `ACCOUNT`, `GPUS_PER_NODE`. `TIME` (HH:MM:SS) overrides the time limit.
@@ -141,18 +141,18 @@ Use exact env var names: `PARTITION`, `ACCOUNT`, `GPUS_PER_NODE`. `TIME` (HH:MM:
 
 If you use custom tasks via `--tasks` that are not in the task groups registry, the CLI will attempt to look them up but **cannot guarantee the datasets will be cached**. This may cause failures on compute nodes that don't have network access.
 
-**Recommendation:** Use `--task_groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
+**Recommendation:** Use `--task-groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
 ## Collecting Results
 
 ```bash
 # Basic collection
-oellm collect-results --results_dir /path/to/eval-output-dir
+oellm collect-results --results-dir /path/to/eval-output-dir
 
 # Check for missing evaluations and create a CSV for re-running them
-oellm collect-results --results_dir /path/to/eval-output-dir --check true --output_csv results.csv
+oellm collect-results --results-dir /path/to/eval-output-dir --check true --output-csv results.csv
 
 # Re-schedule failed jobs
-oellm schedule-eval --eval_csv_path results_missing.csv
+oellm schedule-eval --eval-csv-path results_missing.csv
 ```
 
 ## Installation
@@ -197,7 +197,7 @@ uv sync --extra dev
 uv run pytest tests/ -v
 
 # Download-only mode for testing
-uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task_groups "open-sci-0.01" --download_only
+uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task-groups "open-sci-0.01" --download-only
 ```
 
 ## Documentation

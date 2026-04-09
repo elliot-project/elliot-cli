@@ -151,13 +151,13 @@ export HF_HOME="$SCRATCH/hf_cache"
 # Run evaluations using a task group (recommended)
 oellm schedule-eval \
     --models "microsoft/DialoGPT-medium,EleutherAI/pythia-160m" \
-    --task_groups "open-sci-0.01"
+    --task-groups "open-sci-0.01"
 
 # Or specify individual tasks
 oellm schedule-eval \
     --models "EleutherAI/pythia-160m" \
     --tasks "hellaswag,mmlu" \
-    --n_shot 5
+    --n-shot 5
 ```
 
 ---

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Instead of using pre-built containers, you can run evaluations with your own Python virtual environment by passing `--venv_path`.
+Instead of using pre-built containers, you can run evaluations with your own Python virtual environment by passing `--venv-path`.
 
 ## Setup
 
@@ -32,14 +32,14 @@ Instead of using pre-built containers, you can run evaluations with your own Pyt
 # Text evaluation
 oellm schedule-eval \
     --models HuggingFaceTB/SmolLM2-135M-Instruct \
-    --task_groups open-sci-0.01 \
-    --venv_path /path/to/.venv
+    --task-groups open-sci-0.01 \
+    --venv-path /path/to/.venv
 
 # Image evaluation (lmms-eval)
 oellm schedule-eval \
     --models path/to/vlm \
-    --task_groups image-vqa \
-    --venv_path /path/to/.venv
+    --task-groups image-vqa \
+    --venv-path /path/to/.venv
 ```
 
 ## Why Multiple Install Steps?
@@ -68,9 +68,9 @@ uv pip install --python dclm-core-venv/bin/python -r requirements-venv-dclm.txt
 ```bash
 oellm schedule-eval \
     --models Qwen/Qwen3-0.6B-Base \
-    --task_groups dclm-core-22 \
-    --venv_path dclm-core-venv \
-    --skip_checks true
+    --task-groups dclm-core-22 \
+    --venv-path dclm-core-venv \
+    --skip-checks true
 ```
 
 ## Evalchemy (reasoning)
@@ -98,9 +98,9 @@ We use [Ali's fork](https://github.com/Ali-Elganzory/evalchemy) which includes a
    export HF_ALLOW_CODE_EVAL=1  # required by MBPP 
    EVALCHEMY_DIR=$(pwd)/evalchemy oellm schedule-eval \
        --models HuggingFaceTB/SmolLM2-135M \
-       --task_groups reasoning \
-       --venv_path evalchemy-venv \
-       --skip_checks true
+       --task-groups reasoning \
+       --venv-path evalchemy-venv \
+       --skip-checks true
    ```
 
 > **Note:** `HF_ALLOW_CODE_EVAL=1` is required because MBPP (run via lm-eval-harness) uses HuggingFace's `code_eval` metric which executes model-generated code. The evalchemy benchmarks (GPQADiamond, MATH500, LiveCodeBench) do not require this variable as they handle code execution safely through internal guards.
