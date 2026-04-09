@@ -333,7 +333,7 @@ task_groups:
       - task: mmmu_val
         dataset: MMMU/MMMU
       - task: chartqa
-        dataset: HuggingFaceM4/ChartQA
+        dataset: lmms-lab/ChartQA
       - task: docvqa_val
         dataset: eliolio/docvqa
       - task: textvqa_val
@@ -374,7 +374,7 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: chartqa
-        dataset: HuggingFaceM4/ChartQA
+        dataset: lmms-lab/ChartQA
 
   image-docvqa:
     description: "DocVQA document visual question answering via lmms-eval"
