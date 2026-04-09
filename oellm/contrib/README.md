@@ -17,8 +17,8 @@ To add your own benchmark, see the [Contributing Guide](CONTRIBUTING.md).
 ```bash
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B \
-  --task_groups regiondial-bench \
-  --venv_path ~/elliot-venv
+  --task-groups regiondial-bench \
+  --venv-path ~/elliot-venv
 ```
 
 Requires cluster-specific setup (`REGION_REASONER_DIR`, etc.). See the full [RegionDial-Bench README](regiondial_bench/README.md) for prerequisites and configuration.

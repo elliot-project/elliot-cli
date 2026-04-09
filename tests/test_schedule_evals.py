@@ -17,9 +17,9 @@ ALL_TASK_GROUPS = list(_config["task_groups"].keys())
 @pytest.mark.parametrize("task_groups", ALL_TASK_GROUPS)
 def test_schedule_evals(tmp_path, n_shot, task_groups):
     with (
-        patch("oellm.main._load_cluster_env"),
-        patch("oellm.main._num_jobs_in_queue", return_value=0),
-        patch("oellm.main._detect_lmms_model_type", return_value="llava"),
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch("oellm.runner.detect_lmms_model_type", return_value="llava"),
         patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
     ):
         schedule_evals(
@@ -35,8 +35,8 @@ def test_schedule_evals(tmp_path, n_shot, task_groups):
 def test_schedule_evals_slurm_template_var_overrides(tmp_path):
     """Verify --slurm_template_var JSON overrides appear in the generated sbatch."""
     with (
-        patch("oellm.main._load_cluster_env"),
-        patch("oellm.main._num_jobs_in_queue", return_value=0),
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
         patch.dict(
             os.environ,
             {
@@ -68,8 +68,8 @@ def test_schedule_evals_slurm_template_var_overrides(tmp_path):
 def test_schedule_evals_slurm_template_var_invalid_json(tmp_path):
     """Verify invalid slurm_template_var raises ValueError."""
     with (
-        patch("oellm.main._load_cluster_env"),
-        patch("oellm.main._num_jobs_in_queue", return_value=0),
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
         patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
     ):
         with pytest.raises(ValueError, match="valid JSON object"):

@@ -503,8 +503,8 @@ class TestRegionDialSchedule:
         from oellm.main import schedule_evals
 
         with (
-            patch("oellm.main._load_cluster_env"),
-            patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.scheduler._load_cluster_env"),
+            patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(
@@ -526,8 +526,8 @@ class TestRegionDialSchedule:
         from oellm.main import schedule_evals
 
         with (
-            patch("oellm.main._load_cluster_env"),
-            patch("oellm.main._num_jobs_in_queue", return_value=0),
+            patch("oellm.scheduler._load_cluster_env"),
+            patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
             patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
         ):
             schedule_evals(

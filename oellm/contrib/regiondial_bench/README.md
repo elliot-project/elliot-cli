@@ -100,22 +100,22 @@ Three task groups are available:
 # Both splits
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B \
-  --task_groups regiondial-bench \
-  --venv_path ~/elliot-venv
+  --task-groups regiondial-bench \
+  --venv-path ~/elliot-venv
 
 # Single split
 oellm schedule-eval \
   --models lmsdss/RegionReasoner-7B \
-  --task_groups regiondial-refcocog \
-  --venv_path ~/elliot-venv
+  --task-groups regiondial-refcocog \
+  --venv-path ~/elliot-venv
 ```
 
 ### Collecting results
 
 ```bash
 oellm collect-results \
-  --eval_output_dir /path/to/evals \
-  --output results.csv
+  --eval-output-dir /path/to/evals \
+  --output-csv results.csv
 ```
 
 The primary metric in the CSV is **gIoU**. Per-round metrics (e.g.
@@ -133,8 +133,8 @@ model, just pass it to `--models`:
 ```bash
 oellm schedule-eval \
   --models Qwen/Qwen2.5-VL-7B-Instruct \
-  --task_groups regiondial-bench \
-  --venv_path ~/elliot-venv
+  --task-groups regiondial-bench \
+  --venv-path ~/elliot-venv
 ```
 
 The model type is resolved as follows:
@@ -150,9 +150,9 @@ To evaluate multiple models in one go:
 
 ```bash
 oellm schedule-eval \
-  --models lmsdss/RegionReasoner-7B Qwen/Qwen2.5-VL-7B-Instruct \
-  --task_groups regiondial-bench \
-  --venv_path ~/elliot-venv
+  --models "lmsdss/RegionReasoner-7B,Qwen/Qwen2.5-VL-7B-Instruct" \
+  --task-groups regiondial-bench \
+  --venv-path ~/elliot-venv
 ```
 
 > If your model name does not match any pattern above and requires a specific

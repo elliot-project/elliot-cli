@@ -250,3 +250,57 @@ class TestCollectResultsLmmsEvalFormat:
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["n_shot"] == 0
+
+
+# ── Structured output (JSON + Markdown alongside CSV) ──────────────────────
+
+
+class TestCollectResultsStructuredOutput:
+    def test_json_file_written_alongside_csv(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        data = {
+            "model_name": "/path/to/model",
+            "results": {"copa": {"acc,none": 0.80}},
+            "n-shot": {"copa": 0},
+        }
+        write_result(results_dir, data)
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(results_dir), output_csv=output_csv)
+
+        json_path = tmp_path / "out.json"
+        assert json_path.exists()
+        envelope = json.loads(json_path.read_text())
+        assert envelope["version"] == "1.0"
+        assert len(envelope["results"]) == 1
+        assert envelope["results"][0]["task"] == "copa"
+
+    def test_markdown_file_written_alongside_csv(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        data = {
+            "model_name": "/path/to/model",
+            "results": {"copa": {"acc,none": 0.80}},
+            "n-shot": {"copa": 0},
+        }
+        write_result(results_dir, data)
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(results_dir), output_csv=output_csv)
+
+        md_path = tmp_path / "out.md"
+        assert md_path.exists()
+        content = md_path.read_text()
+        assert "copa" in content
+        assert "Model" in content
+
+    def test_no_structured_output_when_no_results(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        # Write a JSON with no extractable metrics
+        data = {"model_name": "m", "results": {}}
+        write_result(results_dir, data)
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(results_dir), output_csv=output_csv)
+
+        assert not (tmp_path / "out.json").exists()
+        assert not (tmp_path / "out.md").exists()
