@@ -30,7 +30,7 @@ EXPECTED_DATASETS = {
     "HuggingFaceM4/VQAv2",
     "lmms-lab/MMBench",
     "MMMU/MMMU",
-    "HuggingFaceM4/ChartQA",
+    "lmms-lab/ChartQA",
     "eliolio/docvqa",
     "facebook/textvqa",
     "echo840/OCRBench",
