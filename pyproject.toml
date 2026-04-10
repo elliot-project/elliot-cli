@@ -23,6 +23,9 @@ dev = [
 image = [
     "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
 ]
+video = [
+    "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
+]
 
 [project.scripts]
 oellm = "oellm.main:main"
