@@ -35,6 +35,13 @@ task_metrics:
   mathvista_testmini_cot: llm_as_judge_eval
   mathvista_testmini_format: llm_as_judge_eval
   mathvista_testmini_solution: llm_as_judge_eval
+  # lmms-eval video benchmark metrics
+  mvbench: mvbench_accuracy
+  egoschema: submission
+  videomme: videomme_perception_score
+  # ActivityNet-QA requires GPT API access for evaluation (LLM-as-judge)
+  activitynetqa: gpt_eval_accuracy
+  longvideobench_val_v: lvb_acc
 
 task_groups:
   open-sci-0.01:
@@ -415,6 +422,64 @@ task_groups:
     tasks:
       - task: mathvista_testmini
         dataset: AI4Math/MathVista
+
+  # ── Video Modality (lmms-eval) ────────────────────────────────────────────
+  video-understanding:
+    description: "Video understanding benchmarks via lmms-eval (MVBench, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mvbench
+        dataset: OpenGVLab/MVBench
+      - task: egoschema
+        dataset: lmms-lab/egoschema
+      - task: videomme
+        dataset: lmms-lab/Video-MME
+      - task: activitynetqa
+        dataset: lmms-lab/ActivityNetQA
+      - task: longvideobench_val_v
+        dataset: longvideobench/LongVideoBench
+
+  # ── Individual Video Benchmarks (single-task groups for targeted runs) ────
+  video-mvbench:
+    description: "MVBench short-clip temporal understanding (20 tasks) via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: mvbench
+        dataset: OpenGVLab/MVBench
+
+  video-egoschema:
+    description: "EgoSchema long-form egocentric video QA via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: egoschema
+        dataset: lmms-lab/egoschema
+
+  video-videomme:
+    description: "Video-MME full-spectrum video understanding (11s-1h) via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: videomme
+        dataset: lmms-lab/Video-MME
+
+  video-activitynet-qa:
+    description: "ActivityNet-QA open-ended activity video QA via lmms-eval (requires GPT API for scoring)"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: activitynetqa
+        dataset: lmms-lab/ActivityNetQA
+
+  video-longvideobench:
+    description: "LongVideoBench long-video cross-segment reasoning via lmms-eval"
+    suite: lmms_eval
+    n_shots: [0]
+    tasks:
+      - task: longvideobench_val_v
+        dataset: longvideobench/LongVideoBench
 
   dclm-core-22:
     description: "DCLM core 22 evaluation tasks (lm-eval-harness, matching LLM Foundry task types)"
