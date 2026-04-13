@@ -9,6 +9,7 @@ import yaml
 class DatasetSpec:
     repo_id: str
     subset: str | None = None
+    revision: str | None = None
 
 
 @dataclass
@@ -20,6 +21,7 @@ class _Task:
     hf_models: list[str] | None = None
     hf_dataset_files: list[dict] | None = None
     suite: str | None = None
+    revision: str | None = None
 
 
 @dataclass
@@ -61,6 +63,7 @@ class TaskGroup:
                     hf_models=task_hf_models,
                     hf_dataset_files=task_hf_dataset_files,
                     suite=task_data.get("suite"),
+                    revision=task_data.get("revision"),
                 )
             )
 
@@ -154,16 +157,16 @@ class TaskGroupResult:
 
 def _iter_all_tasks(
     parsed: dict[str, TaskSuperGroup | TaskGroup],
-) -> Iterable[tuple[_Task, str]]:
-    """Yield ``(task, suite)`` pairs from a parsed group dict, flattening super groups."""
-    for group in parsed.values():
+) -> Iterable[tuple[_Task, str, str]]:
+    """Yield ``(task, suite, group_name)`` triples from a parsed group dict, flattening super groups."""
+    for group_name, group in parsed.items():
         if isinstance(group, TaskGroup):
             for t in group.tasks:
-                yield t, t.suite or group.suite
+                yield t, t.suite or group.suite, group_name
         else:
             for g in group.task_groups:
                 for t in g.tasks:
-                    yield t, t.suite or g.suite
+                    yield t, t.suite or g.suite, g.name
 
 
 def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
@@ -173,7 +176,7 @@ def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
         raise ValueError(f"Unknown task group(s): {', '.join(sorted(missing))}")
 
     results: list[TaskGroupResult] = []
-    for t, suite in _iter_all_tasks(parsed):
+    for t, suite, _gname in _iter_all_tasks(parsed):
         for shot in (int(s) for s in (t.n_shots or [])):
             results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
 
@@ -198,22 +201,31 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
     parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
 
     specs: list[DatasetSpec] = []
-    seen: set[tuple[str, str | None]] = set()
+    seen: set[tuple[str, str | None, str | None]] = set()
 
-    def add_spec(dataset: str | None, subset: str | None):
+    def add_spec(
+        dataset: str | None,
+        subset: str | None,
+        revision: str | None = None,
+    ):
         if dataset is None:
             return
-        key = (dataset, subset)
+        key = (dataset, subset, revision)
         if key not in seen:
             seen.add(key)
-            specs.append(DatasetSpec(repo_id=dataset, subset=subset))
+            specs.append(DatasetSpec(repo_id=dataset, subset=subset, revision=revision))
 
-    for t, _ in _iter_all_tasks(parsed):
+    for t, _, group_name in _iter_all_tasks(parsed):
+        # Video groups use snapshot_download; default revision is "main"
+        revision = t.revision
+        if revision is None and group_name.startswith("video-"):
+            revision = "main"
+
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):
                 add_spec(t.dataset, lang)
         else:
-            add_spec(t.dataset, t.subset)
+            add_spec(t.dataset, t.subset, revision)
 
     return specs
 
@@ -225,7 +237,7 @@ def _collect_hf_model_repos(group_names: Iterable[str]) -> list[str]:
     repos: list[str] = []
     seen: set[str] = set()
 
-    for t, _ in _iter_all_tasks(parsed):
+    for t, _, _gname in _iter_all_tasks(parsed):
         for repo_id in t.hf_models or []:
             if repo_id not in seen:
                 seen.add(repo_id)
@@ -238,24 +250,32 @@ def _collect_hf_dataset_files(group_names: Iterable[str]) -> list[dict]:
     """Return deduplicated HF dataset file specs declared in task ``hf_dataset_files`` fields."""
     parsed = _parse_task_groups([str(n).strip() for n in group_names if str(n).strip()])
 
-    # Merge patterns from all tasks that share the same repo_id so that
-    # a single snapshot_download fetches everything needed.
-    merged: dict[str, list[str]] = {}
+    # Merge patterns from all tasks that share the same (repo_id, revision)
+    # so that a single snapshot_download fetches everything needed.
+    merged: dict[tuple[str, str | None], list[str]] = {}
 
-    for t, _ in _iter_all_tasks(parsed):
+    for t, _, _gname in _iter_all_tasks(parsed):
         for spec in t.hf_dataset_files or []:
             repo_id = spec.get("repo_id", "")
             if not repo_id:
                 continue
+            revision = spec.get("revision")
             patterns = spec.get("patterns") or []
-            if repo_id not in merged:
-                merged[repo_id] = list(patterns)
+            key = (repo_id, revision)
+            if key not in merged:
+                merged[key] = list(patterns)
             else:
                 for p in patterns:
-                    if p not in merged[repo_id]:
-                        merged[repo_id].append(p)
+                    if p not in merged[key]:
+                        merged[key].append(p)
 
-    return [{"repo_id": rid, "patterns": pats} for rid, pats in merged.items()]
+    result = []
+    for (rid, rev), pats in merged.items():
+        entry: dict = {"repo_id": rid, "patterns": pats}
+        if rev:
+            entry["revision"] = rev
+        result.append(entry)
+    return result
 
 
 def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
@@ -268,7 +288,7 @@ def _build_task_dataset_map() -> dict[str, list[DatasetSpec]]:
 
     task_map: dict[str, list[DatasetSpec]] = {}
 
-    for t, _ in _iter_all_tasks(parsed):
+    for t, _, _gname in _iter_all_tasks(parsed):
         if t.dataset and t.name not in task_map:
             if t.dataset == "facebook/flores" and not t.subset:
                 task_map[t.name] = [

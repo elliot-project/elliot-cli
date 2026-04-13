@@ -314,21 +314,9 @@ def _process_model_paths(models: Iterable[str]):
                         if "HF_HOME" in os.environ
                         else None
                     )
-                    try:
-                        from huggingface_hub import try_to_load_from_cache
-
-                        cached = try_to_load_from_cache(
-                            model, "config.json", cache_dir=cache_dir
-                        )
-                        if isinstance(cached, str):
-                            logging.info(
-                                f"Model '{model}' already cached, skipping download"
-                            )
-                            per_model_paths.append(model)
-                            continue
-                    except Exception:
-                        pass
                     status.update(f"Downloading '{model}' ({idx}/{len(models_list)})")
+                    # snapshot_download is idempotent — it skips files that
+                    # are already cached and only fetches missing ones.
                     snapshot_download(
                         repo_id=model,
                         cache_dir=cache_dir,
@@ -373,9 +361,10 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
         for idx, spec in enumerate(dataset_files, 1):
             repo_id = spec.get("repo_id", "")
             patterns = spec.get("patterns")
+            revision = spec.get("revision")
             status.update(f"Downloading '{repo_id}' ({idx}/{len(dataset_files)})")
             try:
-                snapshot_download(
+                kwargs = dict(
                     repo_id=repo_id,
                     repo_type="dataset",
                     allow_patterns=patterns,
@@ -383,6 +372,9 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
                     if "HF_HOME" in os.environ
                     else None,
                 )
+                if revision:
+                    kwargs["revision"] = revision
+                snapshot_download(**kwargs)
             except Exception as e:
                 logging.warning(f"Failed to download dataset files from '{repo_id}': {e}")
 
@@ -391,6 +383,7 @@ def _pre_download_datasets_from_specs(
     specs: Iterable, trust_remote_code: bool = True
 ) -> None:
     from datasets import get_dataset_config_names, load_dataset
+    from huggingface_hub import snapshot_download
 
     specs_list = list(specs)
     if not specs_list:
@@ -405,6 +398,22 @@ def _pre_download_datasets_from_specs(
         for idx, spec in enumerate(specs_list, 1):
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
+
+            # Video datasets: lmms-eval uses snapshot_download at runtime,
+            # so pre-download must use the same mechanism + revision.
+            if spec.revision is not None:
+                try:
+                    snapshot_download(
+                        repo_id=spec.repo_id,
+                        repo_type="dataset",
+                        revision=spec.revision,
+                    )
+                except Exception as e:
+                    logging.warning(
+                        f"Failed to snapshot_download '{spec.repo_id}' "
+                        f"(revision={spec.revision}): {e}"
+                    )
+                continue
 
             try:
                 load_dataset(

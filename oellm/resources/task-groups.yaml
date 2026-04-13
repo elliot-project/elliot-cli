@@ -431,6 +431,7 @@ task_groups:
     tasks:
       - task: mvbench
         dataset: OpenGVLab/MVBench
+        revision: video
       - task: egoschema
         dataset: lmms-lab/egoschema
       - task: videomme
@@ -448,6 +449,7 @@ task_groups:
     tasks:
       - task: mvbench
         dataset: OpenGVLab/MVBench
+        revision: video
 
   video-egoschema:
     description: "EgoSchema long-form egocentric video QA via lmms-eval"

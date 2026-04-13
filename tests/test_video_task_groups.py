@@ -185,6 +185,15 @@ class TestVideoModelAdapters:
 
         assert detect_lmms_model_type("internvideo2-chat") == "internvideo2"
 
+    def test_llava_hf_onevision_routes_to_llava_hf(self):
+        """HuggingFace-format llava-onevision models must use llava_hf, not llava_onevision."""
+        from oellm.constants import detect_lmms_model_type
+
+        assert (
+            detect_lmms_model_type("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")
+            == "llava_hf"
+        )
+
     def test_generic_llava_still_works(self):
         from oellm.constants import detect_lmms_model_type
 
