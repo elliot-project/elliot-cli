@@ -15,7 +15,7 @@ from oellm.task_groups import (
 VIDEO_TASK_GROUP = "video-understanding"
 
 EXPECTED_TASKS = {
-    "mvbench",
+    "video_mmmu",
     "egoschema",
     "videomme",
     "activitynetqa",
@@ -23,7 +23,7 @@ EXPECTED_TASKS = {
 }
 
 EXPECTED_DATASETS = {
-    "OpenGVLab/MVBench",
+    "lmms-lab/VideoMMMU",
     "lmms-lab/egoschema",
     "lmms-lab/Video-MME",
     "lmms-lab/ActivityNetQA",
@@ -49,7 +49,7 @@ class TestVideoTaskGroupInRegistry:
     def test_individual_video_groups_present(self):
         all_groups = get_all_task_group_names()
         for name in [
-            "video-mvbench",
+            "video-videommmu",
             "video-egoschema",
             "video-videomme",
             "video-activitynet-qa",
@@ -77,9 +77,9 @@ class TestVideoTaskGroupExpansion:
             )
 
     def test_expand_individual_video_group(self):
-        results = _expand_task_groups(["video-mvbench"])
+        results = _expand_task_groups(["video-videommmu"])
         assert len(results) == 1
-        assert results[0].task == "mvbench"
+        assert results[0].task == "video_mmmu"
         assert results[0].suite == "lmms_eval"
 
 

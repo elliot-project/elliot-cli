@@ -399,8 +399,9 @@ def _pre_download_datasets_from_specs(
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
 
-            # Video datasets: lmms-eval uses snapshot_download at runtime,
-            # so pre-download must use the same mechanism + revision.
+            # Video datasets: lmms-eval uses snapshot_download for video
+            # files and load_dataset for annotations/metadata.  Pre-download
+            # both so offline compute nodes can access everything.
             if spec.revision is not None:
                 try:
                     snapshot_download(
@@ -413,7 +414,6 @@ def _pre_download_datasets_from_specs(
                         f"Failed to snapshot_download '{spec.repo_id}' "
                         f"(revision={spec.revision}): {e}"
                     )
-                continue
 
             try:
                 load_dataset(

@@ -36,7 +36,7 @@ task_metrics:
   mathvista_testmini_format: llm_as_judge_eval
   mathvista_testmini_solution: llm_as_judge_eval
   # lmms-eval video benchmark metrics
-  mvbench: mvbench_accuracy
+  video_mmmu: mmmu_acc
   egoschema: submission
   videomme: videomme_perception_score
   # ActivityNet-QA requires GPT API access for evaluation (LLM-as-judge)
@@ -425,13 +425,12 @@ task_groups:
 
   # ── Video Modality (lmms-eval) ────────────────────────────────────────────
   video-understanding:
-    description: "Video understanding benchmarks via lmms-eval (MVBench, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)"
+    description: "Video understanding benchmarks via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)"
     suite: lmms_eval
     n_shots: [0]
     tasks:
-      - task: mvbench
-        dataset: OpenGVLab/MVBench
-        revision: video
+      - task: video_mmmu
+        dataset: lmms-lab/VideoMMMU
       - task: egoschema
         dataset: lmms-lab/egoschema
       - task: videomme
@@ -442,14 +441,13 @@ task_groups:
         dataset: longvideobench/LongVideoBench
 
   # ── Individual Video Benchmarks (single-task groups for targeted runs) ────
-  video-mvbench:
-    description: "MVBench short-clip temporal understanding (20 tasks) via lmms-eval"
+  video-videommmu:
+    description: "VideoMMMU multi-discipline video understanding via lmms-eval"
     suite: lmms_eval
     n_shots: [0]
     tasks:
-      - task: mvbench
-        dataset: OpenGVLab/MVBench
-        revision: video
+      - task: video_mmmu
+        dataset: lmms-lab/VideoMMMU
 
   video-egoschema:
     description: "EgoSchema long-form egocentric video QA via lmms-eval"
