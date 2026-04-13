@@ -364,14 +364,14 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
             revision = spec.get("revision")
             status.update(f"Downloading '{repo_id}' ({idx}/{len(dataset_files)})")
             try:
-                kwargs = dict(
-                    repo_id=repo_id,
-                    repo_type="dataset",
-                    allow_patterns=patterns,
-                    cache_dir=Path(os.getenv("HF_HOME")) / "hub"
+                kwargs = {
+                    "repo_id": repo_id,
+                    "repo_type": "dataset",
+                    "allow_patterns": patterns,
+                    "cache_dir": Path(os.getenv("HF_HOME")) / "hub"
                     if "HF_HOME" in os.environ
                     else None,
-                )
+                }
                 if revision:
                     kwargs["revision"] = revision
                 snapshot_download(**kwargs)
