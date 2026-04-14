@@ -18,10 +18,17 @@ class EvaluationJob:
 LMMS_MODEL_ADAPTERS: list[tuple[list[str], str]] = [
     (["qwen2.5-vl", "qwen2_5_vl", "qwen2.5vl"], "qwen2_5_vl"),
     (["qwen2-vl", "qwen2_vl"], "qwen2_vl"),
+    (["llava-hf"], "llava_hf"),
+    (["llava-onevision", "llava_onevision"], "llava_onevision"),
+    (["llava-vid", "llava_vid", "llava-video"], "llava_vid"),
+    (["video-llava", "video_llava"], "video_llava"),
     (["llava"], "llava_hf"),
+    (["internvideo"], "internvideo2"),
     (["internvl"], "internvl2"),
     (["idefics"], "idefics3"),
     (["minicpm"], "minicpm_v"),
+    (["longva"], "longva"),
+    (["videochat2"], "videochat2"),
     (["qwen"], "qwen_vl"),
 ]
 

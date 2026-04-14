@@ -190,11 +190,17 @@ do
             _lmms_adapter="${{eval_suite#*:}}"
             OUTPUT_JSON="{evals_dir}/$(openssl rand -hex 5).json"
 
+            # LLaVA adapters need model_name to avoid a missing-import bug in lmms-eval
+            _lmms_extra_args=""
+            if [[ "$_lmms_adapter" == "llava_onevision" || "$_lmms_adapter" == "llava_vid" || "$_lmms_adapter" == "video_llava" ]]; then
+                _lmms_extra_args=",model_name=$(basename "$model_path")"
+            fi
+
             if [ -n "$VENV_PATH" ]; then
                 source "$VENV_PATH/bin/activate"
                 python -m lmms_eval \
                     --model "$_lmms_adapter" \
-                    --model_args "pretrained=$model_path,device_map=auto" \
+                    --model_args "pretrained=$model_path,device_map=auto$_lmms_extra_args" \
                     --tasks "$task_path" \
                     --num_fewshot "$n_shot" \
                     --output_path "$OUTPUT_JSON" \
@@ -205,7 +211,7 @@ do
                     $EVAL_SIF_PATH \
                     python -m lmms_eval \
                         --model "$_lmms_adapter" \
-                        --model_args "pretrained=$model_path,device_map=auto" \
+                        --model_args "pretrained=$model_path,device_map=auto$_lmms_extra_args" \
                         --tasks "$task_path" \
                         --num_fewshot "$n_shot" \
                         --output_path "$OUTPUT_JSON" \

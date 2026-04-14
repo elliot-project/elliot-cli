@@ -9,6 +9,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Snellius)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
+- **Video evaluation** via lmms-eval (MVBench, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
 
@@ -75,7 +76,18 @@ Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 | `image-ocrbench` | OCRBench | lmms-eval |
 | `image-mathvista` | MathVista | lmms-eval |
 
-The lmms-eval adapter class (`llava_hf`, `qwen2_5_vl`, etc.) is auto-detected from the model name.
+### Video
+
+| Group | Benchmark | Engine |
+|---|---|---|
+| `video-understanding` | All 5 benchmarks combined | lmms-eval |
+| `video-mvbench` | MVBench (20 temporal tasks) | lmms-eval |
+| `video-egoschema` | EgoSchema (long-form egocentric QA) | lmms-eval |
+| `video-videomme` | Video-MME (11s-1h clips) | lmms-eval |
+| `video-activitynet-qa` | ActivityNet-QA (requires GPT API) | lmms-eval |
+| `video-longvideobench` | LongVideoBench (cross-segment reasoning) | lmms-eval |
+
+The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) is auto-detected from the model name. Install with `pip install oellm[video]` (or use a venv with lmms-eval).
 
 ### Custom Benchmarks (contrib)
 
@@ -86,6 +98,12 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 oellm schedule-eval \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
+    --venv-path ~/elliot-venv
+
+# Run all 5 video benchmarks
+oellm schedule-eval \
+    --models "lmms-lab/llava-onevision-7b" \
+    --task-groups "video-understanding" \
     --venv-path ~/elliot-venv
 
 # Mix image and text benchmarks in one submission
