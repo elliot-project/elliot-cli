@@ -399,21 +399,17 @@ def _pre_download_datasets_from_specs(
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
 
-            # Video datasets: lmms-eval uses snapshot_download for video
-            # files and load_dataset for annotations/metadata.  Pre-download
-            # both so offline compute nodes can access everything.
-            if spec.revision is not None:
+            # Video datasets: lmms-eval calls snapshot_download at runtime
+            # to get raw video files, then symlinks them into $HF_HOME.
+            # Pre-download so offline compute nodes find everything cached.
+            if spec.video:
                 try:
                     snapshot_download(
                         repo_id=spec.repo_id,
                         repo_type="dataset",
-                        revision=spec.revision,
                     )
                 except Exception as e:
-                    logging.warning(
-                        f"Failed to snapshot_download '{spec.repo_id}' "
-                        f"(revision={spec.revision}): {e}"
-                    )
+                    logging.warning(f"Failed to snapshot_download '{spec.repo_id}': {e}")
 
             try:
                 load_dataset(

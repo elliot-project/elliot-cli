@@ -9,7 +9,7 @@ import yaml
 class DatasetSpec:
     repo_id: str
     subset: str | None = None
-    revision: str | None = None
+    video: bool = False
 
 
 @dataclass
@@ -21,7 +21,6 @@ class _Task:
     hf_models: list[str] | None = None
     hf_dataset_files: list[dict] | None = None
     suite: str | None = None
-    revision: str | None = None
 
 
 @dataclass
@@ -63,7 +62,6 @@ class TaskGroup:
                     hf_models=task_hf_models,
                     hf_dataset_files=task_hf_dataset_files,
                     suite=task_data.get("suite"),
-                    revision=task_data.get("revision"),
                 )
             )
 
@@ -206,26 +204,23 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
     def add_spec(
         dataset: str | None,
         subset: str | None,
-        revision: str | None = None,
+        video: bool = False,
     ):
         if dataset is None:
             return
-        key = (dataset, subset, revision)
+        key = (dataset, subset)
         if key not in seen:
             seen.add(key)
-            specs.append(DatasetSpec(repo_id=dataset, subset=subset, revision=revision))
+            specs.append(DatasetSpec(repo_id=dataset, subset=subset, video=video))
 
     for t, _, group_name in _iter_all_tasks(parsed):
-        # Video groups use snapshot_download; default revision is "main"
-        revision = t.revision
-        if revision is None and group_name.startswith("video-"):
-            revision = "main"
+        is_video = group_name.startswith("video-")
 
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):
                 add_spec(t.dataset, lang)
         else:
-            add_spec(t.dataset, t.subset, revision)
+            add_spec(t.dataset, t.subset, video=is_video)
 
     return specs
 
