@@ -252,6 +252,122 @@ class TestCollectResultsLmmsEvalFormat:
         assert df.iloc[0]["n_shot"] == 0
 
 
+# ── lmms-eval audio tasks (Block A) ──────────────────────────────────────────
+
+
+class TestCollectResultsLmmsEvalAudioFormat:
+    """Verify the lmms-eval output → CSV path for audio tasks. Mirrors the
+    image-task tests but pins the four metric families audio benchmarks use
+    (WER / CER / BLEU / accuracy). Each case asserts that _resolve_metric
+    strips the `task_name/` prefix that lmms-eval prepends to its metric keys
+    and looks up the right `task_metrics` entry from task-groups.yaml."""
+
+    def test_librispeech_wer_resolved(self, tmp_path):
+        """ASR task with WER metric — covers the curated audio-understanding suite."""
+        data = {
+            "model_name": "qwen2_audio",
+            "model_name_or_path": "/models/qwen2-audio",
+            "results": {
+                "librispeech_test_clean": {"librispeech_test_clean/wer,none": 0.053}
+            },
+            "n-shot": {"librispeech_test_clean": 0},
+        }
+        df = run_collect(tmp_path, data)
+        assert len(df) == 1
+        row = df.iloc[0]
+        assert row["task"] == "librispeech_test_clean"
+        assert row["performance"] == pytest.approx(0.053)
+        assert row["metric_name"] == "wer,none"
+        assert row["model_name"] == "/models/qwen2-audio"
+
+    def test_wenet_speech_cer_resolved(self, tmp_path):
+        """Chinese ASR uses CER. wenet_speech_test_meeting is a leaf task."""
+        data = {
+            "model_name": "qwen2_audio",
+            "model_name_or_path": "/models/qwen2-audio",
+            "results": {
+                "wenet_speech_test_meeting": {"wenet_speech_test_meeting/cer,none": 0.117}
+            },
+            "n-shot": {"wenet_speech_test_meeting": 0},
+        }
+        df = run_collect(tmp_path, data)
+        assert df.iloc[0]["performance"] == pytest.approx(0.117)
+        assert df.iloc[0]["metric_name"] == "cer,none"
+
+    def test_covost2_bleu_resolved(self, tmp_path):
+        """Speech-translation task uses BLEU."""
+        data = {
+            "model_name": "qwen2_audio",
+            "model_name_or_path": "/models/qwen2-audio",
+            "results": {"covost2_en_zh_test": {"covost2_en_zh_test/bleu,none": 24.8}},
+            "n-shot": {"covost2_en_zh_test": 0},
+        }
+        df = run_collect(tmp_path, data)
+        assert df.iloc[0]["performance"] == pytest.approx(24.8)
+        assert df.iloc[0]["metric_name"] == "bleu,none"
+
+    def test_muchomusic_accuracy_resolved(self, tmp_path):
+        """Music-MCQ task uses plain accuracy."""
+        data = {
+            "model_name": "qwen2_audio",
+            "model_name_or_path": "/models/qwen2-audio",
+            "results": {"muchomusic": {"muchomusic/accuracy,none": 0.41}},
+            "n-shot": {"muchomusic": 0},
+        }
+        df = run_collect(tmp_path, data)
+        assert df.iloc[0]["performance"] == pytest.approx(0.41)
+        assert df.iloc[0]["metric_name"] == "accuracy,none"
+
+    def test_full_audio_understanding_suite_output(self, tmp_path):
+        """End-to-end: the 8 tasks in audio-understanding all resolve to
+        numeric performance values in a single collect_results call. This is
+        the regression guard that would have caught the original
+        air_bench_chat group-expansion bug (a group task emits subset-level
+        metric keys that don't match its task_path row in jobs.csv)."""
+        data = {
+            "model_name": "qwen2_audio",
+            "model_name_or_path": "/models/qwen2-audio",
+            "results": {
+                "librispeech_test_clean": {"librispeech_test_clean/wer,none": 0.053},
+                "fleurs_en": {"fleurs_en/wer,none": 0.061},
+                "gigaspeech_test": {"gigaspeech_test/wer,none": 0.094},
+                "tedlium_dev_test": {"tedlium_dev_test/wer,none": 0.072},
+                "wenet_speech_test_meeting": {
+                    "wenet_speech_test_meeting/cer,none": 0.117
+                },
+                "covost2_en_zh_test": {"covost2_en_zh_test/bleu,none": 24.8},
+                "vocalsound_test": {"vocalsound_test/accuracy,none": 0.81},
+                "muchomusic": {"muchomusic/accuracy,none": 0.41},
+            },
+            "n-shot": dict.fromkeys(
+                [
+                    "librispeech_test_clean",
+                    "fleurs_en",
+                    "gigaspeech_test",
+                    "tedlium_dev_test",
+                    "wenet_speech_test_meeting",
+                    "covost2_en_zh_test",
+                    "vocalsound_test",
+                    "muchomusic",
+                ],
+                0,
+            ),
+        }
+        df = run_collect(tmp_path, data)
+        assert len(df) == 8
+        assert all(df["performance"].notna())
+        assert set(df["task"].tolist()) == {
+            "librispeech_test_clean",
+            "fleurs_en",
+            "gigaspeech_test",
+            "tedlium_dev_test",
+            "wenet_speech_test_meeting",
+            "covost2_en_zh_test",
+            "vocalsound_test",
+            "muchomusic",
+        }
+
+
 # ── Structured output (JSON + Markdown alongside CSV) ──────────────────────
 
 

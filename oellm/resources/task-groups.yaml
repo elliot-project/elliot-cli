@@ -49,7 +49,9 @@ task_metrics:
   librispeech_dev_other: wer
   librispeech_test_clean: wer
   librispeech_test_other: wer
-  common_voice_15: wer
+  common_voice_15_en: wer
+  common_voice_15_fr: wer
+  common_voice_15_zh-CN: wer
   gigaspeech_test: wer
   tedlium_dev_test: wer
   people_speech_val: wer
@@ -537,14 +539,18 @@ task_groups:
         dataset: longvideobench/LongVideoBench
 
   # ── Audio Modality (lmms-eval) ─────────────────────────────────────────────
-  # Combined curated group covering ASR, speech translation, audio QA, music
-  # and paralinguistic capabilities. Individual groups are listed below for
-  # targeted runs. Open-ended QA / audio-captioning tasks (alpaca_audio,
-  # clotho_aqa, wavcaps, openhermes, air_bench_chat, song_describer) use
-  # LLM-as-judge scoring and therefore require a judge model (GPT-4o by
-  # default, configurable via lmms-eval env vars).
+  # The curated `audio-understanding` suite covers ASR (English + Chinese),
+  # speech translation, audio classification, and music understanding — all
+  # using deterministic metrics (WER / CER / BLEU / accuracy), no LLM-as-judge
+  # dependency. Every task listed here MUST be a leaf task in lmms-eval: group
+  # names like `air_bench_chat` or `common_voice_15` expand into subtask
+  # metric keys at runtime, which breaks the jobs.csv ↔ results.json task-name
+  # match in _resolve_metric. Judge-model / open-ended tasks are available as
+  # individual groups below (audio-air-bench-chat, audio-alpaca-audio,
+  # audio-wavcaps, audio-openhermes) and require OPENAI_API_KEY on the
+  # compute node.
   audio-understanding:
-    description: "Curated audio benchmark suite via lmms-eval (LibriSpeech, FLEURS, CoVoST2, ClothoAQA, VocalSound, MuChoMusic, AIR-Bench chat, VoiceBench)"
+    description: "Curated audio benchmark suite via lmms-eval — ASR (LibriSpeech, FLEURS en, GigaSpeech, TED-LIUM, WenetSpeech meeting), speech translation (CoVoST2 en→zh), audio classification (VocalSound) and music understanding (MuChoMusic). No judge-model dependency."
     suite: lmms_eval
     n_shots: [0]
     tasks:
@@ -552,18 +558,18 @@ task_groups:
         dataset: lmms-lab/librispeech
       - task: fleurs_en
         dataset: lmms-lab/fleurs
+      - task: gigaspeech_test
+        dataset: lmms-lab/gigaspeech
+      - task: tedlium_dev_test
+        dataset: lmms-lab/tedlium
+      - task: wenet_speech_test_meeting
+        dataset: lmms-lab/WenetSpeech
       - task: covost2_en_zh_test
         dataset: lmms-lab/covost2_en-zh
-      - task: clotho_aqa_test
-        dataset: lmms-lab/ClothoAQA
       - task: vocalsound_test
         dataset: lmms-lab/vocalsound
       - task: muchomusic
         dataset: lmms-lab/muchomusic
-      - task: air_bench_chat
-        dataset: lmms-lab/AIR_Bench
-      - task: voicebench_commoneval
-        dataset: lmms-lab/voicebench
 
   # ── Individual Audio Benchmarks (single-task groups for targeted runs) ─────
 
@@ -588,12 +594,14 @@ task_groups:
       - task: librispeech_test_other
 
   audio-common-voice-15:
-    description: "Common Voice 15 multilingual ASR via lmms-eval"
+    description: "Common Voice 15 multilingual ASR via lmms-eval (en, fr, zh-CN leaf subtasks)"
     suite: lmms_eval
     n_shots: [0]
+    dataset: lmms-lab/common_voice_15
     tasks:
-      - task: common_voice_15
-        dataset: lmms-lab/common_voice_15
+      - task: common_voice_15_en
+      - task: common_voice_15_fr
+      - task: common_voice_15_zh-CN
 
   audio-gigaspeech:
     description: "GigaSpeech large-scale ASR via lmms-eval"

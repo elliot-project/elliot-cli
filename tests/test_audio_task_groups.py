@@ -14,29 +14,31 @@ from oellm.task_groups import (
 
 AUDIO_TASK_GROUP = "audio-understanding"
 
-# Tasks included in the curated audio-understanding suite. This is a subset of
-# the full lmms-eval audio coverage — individual audio-* task groups cover the
-# rest (see test_individual_audio_groups_present below).
+# Tasks in the curated audio-understanding suite. All must be *leaf* tasks in
+# lmms-eval (no group names that expand to subtasks at runtime) and must use
+# deterministic metrics (no LLM-as-judge) so the suite runs end-to-end on a
+# compute node without OPENAI_API_KEY. Judge-model and group-expanding
+# benchmarks are exposed via individual audio-* groups further down.
 EXPECTED_TASKS = {
     "librispeech_test_clean",
     "fleurs_en",
+    "gigaspeech_test",
+    "tedlium_dev_test",
+    "wenet_speech_test_meeting",
     "covost2_en_zh_test",
-    "clotho_aqa_test",
     "vocalsound_test",
     "muchomusic",
-    "air_bench_chat",
-    "voicebench_commoneval",
 }
 
 EXPECTED_DATASETS = {
     "lmms-lab/librispeech",
     "lmms-lab/fleurs",
+    "lmms-lab/gigaspeech",
+    "lmms-lab/tedlium",
+    "lmms-lab/WenetSpeech",
     "lmms-lab/covost2_en-zh",
-    "lmms-lab/ClothoAQA",
     "lmms-lab/vocalsound",
     "lmms-lab/muchomusic",
-    "lmms-lab/AIR_Bench",
-    "lmms-lab/voicebench",
 }
 
 # All individual audio-* groups that must be registered so users can target
@@ -132,6 +134,58 @@ class TestAudioTaskGroupExpansion:
             "air_bench_chat_speech",
             "air_bench_chat_mixed",
         }
+
+    def test_expand_common_voice_15_has_three_languages(self):
+        """common_voice_15 is a group task in lmms-eval; we must list the
+        three language leaves explicitly so jobs.csv rows match the leaf
+        metric keys emitted in the output JSON."""
+        results = _expand_task_groups(["audio-common-voice-15"])
+        task_names = {r.task for r in results}
+        assert task_names == {
+            "common_voice_15_en",
+            "common_voice_15_fr",
+            "common_voice_15_zh-CN",
+        }
+
+    def test_audio_understanding_uses_only_leaf_tasks(self):
+        """Regression guard: audio-understanding must not list any lmms-eval
+        group task (air_bench_chat, common_voice_15, fleurs, air_bench_foundation, …)
+        because those expand to subtask metric keys at runtime, breaking the
+        jobs.csv ↔ results.json match in _resolve_metric."""
+        known_group_task_names = {
+            "air_bench_chat",
+            "air_bench_foundation",
+            "common_voice_15",
+            "fleurs",
+            "wenet_speech",
+            "tedlium",
+            "gigaspeech",
+        }
+        results = _expand_task_groups([AUDIO_TASK_GROUP])
+        task_names = {r.task for r in results}
+        collisions = task_names & known_group_task_names
+        assert not collisions, (
+            f"audio-understanding contains lmms-eval group tasks: {collisions}. "
+            "Replace with leaf subtasks (e.g. fleurs_en, wenet_speech_test_meeting)."
+        )
+
+    def test_audio_understanding_has_no_judge_tasks(self):
+        """Regression guard: curated smoke suite must stay runnable without
+        OPENAI_API_KEY on the compute node. Any task listed in task_metrics
+        with a gpt_eval* metric is a judge-model task and belongs in an
+        individual audio-* group, not the curated suite."""
+        data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
+        task_metrics = data.get("task_metrics", {})
+        results = _expand_task_groups([AUDIO_TASK_GROUP])
+        judge_tasks = [
+            r.task
+            for r in results
+            if str(task_metrics.get(r.task, "")).startswith("gpt_eval")
+        ]
+        assert not judge_tasks, (
+            f"audio-understanding contains judge-model tasks: {judge_tasks}. "
+            "Move them to an individual audio-* group."
+        )
 
 
 class TestAudioTaskGroupDatasetSpecs:
