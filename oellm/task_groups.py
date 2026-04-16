@@ -9,8 +9,14 @@ import yaml
 class DatasetSpec:
     repo_id: str
     subset: str | None = None
-    video: bool = False
-    audio: bool = False
+    # True when load_dataset alone won't fully materialize the repo and we
+    # must call huggingface_hub.snapshot_download to mirror the whole repo
+    # onto disk. Required for audio/video HF repos of loose media files
+    # (.flac, .mp4, …) that lmms-eval reads directly from the cache at
+    # runtime — offline compute nodes otherwise fail to find the files.
+    # Auto-derived from the group prefix (audio-*, video-*) in
+    # _collect_dataset_specs; not a YAML field.
+    needs_snapshot_download: bool = False
 
 
 @dataclass
@@ -205,8 +211,7 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
     def add_spec(
         dataset: str | None,
         subset: str | None,
-        video: bool = False,
-        audio: bool = False,
+        needs_snapshot_download: bool = False,
     ):
         if dataset is None:
             return
@@ -214,18 +219,25 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
         if key not in seen:
             seen.add(key)
             specs.append(
-                DatasetSpec(repo_id=dataset, subset=subset, video=video, audio=audio)
+                DatasetSpec(
+                    repo_id=dataset,
+                    subset=subset,
+                    needs_snapshot_download=needs_snapshot_download,
+                )
             )
 
     for t, _, group_name in _iter_all_tasks(parsed):
-        is_video = group_name.startswith("video-")
-        is_audio = group_name.startswith("audio-")
+        # audio-* and video-* groups wrap HF repos of loose media files;
+        # lmms-eval reads those blobs directly from the cache, so we must
+        # pre-fetch the whole repo via snapshot_download in addition to the
+        # normal load_dataset call.
+        needs_snapshot = group_name.startswith(("audio-", "video-"))
 
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):
                 add_spec(t.dataset, lang)
         else:
-            add_spec(t.dataset, t.subset, video=is_video, audio=is_audio)
+            add_spec(t.dataset, t.subset, needs_snapshot_download=needs_snapshot)
 
     return specs
 

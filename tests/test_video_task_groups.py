@@ -99,6 +99,18 @@ class TestVideoTaskGroupDatasetSpecs:
         repo_ids = {s.repo_id for s in specs}
         assert "lmms-lab/Video-MME" in repo_ids
 
+    def test_needs_snapshot_download_flag_set_on_specs(self):
+        """video-* groups must mark their DatasetSpecs as
+        needs_snapshot_download=True so _pre_download_datasets_from_specs
+        mirrors the whole repo (HF repos of loose .mp4 files don't round-trip
+        through load_dataset alone)."""
+        specs = _collect_dataset_specs([VIDEO_TASK_GROUP])
+        assert specs, "No dataset specs returned"
+        for s in specs:
+            assert s.needs_snapshot_download, (
+                f"DatasetSpec for {s.repo_id} missing needs_snapshot_download=True flag"
+            )
+
 
 class TestVideoTaskGroupScheduleEvals:
     """Verify video-understanding integrates with the schedule_evals dry-run path."""
