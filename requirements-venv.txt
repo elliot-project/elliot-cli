@@ -10,6 +10,14 @@ datasets<4.0.0
 # lmms-eval is compatible with datasets<4.0.0; install alongside lm-eval.
 lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git
 
+# Audio runtime deps for lmms-eval audio tasks (LibriSpeech, FLEURS, CoVoST2 …).
+# jiwer computes WER/CER; soundfile / librosa decode audio files.
+# The Singularity image for HPC deployments must additionally include ffmpeg
+# so non-WAV codecs (e.g. FLAC, OGG, MP3) can be read.
+soundfile
+librosa
+jiwer
+
 # lighteval must be installed separately as a uv tool to avoid datasets version conflict:
 # UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \
 #   uv tool install --python 3.12 --with "langcodes[data]" --with "pillow" \

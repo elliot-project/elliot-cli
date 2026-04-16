@@ -16,6 +16,16 @@ class EvaluationJob:
 # Patterns are matched case-insensitively against the model path.
 # Order matters: more specific patterns must come before general ones.
 LMMS_MODEL_ADAPTERS: list[tuple[list[str], str]] = [
+    # ── Audio / speech models (must come before generic "qwen" catch-all) ──
+    (["qwen2-audio", "qwen2_audio"], "qwen2_audio"),
+    (["qwen2.5-audio", "qwen2_5_audio"], "qwen2_5_audio"),
+    (["salmonn"], "salmonn"),
+    (["audio-flamingo", "audio_flamingo"], "audio_flamingo"),
+    (["ultravox"], "ultravox"),
+    (["phi-4-multimodal", "phi_4_multimodal", "phi4-multimodal"], "phi4_multimodal"),
+    (["gemini-audio", "gemini_audio"], "gemini_audio"),
+    (["gpt4o-audio", "gpt_4o_audio"], "gpt4o_audio"),
+    # ── Vision / video models ──
     (["qwen2.5-vl", "qwen2_5_vl", "qwen2.5vl"], "qwen2_5_vl"),
     (["qwen2-vl", "qwen2_vl"], "qwen2_vl"),
     (["llava-hf"], "llava_hf"),

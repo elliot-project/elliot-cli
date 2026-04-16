@@ -10,6 +10,7 @@ class DatasetSpec:
     repo_id: str
     subset: str | None = None
     video: bool = False
+    audio: bool = False
 
 
 @dataclass
@@ -205,22 +206,26 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
         dataset: str | None,
         subset: str | None,
         video: bool = False,
+        audio: bool = False,
     ):
         if dataset is None:
             return
         key = (dataset, subset)
         if key not in seen:
             seen.add(key)
-            specs.append(DatasetSpec(repo_id=dataset, subset=subset, video=video))
+            specs.append(
+                DatasetSpec(repo_id=dataset, subset=subset, video=video, audio=audio)
+            )
 
     for t, _, group_name in _iter_all_tasks(parsed):
         is_video = group_name.startswith("video-")
+        is_audio = group_name.startswith("audio-")
 
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):
                 add_spec(t.dataset, lang)
         else:
-            add_spec(t.dataset, t.subset, video=is_video)
+            add_spec(t.dataset, t.subset, video=is_video, audio=is_audio)
 
     return specs
 
