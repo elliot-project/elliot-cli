@@ -383,7 +383,7 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: vqav2_val
-        dataset: HuggingFaceM4/VQAv2
+        dataset: lmms-lab/VQAv2
       - task: mmbench_en_dev
         dataset: lmms-lab/MMBench
       - task: mmmu_val
@@ -391,7 +391,8 @@ task_groups:
       - task: chartqa
         dataset: lmms-lab/ChartQA
       - task: docvqa_val
-        dataset: eliolio/docvqa
+        dataset: lmms-lab/DocVQA
+        subset: DocVQA
       - task: textvqa_val
         dataset: facebook/textvqa
       - task: ocrbench
@@ -410,7 +411,7 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: vqav2_val
-        dataset: HuggingFaceM4/VQAv2
+        dataset: lmms-lab/VQAv2
 
   image-mmbench:
     description: "MMBench multi-modal benchmark via lmms-eval"
@@ -442,7 +443,8 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: docvqa_val
-        dataset: eliolio/docvqa
+        dataset: lmms-lab/DocVQA
+        subset: DocVQA
 
   image-textvqa:
     description: "TextVQA text-based visual question answering via lmms-eval"

@@ -29,11 +29,11 @@ EXPECTED_TASKS = {
 }
 
 EXPECTED_DATASETS = {
-    "HuggingFaceM4/VQAv2",
+    "lmms-lab/VQAv2",
     "lmms-lab/MMBench",
     "MMMU/MMMU",
     "lmms-lab/ChartQA",
-    "eliolio/docvqa",
+    "lmms-lab/DocVQA",
     "facebook/textvqa",
     "echo840/OCRBench",
     "AI4Math/MathVista",
@@ -94,7 +94,7 @@ class TestImageTaskGroupDatasetSpecs:
     def test_vqav2_dataset_included(self):
         specs = _collect_dataset_specs([IMAGE_TASK_GROUP])
         repo_ids = {s.repo_id for s in specs}
-        assert "HuggingFaceM4/VQAv2" in repo_ids
+        assert "lmms-lab/VQAv2" in repo_ids
 
     def test_mmmu_dataset_included(self):
         specs = _collect_dataset_specs([IMAGE_TASK_GROUP])
