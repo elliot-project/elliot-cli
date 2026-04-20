@@ -43,10 +43,11 @@ class TestVideoTaskGroupInRegistry:
         suite = data["task_groups"][VIDEO_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
-    def test_video_understanding_has_five_tasks(self):
+    def test_video_understanding_has_seven_tasks(self):
         data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][VIDEO_TASK_GROUP]["tasks"]
-        assert len(tasks) == 5
+        # 3 video_mmmu_* leaves + egoschema + videomme + activitynetqa + longvideobench
+        assert len(tasks) == 7
 
     def test_individual_video_groups_present(self):
         all_groups = get_all_task_group_names()
@@ -80,9 +81,14 @@ class TestVideoTaskGroupExpansion:
 
     def test_expand_individual_video_group(self):
         results = _expand_task_groups(["video-videommmu"])
-        assert len(results) == 1
-        assert results[0].task == "video_mmmu"
-        assert results[0].suite == "lmms_eval"
+        assert len(results) == 3
+        assert {r.task for r in results} == {
+            "video_mmmu_perception",
+            "video_mmmu_comprehension",
+            "video_mmmu_adaptation",
+        }
+        for r in results:
+            assert r.suite == "lmms_eval"
 
 
 class TestVideoTaskGroupDatasetSpecs:

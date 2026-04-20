@@ -112,8 +112,8 @@ class TestCollectResultsLmmsEvalFormat:
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/checkpoints/llava-1.5-7b",
-            "results": {"vqav2_val_all": {"vqav2/vqa_score,none": 0.82}},
-            "n-shot": {"vqav2_val_all": 0},
+            "results": {"vqav2_val": {"vqav2_val/exact_match,none": 0.82}},
+            "n-shot": {"vqav2_val": 0},
         }
         df = run_collect(tmp_path, data)
         assert len(df) == 1
@@ -123,18 +123,18 @@ class TestCollectResultsLmmsEvalFormat:
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"vqav2_val_all": {"vqav2/vqa_score,none": 0.82}},
-            "n-shot": {"vqav2_val_all": 0},
+            "results": {"vqav2_val": {"vqav2_val/exact_match,none": 0.82}},
+            "n-shot": {"vqav2_val": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.82)
-        assert df.iloc[0]["task"] == "vqav2_val_all"
+        assert df.iloc[0]["task"] == "vqav2_val"
 
-    def test_task_scoped_acc_key_resolved(self, tmp_path):
+    def test_mmbench_gpt_eval_score_resolved(self, tmp_path):
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"mmbench_en_dev": {"mmbench_en_dev/acc,none": 0.75}},
+            "results": {"mmbench_en_dev": {"mmbench_en_dev/gpt_eval_score,none": 0.75}},
             "n-shot": {"mmbench_en_dev": 0},
         }
         df = run_collect(tmp_path, data)
@@ -145,18 +145,18 @@ class TestCollectResultsLmmsEvalFormat:
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"mmmu_val": {"mmmu/acc,none": 0.55}},
+            "results": {"mmmu_val": {"mmmu_val/mmmu_acc,none": 0.55}},
             "n-shot": {"mmmu_val": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.55)
         assert df.iloc[0]["task"] == "mmmu_val"
 
-    def test_chartqa_relaxed_accuracy(self, tmp_path):
+    def test_chartqa_relaxed_overall(self, tmp_path):
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"chartqa": {"chartqa/relaxed_accuracy,none": 0.68}},
+            "results": {"chartqa": {"chartqa/relaxed_overall,none": 0.68}},
             "n-shot": {"chartqa": 0},
         }
         df = run_collect(tmp_path, data)
@@ -172,24 +172,28 @@ class TestCollectResultsLmmsEvalFormat:
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.91)
 
-    def test_ocrbench_score_metric(self, tmp_path):
+    def test_ocrbench_accuracy_metric(self, tmp_path):
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"ocrbench": {"ocrbench/score,none": 512.0}},
+            "results": {"ocrbench": {"ocrbench/ocrbench_accuracy,none": 512.0}},
             "n-shot": {"ocrbench": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(512.0)
 
-    def test_mathvista_llm_judge_metric(self, tmp_path):
+    def test_mathvista_leaf_llm_judge_metric(self, tmp_path):
+        """mathvista_testmini is a group upstream; only the three leaves
+        (_cot / _format / _solution) emit the llm_as_judge_eval metric."""
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
             "results": {
-                "mathvista_testmini": {"mathvista_testmini/llm_as_judge_eval,none": 0.49}
+                "mathvista_testmini_cot": {
+                    "mathvista_testmini_cot/llm_as_judge_eval,none": 0.49
+                }
             },
-            "n-shot": {"mathvista_testmini": 0},
+            "n-shot": {"mathvista_testmini_cot": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.49)
@@ -199,19 +203,19 @@ class TestCollectResultsLmmsEvalFormat:
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
             "results": {
-                "vqav2_val_all": {"vqav2/vqa_score,none": 0.82},
-                "mmbench_en_dev": {"mmbench_en_dev/acc,none": 0.75},
-                "chartqa": {"chartqa/relaxed_accuracy,none": 0.68},
+                "vqav2_val": {"vqav2_val/exact_match,none": 0.82},
+                "mmbench_en_dev": {"mmbench_en_dev/gpt_eval_score,none": 0.75},
+                "chartqa": {"chartqa/relaxed_overall,none": 0.68},
             },
             "n-shot": {
-                "vqav2_val_all": 0,
+                "vqav2_val": 0,
                 "mmbench_en_dev": 0,
                 "chartqa": 0,
             },
         }
         df = run_collect(tmp_path, data)
         assert len(df) == 3
-        assert set(df["task"].tolist()) == {"vqav2_val_all", "mmbench_en_dev", "chartqa"}
+        assert set(df["task"].tolist()) == {"vqav2_val", "mmbench_en_dev", "chartqa"}
 
     def test_lmeval_and_lmms_eval_results_aggregated(self, tmp_path):
         """Both lm-eval and lmms-eval JSON files can coexist in the same results dir."""
@@ -223,20 +227,20 @@ class TestCollectResultsLmmsEvalFormat:
         lmms_eval_data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/path/to/model",
-            "results": {"vqav2_val_all": {"vqav2/vqa_score,none": 0.82}},
-            "n-shot": {"vqav2_val_all": 0},
+            "results": {"vqav2_val": {"vqav2_val/exact_match,none": 0.82}},
+            "n-shot": {"vqav2_val": 0},
         }
         df = run_collect(tmp_path, lm_eval_data, lmms_eval_data)
         assert len(df) == 2
-        assert set(df["task"].tolist()) == {"mmlu", "vqav2_val_all"}
+        assert set(df["task"].tolist()) == {"mmlu", "vqav2_val"}
 
     def test_empty_model_name_or_path_falls_back_to_model_name(self, tmp_path):
         """Empty string for model_name_or_path should fall back to model_name."""
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "",
-            "results": {"vqav2_val_all": {"vqav2/vqa_score,none": 0.80}},
-            "n-shot": {"vqav2_val_all": 0},
+            "results": {"vqav2_val": {"vqav2_val/exact_match,none": 0.80}},
+            "n-shot": {"vqav2_val": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["model_name"] == "llava_hf"
@@ -245,8 +249,8 @@ class TestCollectResultsLmmsEvalFormat:
         data = {
             "model_name": "llava_hf",
             "model_name_or_path": "/models/llava",
-            "results": {"vqav2_val_all": {"vqav2/vqa_score,none": 0.82}},
-            "n-shot": {"vqav2_val_all": 0},
+            "results": {"vqav2_val": {"vqav2_val/exact_match,none": 0.82}},
+            "n-shot": {"vqav2_val": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["n_shot"] == 0

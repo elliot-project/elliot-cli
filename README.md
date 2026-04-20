@@ -9,7 +9,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Snellius)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
-- **Video evaluation** via lmms-eval (MVBench, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
+- **Video evaluation** via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
@@ -75,14 +75,14 @@ Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 | `image-docvqa` | DocVQA | lmms-eval |
 | `image-textvqa` | TextVQA | lmms-eval |
 | `image-ocrbench` | OCRBench | lmms-eval |
-| `image-mathvista` | MathVista | lmms-eval |
+| `image-mathvista` | MathVista (CoT / format / solution leaves — needs GPT judge) | lmms-eval |
 
 ### Video
 
 | Group | Benchmark | Engine |
 |---|---|---|
 | `video-understanding` | All 5 benchmarks combined | lmms-eval |
-| `video-mvbench` | MVBench (20 temporal tasks) | lmms-eval |
+| `video-videommmu` | VideoMMMU (perception / comprehension / adaptation leaves) | lmms-eval |
 | `video-egoschema` | EgoSchema (long-form egocentric QA) | lmms-eval |
 | `video-videomme` | Video-MME (11s-1h clips) | lmms-eval |
 | `video-activitynet-qa` | ActivityNet-QA (requires GPT API) | lmms-eval |
