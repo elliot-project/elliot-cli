@@ -280,19 +280,19 @@ class TestCollectResultsLmmsEvalAudioFormat:
         assert row["metric_name"] == "wer,none"
         assert row["model_name"] == "/models/qwen2-audio"
 
-    def test_wenet_speech_cer_resolved(self, tmp_path):
-        """Chinese ASR uses CER. wenet_speech_test_meeting is a leaf task."""
+    def test_wenet_speech_mer_resolved(self, tmp_path):
+        """Chinese ASR uses MER (Mixed Error Rate) per lmms-eval upstream."""
         data = {
             "model_name": "qwen2_audio",
             "model_name_or_path": "/models/qwen2-audio",
             "results": {
-                "wenet_speech_test_meeting": {"wenet_speech_test_meeting/cer,none": 0.117}
+                "wenet_speech_test_meeting": {"wenet_speech_test_meeting/mer,none": 0.117}
             },
             "n-shot": {"wenet_speech_test_meeting": 0},
         }
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.117)
-        assert df.iloc[0]["metric_name"] == "cer,none"
+        assert df.iloc[0]["metric_name"] == "mer,none"
 
     def test_covost2_bleu_resolved(self, tmp_path):
         """Speech-translation task uses BLEU."""
@@ -333,7 +333,7 @@ class TestCollectResultsLmmsEvalAudioFormat:
                 "gigaspeech_test": {"gigaspeech_test/wer,none": 0.094},
                 "tedlium_dev_test": {"tedlium_dev_test/wer,none": 0.072},
                 "wenet_speech_test_meeting": {
-                    "wenet_speech_test_meeting/cer,none": 0.117
+                    "wenet_speech_test_meeting/mer,none": 0.117
                 },
                 "covost2_en_zh_test": {"covost2_en_zh_test/bleu,none": 24.8},
                 "vocalsound_test": {"vocalsound_test/accuracy,none": 0.81},

@@ -99,7 +99,7 @@ The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) 
 | `audio-common-voice-15` | Common Voice 15 (en, fr, zh-CN) | lmms-eval |
 | `audio-gigaspeech` | GigaSpeech large-scale ASR | lmms-eval |
 | `audio-tedlium` | TED-LIUM v3 ASR | lmms-eval |
-| `audio-wenet-speech` | WenetSpeech Chinese ASR (CER) | lmms-eval |
+| `audio-wenet-speech` | WenetSpeech Chinese ASR (MER) | lmms-eval |
 | `audio-covost2` | CoVoST2 en→zh speech translation (BLEU) | lmms-eval |
 | `audio-fleurs` | FLEURS multilingual speech | lmms-eval |
 | `audio-voxpopuli`, `audio-ami`, `audio-people-speech` | Additional ASR corpora | lmms-eval |

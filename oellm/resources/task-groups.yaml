@@ -22,21 +22,25 @@ task_metrics:
   bigbench_repeat_copy_logic_generate_until: exact_match
   bigbench_cs_algorithms_generate_until: exact_match
   # lmms-eval image benchmark metrics
-  vqav2_val_all: vqa_score
+  vqav2_val: exact_match
   mme: mme_cognition_score
-  mmbench_en_dev: acc
-  mmmu_val: acc
-  chartqa: relaxed_accuracy
+  mmbench_en_dev: gpt_eval_score
+  mmmu_val: mmmu_acc
+  chartqa: relaxed_overall
   docvqa_val: anls
-  textvqa_val: acc
-  ocrbench: score
-  # MathVista uses LLM-as-judge; null without judge LLM configured
-  mathvista_testmini: llm_as_judge_eval
+  textvqa_val: exact_match
+  ocrbench: ocrbench_accuracy
+  # MathVista uses LLM-as-judge; null without judge LLM configured. The
+  # top-level `mathvista_testmini` is a GROUP that expands to the three
+  # leaves below — schedule the leaves, not the group.
   mathvista_testmini_cot: llm_as_judge_eval
   mathvista_testmini_format: llm_as_judge_eval
   mathvista_testmini_solution: llm_as_judge_eval
-  # lmms-eval video benchmark metrics
-  video_mmmu: mmmu_acc
+  # lmms-eval video benchmark metrics. `video_mmmu` upstream is a GROUP
+  # that expands to perception / comprehension / adaptation leaves.
+  video_mmmu_perception: mmmu_acc
+  video_mmmu_comprehension: mmmu_acc
+  video_mmmu_adaptation: mmmu_acc
   egoschema: submission
   videomme: videomme_perception_score
   # ActivityNet-QA requires GPT API access for evaluation (LLM-as-judge)
@@ -54,14 +58,14 @@ task_metrics:
   people_speech_val: wer
   voxpopuli_en: wer
   ami_test: wer
-  wenet_speech_test_meeting: cer
-  wenet_speech_test_net: cer
+  wenet_speech_test_meeting: mer
+  wenet_speech_test_net: mer
   covost2_en_zh_test: bleu
   fleurs_en: wer
   fleurs_cmn_hans_cn: wer
   fleurs_yue_hant_hk: wer
   alpaca_audio: gpt_eval
-  clotho_aqa_test: gpt_eval
+  clotho_aqa_test: exact_match
   openhermes: gpt_eval
   wavcaps: gpt_eval
   air_bench_chat_sound: gpt_eval
@@ -73,20 +77,20 @@ task_metrics:
   air_bench_foundation_speech: accuracy
   muchomusic: accuracy
   vocalsound_test: accuracy
-  step2_audio_paralinguistic_age: accuracy
-  step2_audio_paralinguistic_emotions: accuracy
-  step2_audio_paralinguistic_event: accuracy
-  step2_audio_paralinguistic_gender: accuracy
-  step2_audio_paralinguistic_pitch: accuracy
-  step2_audio_paralinguistic_rhythm: accuracy
-  step2_audio_paralinguistic_scene: accuracy
-  step2_audio_paralinguistic_speed: accuracy
-  step2_audio_paralinguistic_vocalsound: accuracy
-  step2_audio_paralinguistic_voice_styles: accuracy
-  step2_audio_paralinguistic_voice_tone: accuracy
+  step2_audio_paralinguistic_age: semantic_match
+  step2_audio_paralinguistic_emotions: semantic_match
+  step2_audio_paralinguistic_event: semantic_match
+  step2_audio_paralinguistic_gender: semantic_match
+  step2_audio_paralinguistic_pitch: semantic_match
+  step2_audio_paralinguistic_rhythm: semantic_match
+  step2_audio_paralinguistic_scene: semantic_match
+  step2_audio_paralinguistic_speed: semantic_match
+  step2_audio_paralinguistic_vocalsound: semantic_match
+  step2_audio_paralinguistic_voice_styles: semantic_match
+  step2_audio_paralinguistic_voice_tone: semantic_match
   cn_college_listen_mcq_test: accuracy
   dream_tts_mcq_test: accuracy
-  voicebench_commoneval: accuracy
+  voicebench_commoneval: llm_as_judge_eval
 
 task_groups:
   open-sci-0.01:
@@ -378,7 +382,7 @@ task_groups:
     suite: lmms_eval
     n_shots: [0]
     tasks:
-      - task: vqav2_val_all
+      - task: vqav2_val
         dataset: HuggingFaceM4/VQAv2
       - task: mmbench_en_dev
         dataset: lmms-lab/MMBench
@@ -392,7 +396,11 @@ task_groups:
         dataset: facebook/textvqa
       - task: ocrbench
         dataset: echo840/OCRBench
-      - task: mathvista_testmini
+      - task: mathvista_testmini_cot
+        dataset: AI4Math/MathVista
+      - task: mathvista_testmini_format
+        dataset: AI4Math/MathVista
+      - task: mathvista_testmini_solution
         dataset: AI4Math/MathVista
 
   # ── Individual Image Benchmarks (single-task groups for targeted runs) ──────
@@ -401,7 +409,7 @@ task_groups:
     suite: lmms_eval
     n_shots: [0]
     tasks:
-      - task: vqav2_val_all
+      - task: vqav2_val
         dataset: HuggingFaceM4/VQAv2
 
   image-mmbench:
@@ -461,12 +469,14 @@ task_groups:
         dataset: lmms-lab/MME
 
   image-mathvista:
-    description: "MathVista mathematical reasoning in visual contexts via lmms-eval"
+    description: "MathVista mathematical reasoning in visual contexts via lmms-eval (testmini CoT/format/solution leaves)"
     suite: lmms_eval
     n_shots: [0]
+    dataset: AI4Math/MathVista
     tasks:
-      - task: mathvista_testmini
-        dataset: AI4Math/MathVista
+      - task: mathvista_testmini_cot
+      - task: mathvista_testmini_format
+      - task: mathvista_testmini_solution
 
   # ── Video Modality (lmms-eval) ────────────────────────────────────────────
   video-understanding:
@@ -474,7 +484,11 @@ task_groups:
     suite: lmms_eval
     n_shots: [0]
     tasks:
-      - task: video_mmmu
+      - task: video_mmmu_perception
+        dataset: lmms-lab/VideoMMMU
+      - task: video_mmmu_comprehension
+        dataset: lmms-lab/VideoMMMU
+      - task: video_mmmu_adaptation
         dataset: lmms-lab/VideoMMMU
       - task: egoschema
         dataset: lmms-lab/egoschema
@@ -487,12 +501,14 @@ task_groups:
 
   # ── Individual Video Benchmarks (single-task groups for targeted runs) ────
   video-videommmu:
-    description: "VideoMMMU multi-discipline video understanding via lmms-eval"
+    description: "VideoMMMU multi-discipline video understanding via lmms-eval (perception / comprehension / adaptation leaves)"
     suite: lmms_eval
     n_shots: [0]
+    dataset: lmms-lab/VideoMMMU
     tasks:
-      - task: video_mmmu
-        dataset: lmms-lab/VideoMMMU
+      - task: video_mmmu_perception
+      - task: video_mmmu_comprehension
+      - task: video_mmmu_adaptation
 
   video-egoschema:
     description: "EgoSchema long-form egocentric video QA via lmms-eval"
@@ -622,7 +638,7 @@ task_groups:
         dataset: edinburghcstr/ami
 
   audio-wenet-speech:
-    description: "WenetSpeech Chinese ASR via lmms-eval (CER on test_meeting / test_net)"
+    description: "WenetSpeech Chinese ASR via lmms-eval (MER on test_meeting / test_net)"
     suite: lmms_eval
     n_shots: [0]
     dataset: lmms-lab/WenetSpeech

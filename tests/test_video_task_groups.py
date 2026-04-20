@@ -15,7 +15,9 @@ from oellm.task_groups import (
 VIDEO_TASK_GROUP = "video-understanding"
 
 EXPECTED_TASKS = {
-    "video_mmmu",
+    "video_mmmu_perception",
+    "video_mmmu_comprehension",
+    "video_mmmu_adaptation",
     "egoschema",
     "videomme",
     "activitynetqa",
