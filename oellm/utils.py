@@ -401,9 +401,14 @@ def _pre_download_datasets_from_specs(
 
             if spec.needs_snapshot_download:
                 try:
+                    # max_workers=2 keeps concurrent HEAD requests below HF's
+                    # per-IP rate limit for many-file audio/video repos (e.g.
+                    # lmms-lab/WenetSpeech). Higher values trigger HTTP 429
+                    # and long exponential backoffs even with auth.
                     snapshot_download(
                         repo_id=spec.repo_id,
                         repo_type="dataset",
+                        max_workers=2,
                     )
                 except Exception as e:
                     logging.warning(f"Failed to snapshot_download '{spec.repo_id}': {e}")
