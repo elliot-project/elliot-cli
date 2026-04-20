@@ -399,10 +399,6 @@ def _pre_download_datasets_from_specs(
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
 
-            # Some HF repos (audio / video datasets of loose media files) need
-            # the whole repo mirrored via snapshot_download in addition to the
-            # standard load_dataset call — lmms-eval reads the blobs directly
-            # from the cache, and offline compute nodes otherwise can't find them.
             if spec.needs_snapshot_download:
                 try:
                     snapshot_download(

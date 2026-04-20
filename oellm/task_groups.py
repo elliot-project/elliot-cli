@@ -9,13 +9,6 @@ import yaml
 class DatasetSpec:
     repo_id: str
     subset: str | None = None
-    # True when load_dataset alone won't fully materialize the repo and we
-    # must call huggingface_hub.snapshot_download to mirror the whole repo
-    # onto disk. Required for audio/video HF repos of loose media files
-    # (.flac, .mp4, …) that lmms-eval reads directly from the cache at
-    # runtime — offline compute nodes otherwise fail to find the files.
-    # Auto-derived from the group prefix (audio-*, video-*) in
-    # _collect_dataset_specs; not a YAML field.
     needs_snapshot_download: bool = False
 
 
@@ -227,10 +220,6 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
             )
 
     for t, _, group_name in _iter_all_tasks(parsed):
-        # audio-* and video-* groups wrap HF repos of loose media files;
-        # lmms-eval reads those blobs directly from the cache, so we must
-        # pre-fetch the whole repo via snapshot_download in addition to the
-        # normal load_dataset call.
         needs_snapshot = group_name.startswith(("audio-", "video-"))
 
         if t.dataset == "facebook/flores" and not t.subset:

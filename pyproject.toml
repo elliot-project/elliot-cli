@@ -26,10 +26,7 @@ image = [
 video = [
     "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
 ]
-# Audio uses lmms-eval's audio tasks + runtime audio libraries.
-# librosa / soundfile / jiwer are needed by lmms-eval's WER/CER metrics and
-# audio loaders; they are not pulled in by the core install. The Singularity
-# container image for HPC deployments must also include ffmpeg.
+# HPC Singularity image must also include ffmpeg for non-WAV decode.
 audio = [
     "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
     "soundfile",
