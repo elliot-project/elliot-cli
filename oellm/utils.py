@@ -399,14 +399,16 @@ def _pre_download_datasets_from_specs(
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
 
-            # Video datasets: lmms-eval calls snapshot_download at runtime
-            # to get raw video files, then symlinks them into $HF_HOME.
-            # Pre-download so offline compute nodes find everything cached.
-            if spec.video:
+            if spec.needs_snapshot_download:
                 try:
+                    # max_workers=2 keeps concurrent HEAD requests below HF's
+                    # per-IP rate limit for many-file audio/video repos (e.g.
+                    # lmms-lab/WenetSpeech). Higher values trigger HTTP 429
+                    # and long exponential backoffs even with auth.
                     snapshot_download(
                         repo_id=spec.repo_id,
                         repo_type="dataset",
+                        max_workers=2,
                     )
                 except Exception as e:
                     logging.warning(f"Failed to snapshot_download '{spec.repo_id}': {e}")

@@ -9,7 +9,7 @@ import yaml
 class DatasetSpec:
     repo_id: str
     subset: str | None = None
-    video: bool = False
+    needs_snapshot_download: bool = False
 
 
 @dataclass
@@ -204,23 +204,29 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
     def add_spec(
         dataset: str | None,
         subset: str | None,
-        video: bool = False,
+        needs_snapshot_download: bool = False,
     ):
         if dataset is None:
             return
         key = (dataset, subset)
         if key not in seen:
             seen.add(key)
-            specs.append(DatasetSpec(repo_id=dataset, subset=subset, video=video))
+            specs.append(
+                DatasetSpec(
+                    repo_id=dataset,
+                    subset=subset,
+                    needs_snapshot_download=needs_snapshot_download,
+                )
+            )
 
     for t, _, group_name in _iter_all_tasks(parsed):
-        is_video = group_name.startswith("video-")
+        needs_snapshot = group_name.startswith(("audio-", "video-"))
 
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):
                 add_spec(t.dataset, lang)
         else:
-            add_spec(t.dataset, t.subset, video=is_video)
+            add_spec(t.dataset, t.subset, needs_snapshot_download=needs_snapshot)
 
     return specs
 

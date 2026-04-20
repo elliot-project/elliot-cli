@@ -55,7 +55,7 @@ class TestResolveSuiteLmmsEval:
         runner = EvalRunner()
         job = EvaluationJob(
             model_path="llava-hf/llava-1.5-7b-hf",
-            task_path="vqav2_val_all",
+            task_path="vqav2_val",
             n_shot=0,
             eval_suite="lmms_eval",
         )
@@ -161,7 +161,7 @@ class TestPrepareJobs:
             ),
             EvaluationJob(
                 model_path="llava-hf/llava-1.5-7b-hf",
-                task_path="vqav2_val_all",
+                task_path="vqav2_val",
                 n_shot=0,
                 eval_suite="lmms_eval",
             ),

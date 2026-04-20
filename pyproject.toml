@@ -26,6 +26,13 @@ image = [
 video = [
     "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
 ]
+# HPC Singularity image must also include ffmpeg for non-WAV decode.
+audio = [
+    "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
+    "soundfile",
+    "librosa",
+    "jiwer",
+]
 
 [project.scripts]
 oellm = "oellm.main:main"

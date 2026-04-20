@@ -15,7 +15,9 @@ from oellm.task_groups import (
 VIDEO_TASK_GROUP = "video-understanding"
 
 EXPECTED_TASKS = {
-    "video_mmmu",
+    "video_mmmu_perception",
+    "video_mmmu_comprehension",
+    "video_mmmu_adaptation",
     "egoschema",
     "videomme",
     "activitynetqa",
@@ -41,10 +43,11 @@ class TestVideoTaskGroupInRegistry:
         suite = data["task_groups"][VIDEO_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
-    def test_video_understanding_has_five_tasks(self):
+    def test_video_understanding_has_seven_tasks(self):
         data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][VIDEO_TASK_GROUP]["tasks"]
-        assert len(tasks) == 5
+        # 3 video_mmmu_* leaves + egoschema + videomme + activitynetqa + longvideobench
+        assert len(tasks) == 7
 
     def test_individual_video_groups_present(self):
         all_groups = get_all_task_group_names()
@@ -78,9 +81,14 @@ class TestVideoTaskGroupExpansion:
 
     def test_expand_individual_video_group(self):
         results = _expand_task_groups(["video-videommmu"])
-        assert len(results) == 1
-        assert results[0].task == "video_mmmu"
-        assert results[0].suite == "lmms_eval"
+        assert len(results) == 3
+        assert {r.task for r in results} == {
+            "video_mmmu_perception",
+            "video_mmmu_comprehension",
+            "video_mmmu_adaptation",
+        }
+        for r in results:
+            assert r.suite == "lmms_eval"
 
 
 class TestVideoTaskGroupDatasetSpecs:
@@ -98,6 +106,18 @@ class TestVideoTaskGroupDatasetSpecs:
         specs = _collect_dataset_specs([VIDEO_TASK_GROUP])
         repo_ids = {s.repo_id for s in specs}
         assert "lmms-lab/Video-MME" in repo_ids
+
+    def test_needs_snapshot_download_flag_set_on_specs(self):
+        """video-* groups must mark their DatasetSpecs as
+        needs_snapshot_download=True so _pre_download_datasets_from_specs
+        mirrors the whole repo (HF repos of loose .mp4 files don't round-trip
+        through load_dataset alone)."""
+        specs = _collect_dataset_specs([VIDEO_TASK_GROUP])
+        assert specs, "No dataset specs returned"
+        for s in specs:
+            assert s.needs_snapshot_download, (
+                f"DatasetSpec for {s.repo_id} missing needs_snapshot_download=True flag"
+            )
 
 
 class TestVideoTaskGroupScheduleEvals:

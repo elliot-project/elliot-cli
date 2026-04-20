@@ -16,22 +16,24 @@ from oellm.task_groups import (
 IMAGE_TASK_GROUP = "image-vqa"
 
 EXPECTED_TASKS = {
-    "vqav2_val_all",
+    "vqav2_val",
     "mmbench_en_dev",
     "mmmu_val",
     "chartqa",
     "docvqa_val",
     "textvqa_val",
     "ocrbench",
-    "mathvista_testmini",
+    "mathvista_testmini_cot",
+    "mathvista_testmini_format",
+    "mathvista_testmini_solution",
 }
 
 EXPECTED_DATASETS = {
-    "HuggingFaceM4/VQAv2",
+    "lmms-lab/VQAv2",
     "lmms-lab/MMBench",
     "MMMU/MMMU",
     "lmms-lab/ChartQA",
-    "eliolio/docvqa",
+    "lmms-lab/DocVQA",
     "facebook/textvqa",
     "echo840/OCRBench",
     "AI4Math/MathVista",
@@ -48,10 +50,11 @@ class TestImageTaskGroupInRegistry:
         suite = data["task_groups"][IMAGE_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
-    def test_image_vqa_has_eight_tasks(self):
+    def test_image_vqa_has_ten_tasks(self):
         data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][IMAGE_TASK_GROUP]["tasks"]
-        assert len(tasks) == 8
+        # 7 single-metric leaves + 3 mathvista_testmini_* leaves
+        assert len(tasks) == 10
 
 
 class TestImageTaskGroupExpansion:
@@ -91,7 +94,7 @@ class TestImageTaskGroupDatasetSpecs:
     def test_vqav2_dataset_included(self):
         specs = _collect_dataset_specs([IMAGE_TASK_GROUP])
         repo_ids = {s.repo_id for s in specs}
-        assert "HuggingFaceM4/VQAv2" in repo_ids
+        assert "lmms-lab/VQAv2" in repo_ids
 
     def test_mmmu_dataset_included(self):
         specs = _collect_dataset_specs([IMAGE_TASK_GROUP])
