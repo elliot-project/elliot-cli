@@ -10,6 +10,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Snellius)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
 - **Video evaluation** via lmms-eval (MVBench, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
+- **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
 
@@ -88,6 +89,28 @@ Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 | `video-longvideobench` | LongVideoBench (cross-segment reasoning) | lmms-eval |
 
 The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) is auto-detected from the model name. Install with `pip install oellm[video]` (or use a venv with lmms-eval).
+
+### Audio
+
+| Group | Benchmark | Engine |
+|---|---|---|
+| `audio-understanding` | Curated suite: 8 leaf tasks, no judge-model dependency | lmms-eval |
+| `audio-librispeech` | LibriSpeech ASR (WER on test-clean) | lmms-eval |
+| `audio-common-voice-15` | Common Voice 15 (en, fr, zh-CN) | lmms-eval |
+| `audio-gigaspeech` | GigaSpeech large-scale ASR | lmms-eval |
+| `audio-tedlium` | TED-LIUM v3 ASR | lmms-eval |
+| `audio-wenet-speech` | WenetSpeech Chinese ASR (CER) | lmms-eval |
+| `audio-covost2` | CoVoST2 en→zh speech translation (BLEU) | lmms-eval |
+| `audio-fleurs` | FLEURS multilingual speech | lmms-eval |
+| `audio-voxpopuli`, `audio-ami`, `audio-people-speech` | Additional ASR corpora | lmms-eval |
+| `audio-vocalsound` | Non-speech vocalisation classification | lmms-eval |
+| `audio-muchomusic` | Music understanding MCQ | lmms-eval |
+| `audio-air-bench-chat` | AIR-Bench chat (requires GPT judge) | lmms-eval |
+| `audio-air-bench-foundation` | AIR-Bench foundation MCQ | lmms-eval |
+| `audio-alpaca-audio`, `audio-openhermes`, `audio-wavcaps` | Instruction / captioning (GPT judge) | lmms-eval |
+| `audio-clotho-aqa`, `audio-cn-college-listen-mcq`, `audio-dream-tts-mcq`, `audio-voicebench`, `audio-step2-paralinguistic` | QA / MCQ / paralinguistic probes | lmms-eval |
+
+Install with `pip install oellm[audio]`. Judge-model groups (AIR-Bench chat, Alpaca-Audio, OpenHermes, WavCaps) need `OPENAI_API_KEY` on the compute node. The HPC Singularity image must include `ffmpeg` for non-WAV decode.
 
 ### Custom Benchmarks (contrib)
 
