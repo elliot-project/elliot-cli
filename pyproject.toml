@@ -33,6 +33,20 @@ audio = [
     "librosa",
     "jiwer",
 ]
+# AudioBench contrib plugin.  AudioBench itself is NOT pip-installable (no
+# build backend upstream and bare imports like ``from dataset import ...``
+# that break after install), so we don't list it as a Python dependency.
+# Instead, AUDIOBENCH_DIR in clusters.yaml points at a local git clone and
+# suite.py subprocesses into ``python src/main_evaluate.py``.  What we do
+# need here is our own post-processing / scorer deps for result parsing.
+audiobench = [
+    "jiwer",         # Phase 1 — WER result sanity checks
+    "sacrebleu",     # Phase 1 — BLEU scorer verification (covost2)
+    "pythainlp",     # Phase 1 — Thai tokenisation for gigaspeech2_thai
+    "evaluate",      # Phase 1 — MMAU / METEOR post-processing
+    "soundfile",
+    "librosa",
+]
 
 [project.scripts]
 oellm = "oellm.main:main"

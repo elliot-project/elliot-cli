@@ -13,7 +13,10 @@
 CSV_PATH="{csv_path}"
 NUM_JOBS={num_jobs}
 TOTAL_EVALS={total_evals}
-LIMIT="{limit}"
+# Exported so contrib suite plugins (which spawn their own Python subprocesses
+# via oellm.contrib.dispatch) can read it from os.environ.  Built-in suites
+# below still interpolate $LIMIT directly into their CLI flags.
+export LIMIT="{limit}"
 VENV_PATH="{venv_path}"
 LM_EVAL_INCLUDE_PATH="{lm_eval_include_path}"
 
