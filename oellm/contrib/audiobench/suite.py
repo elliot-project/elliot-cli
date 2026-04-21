@@ -1,47 +1,11 @@
 """AudioBench contrib suite — plugin protocol implementation.
 
-Implements the :mod:`oellm.registry` plugin protocol for the AudioBench
-benchmark (AudioLLMs/AudioBench, arXiv 2406.16020).  AudioBench is **not** a
-pip-installable library — it is a script harness.  We invoke its entry point
-via ``python src/main_evaluate.py`` as a subprocess, from a clone pointed at
-by the ``$AUDIOBENCH_DIR`` environment variable (configured in
-``clusters.yaml``).  This mirrors the precedent set by ``regiondial_bench``.
-
-Cluster setup
--------------
-The following environment variables must be set in ``clusters.yaml`` (or the
-cluster's module/profile system) before using any ``audio-audiobench-*``
-task group:
-
-``AUDIOBENCH_DIR``
-    Absolute path to a local clone of
-    https://github.com/AudioLLMs/AudioBench.  The entry point
-    ``src/main_evaluate.py`` must be present and the repo's own Python
-    dependencies must be installed in the active environment.
-
-Phase 2 (judge-dependent tasks) will additionally require:
-
-``AUDIOBENCH_JUDGE_URL`` / ``AUDIOBENCH_JUDGE_MODEL``
-    OpenAI-compatible URL and model name for the judge server (typically a
-    vLLM deployment of ``meta-llama/Meta-Llama-3-70B-Instruct-AWQ``).  Not
-    needed for Phase-1 judge-free tasks shipped today.
-
-Output format
--------------
-:func:`run` writes a lmms-eval-compatible JSON file to *output_path* so
-that :func:`oellm.main.collect_results` can parse it without modification::
-
-    {
-      "model_name_or_path": "<model_path>",
-      "results": {
-        "audiobench_librispeech_test_clean": {
-          "wer": 0.047
-        }
-      },
-      "configs": {
-        "audiobench_librispeech_test_clean": {"num_fewshot": 0}
-      }
-    }
+AudioBench is not pip-installable (upstream has no build backend and uses
+bare imports like ``from dataset import ...``), so :func:`run` invokes its
+``src/main_evaluate.py`` entry point as a subprocess with ``cwd`` set to
+``$AUDIOBENCH_DIR``.  :func:`run` then re-shapes AudioBench's result JSON
+into a lmms-eval-compatible payload that :func:`oellm.main.collect_results`
+can parse unchanged.
 """
 
 from __future__ import annotations
@@ -63,65 +27,45 @@ logger = logging.getLogger(__name__)
 
 CLUSTER_ENV_VARS = ["AUDIOBENCH_DIR"]
 
-# Mapping family → (group_name, human description).
 _FAMILY_GROUPS = {
     "asr": (
         "audio-audiobench-asr",
-        "AudioBench ASR tasks (WER).  Covers AudioBench-scored LibriSpeech, "
-        "Common Voice 15 EN, GigaSpeech, People's Speech, TED-LIUM 3 — dual "
-        "with our lmms-eval versions for paper-comparable numbers — plus new "
-        "tasks not in lmms-eval: earnings21/22, TED-LIUM 3 long-form, "
-        "AISHELL Mandarin, GigaSpeech2 (th/id/vi), SEAME code-switch.",
+        "AudioBench ASR tasks (WER).",
     ),
     "st": (
         "audio-audiobench-st",
-        "AudioBench speech-translation tasks (BLEU).  CoVoST2 covering "
-        "en↔id, en↔ta, zh→en, ta→en (new), plus dual-registered en→zh.",
+        "AudioBench speech-translation tasks (BLEU).",
     ),
     "reasoning": (
         "audio-audiobench-reasoning",
-        "AudioBench spoken reasoning / captioning.  Spoken-MQA digit + "
-        "reasoning splits (accuracy), MMAU-mini (string_match), "
-        "AudioCaps (METEOR).",
+        "AudioBench spoken reasoning / captioning (accuracy / string_match / METEOR).",
     ),
 }
 
 _TOP_LEVEL_GROUP = "audio-audiobench"
 _TOP_LEVEL_DESC = (
-    "AudioBench Phase-1 suite (judge-free).  Runs all 27 AudioBench tasks "
-    "that do not require an LLM judge: ASR (WER), speech translation (BLEU), "
-    "spoken reasoning (accuracy/string_match), and AudioCaps captioning "
-    "(METEOR).  Phase 2 (judge-dependent tasks) will extend this group once "
-    "the judge service is configured."
+    "AudioBench suite — ASR (WER), speech translation (BLEU), spoken "
+    "reasoning (accuracy/string_match), and AudioCaps captioning (METEOR)."
 )
 
 
 def _build_task_groups() -> dict:
-    """Assemble the :data:`TASK_GROUPS` dict from :data:`AUDIOBENCH_TASKS`.
+    """Build ``TASK_GROUPS`` from :data:`AUDIOBENCH_TASKS`.
 
-    One top-level ``audio-audiobench`` group containing all 27 leaves, plus
-    three sub-groups keyed by family (``-asr`` / ``-st`` / ``-reasoning``).
-    All groups are zero-shot by design — AudioBench tasks do not support
-    in-context examples.
+    Always zero-shot — AudioBench does not support in-context examples.
     """
     task_metrics: dict[str, str] = {t.name: t.metric for t in AUDIOBENCH_TASKS}
 
     def _task_entry(t: AudioBenchTaskSpec) -> dict:
-        entry: dict = {"task": t.name, "dataset": t.hf_repo}
-        # ``data_dir``-style subsetting: we deliberately do NOT set ``subset``
-        # in the YAML entry.  The reason is that ``load_dataset(name=...)``
-        # used by ``_pre_download_datasets_from_specs`` treats ``subset`` as a
-        # config name, not a ``data_dir`` — and for gigaspeech2/spoken-mqa the
-        # upstream distinction is a data_dir, not a config.  Since the group
-        # name starts with "audio-", ``_collect_dataset_specs`` auto-sets
-        # ``needs_snapshot_download=True`` which downloads the whole repo,
-        # so AudioBench can read the right data_dir at runtime.  This also
-        # means multiple tasks sharing one HF repo dedupe to a single spec.
-        return entry
+        # We deliberately omit ``subset`` — load_dataset treats it as a
+        # config name, but for gigaspeech2 / spoken-mqa the upstream
+        # distinction is a ``data_dir``.  The ``audio-*`` prefix triggers
+        # full-repo snapshot_download, so AudioBench can read the right
+        # data_dir at runtime.
+        return {"task": t.name, "dataset": t.hf_repo}
 
     groups: dict[str, dict] = {}
 
-    # Sub-groups per family.
     tasks_by_family: dict[str, list[AudioBenchTaskSpec]] = {
         "asr": [],
         "st": [],
@@ -141,7 +85,6 @@ def _build_task_groups() -> dict:
             "tasks": [_task_entry(t) for t in entries],
         }
 
-    # Top-level group — union of everything.
     groups[_TOP_LEVEL_GROUP] = {
         "suite": SUITE_NAME,
         "n_shots": [0],
@@ -155,26 +98,11 @@ def _build_task_groups() -> dict:
 TASK_GROUPS: dict = _build_task_groups()
 
 
-# ---------------------------------------------------------------------------
-# Model-flag detection.
-# ---------------------------------------------------------------------------
-
-
 def detect_model_flags(model_path: str) -> str | None:
-    """Delegate to :class:`AudioBenchModelAdapter`.
-
-    Called by :class:`oellm.runner.EvalRunner.resolve_suite` to append the
-    AudioBench model-family key to ``eval_suite`` as
-    ``audiobench:<family>``.
-    """
+    """Return the AudioBench ``--model`` family key for *model_path*."""
     from oellm.contrib.audiobench.adapter import AudioBenchModelAdapter
 
     return AudioBenchModelAdapter(model_path).to_contrib_flags()
-
-
-# ---------------------------------------------------------------------------
-# Runtime — subprocess into AudioBench's src/main_evaluate.py.
-# ---------------------------------------------------------------------------
 
 
 def run(
@@ -186,24 +114,10 @@ def run(
     model_flags: str | None,
     env: dict[str, str],
 ) -> None:
-    """Execute one AudioBench task and write lmms-eval-shaped JSON.
+    """Execute one AudioBench task and write a lmms-eval-shaped result JSON.
 
-    Args:
-        model_path: HF repo ID or local path of the model under evaluation.
-        task: Canonical task name (must start with ``audiobench_``).
-        n_shot: Always 0 for AudioBench — recorded in the output ``configs``
-            block for downstream compatibility.
-        output_path: Destination for the lmms-eval-compatible result JSON.
-        model_flags: AudioBench ``--model`` key (e.g. ``"qwen2_audio"``);
-            produced by :func:`detect_model_flags`.  Falls back to
-            ``"generic"`` if not supplied.
-        env: Environment dict passed to the subprocess.  Must contain
-            ``AUDIOBENCH_DIR`` (validated by dispatch.py before ``run`` is
-            called, but we re-check for safety).
-
-    Raises:
-        RuntimeError: if AudioBench returns non-zero or produces no output.
-        KeyError: if *task* is not in the registry.
+    Raises ``RuntimeError`` if AudioBench exits non-zero or produces no
+    parseable output, and ``KeyError`` if *task* is not registered.
     """
     ab_dir = env.get("AUDIOBENCH_DIR")
     if not ab_dir:
@@ -224,8 +138,6 @@ def run(
     spec = get_task_spec(task)
     model_key = model_flags or "generic"
 
-    # AudioBench writes outputs under a run-specific log directory; we set
-    # it to our output_path's parent so we can recover the raw result.
     run_dir = output_path.parent / f"audiobench_{output_path.stem}"
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -246,8 +158,6 @@ def run(
     if spec.data_dir:
         cmd.extend(["--data_dir", spec.data_dir])
 
-    # Forward LIMIT (set by template.sbatch) as AudioBench's
-    # --number_of_samples when present.  "-1" means no limit in AudioBench.
     limit = env.get("LIMIT", "").strip()
     if limit:
         cmd.extend(["--number_of_samples", str(limit)])
@@ -277,17 +187,7 @@ def run(
 
 
 def _extract_metrics(run_dir: Path, spec: AudioBenchTaskSpec) -> dict[str, float]:
-    """Find AudioBench's per-task score JSON inside *run_dir* and read it.
-
-    AudioBench writes one JSON file per task under its ``--log_dir`` with
-    the score under a key matching ``--metrics``.  We search recursively
-    for any ``*.json`` and pick the first one whose body contains the
-    expected metric key.  This is intentionally lenient because upstream
-    log-layout has changed across releases.
-
-    Raises:
-        RuntimeError: if no matching result file is found.
-    """
+    """Find AudioBench's per-task result JSON under *run_dir* and read it."""
     candidates = sorted(run_dir.rglob("*.json"))
     if not candidates:
         raise RuntimeError(
@@ -304,9 +204,8 @@ def _extract_metrics(run_dir: Path, spec: AudioBenchTaskSpec) -> dict[str, float
             continue
         value = _find_metric(body, target_key)
         if value is not None:
-            # Emit the metric under OUR canonical key (spec.metric) so the
-            # lmms-eval-style ``task/metric,none`` stripping in
-            # collect_results() resolves to what's in task_metrics.yaml.
+            # Emit under our canonical key so collect_results' metric
+            # resolution picks up task_metrics.yaml.
             return {spec.metric: float(value)}
 
     raise RuntimeError(
@@ -316,11 +215,10 @@ def _extract_metrics(run_dir: Path, spec: AudioBenchTaskSpec) -> dict[str, float
 
 
 def _find_metric(body: object, key: str) -> float | None:
-    """Recursive search for a numeric value keyed by *key* anywhere in *body*.
+    """Recursive search for a numeric value keyed by *key*.
 
-    AudioBench's per-task JSON has nested structure that has drifted across
-    releases (sometimes ``{"wer": 0.04}``, sometimes
-    ``{"metrics": {"wer": {"score": 0.04}}}``).  We tolerate either form.
+    Tolerates both ``{"wer": 0.04}`` and ``{"metrics": {"wer": {"score":
+    0.04}}}`` layouts — upstream log shape has drifted across releases.
     """
     if isinstance(body, dict):
         if key in body:
@@ -351,12 +249,6 @@ def _write_lmms_shaped_json(
     n_shot: int,
     metrics: dict[str, float],
 ) -> None:
-    """Write a lmms-eval-compatible JSON at *output_path*.
-
-    :func:`oellm.main.collect_results` reads this shape directly; the
-    ``_resolve_metric`` fallback chain picks up our ``task_metrics``
-    mapping to extract the primary value.
-    """
     payload = {
         "model_name_or_path": model_path,
         "results": {task_name: metrics},
@@ -367,21 +259,9 @@ def _write_lmms_shaped_json(
         json.dump(payload, f, indent=2)
 
 
-# ---------------------------------------------------------------------------
-# parse_results — invoked by collect_results to recognise our output files.
-# ---------------------------------------------------------------------------
-
-
 def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
-    """Recognise a JSON dict produced by :func:`run`.
-
-    Detection heuristic: the ``results`` dict contains at least one key
-    that starts with ``"audiobench_"``.  Returns the tuple expected by
-    :func:`oellm.main.collect_results`:
-
-        ``(model_id, task_name, n_shot, {metric: value})``
-
-    Returns ``None`` for JSON blobs that don't belong to this suite.
+    """Recognise a JSON dict produced by :func:`run` and return
+    ``(model_id, task_name, n_shot, metrics)``; ``None`` if it's not ours.
     """
     results = data.get("results", {})
     if not isinstance(results, dict):
@@ -393,8 +273,6 @@ def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
             continue
         model_id = data.get("model_name_or_path") or data.get("model_name") or "unknown"
         n_shot = data.get("configs", {}).get(task_name, {}).get("num_fewshot", 0)
-        # Coerce everything that can be float; leave non-numeric alone so
-        # _resolve_metric can still see them.
         coerced: dict[str, float] = {}
         for k, v in task_results.items():
             if isinstance(v, int | float):
@@ -403,7 +281,6 @@ def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
     return None
 
 
-# Re-exports used by the test suite.
 __all__ = [
     "CLUSTER_ENV_VARS",
     "SUITE_NAME",
@@ -413,5 +290,4 @@ __all__ = [
     "run",
 ]
 
-# Silence unused-import lint (the symbol is exported for consumer reuse).
-_ = os
+_ = os  # exported via env dict passed to subprocess.run

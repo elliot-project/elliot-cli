@@ -8,7 +8,7 @@ can produce numbers directly comparable with the AudioBench paper and
 leaderboard, without the scoring-normalisation drift that would come from
 running the same datasets through lmms-eval.
 
-## Scope — Phase 1 (this release)
+## Scope
 
 **27 judge-free tasks** across ASR (WER), speech translation (BLEU), spoken
 reasoning (accuracy / string_match), and AudioCaps (METEOR). Of these:
@@ -28,10 +28,9 @@ Every AudioBench task is namespaced with an `audiobench_` prefix so the CSV
 (e.g. `audiobench_librispeech_test_clean` is AudioBench-scored;
 `librispeech_test_clean` remains the lmms-eval version).
 
-**Phase 2** (not in this release) will add ~19 judge-dependent tasks
-(SLUE-SQA5, Spoken-SQuAD, AudioCaps-QA, IEMOCAP / MELD / VoxCeleb probes,
-AudioLLM-InstructionFollowing) once a vLLM judge server is provisioned on
-Leonardo.
+Judge-dependent tasks (SLUE-SQA5, Spoken-SQuAD, AudioCaps-QA, IEMOCAP /
+MELD / VoxCeleb probes, AudioLLM-InstructionFollowing) are not included
+and depend on a vLLM judge service being provisioned on Leonardo.
 
 ## Prerequisites
 
@@ -99,8 +98,7 @@ AudioBench itself.
 No manual steps required. `schedule-evals` auto-downloads every
 `AudioLLMs/*` HF repo referenced by the requested task group on the
 login node via `huggingface_hub.snapshot_download(max_workers=2)` so the
-compute nodes do not need internet access. The rate-limit-friendly
-`max_workers=2` is shared infrastructure — see `oellm/utils.py`.
+compute nodes do not need internet access.
 
 ## Running
 
@@ -108,7 +106,7 @@ compute nodes do not need internet access. The rate-limit-friendly
 
 | Task group                       | Leaves | What it covers                                                  |
 |----------------------------------|--------|-----------------------------------------------------------------|
-| `audio-audiobench`               | 27     | Full Phase-1 suite (everything below).                          |
+| `audio-audiobench`               | 27     | Full suite (everything below).                                  |
 | `audio-audiobench-asr`           | 15     | WER tasks — 9 new + 6 dual-registered with lmms-eval.           |
 | `audio-audiobench-st`            | 6      | BLEU speech-translation — 5 new + 1 dual (en→zh).               |
 | `audio-audiobench-reasoning`     | 6      | Spoken-MQA × 4, MMAU mini, AudioCaps METEOR.                    |
@@ -116,7 +114,7 @@ compute nodes do not need internet access. The rate-limit-friendly
 ### Example
 
 ```bash
-# Full AudioBench Phase-1 suite on a Qwen2-Audio model:
+# Full AudioBench suite on a Qwen2-Audio model:
 oellm schedule-evals \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench \
@@ -188,12 +186,11 @@ column: `audiobench:qwen2_audio`. The dispatcher in
 5. `collect-results` reads it via `parse_results()` and the standard
    `_resolve_metric` fallback chain — no special-casing in core code.
 
-## Open questions / Phase-2 prerequisites
+## Open items
 
-- **Judge service hosting:** Phase 2 needs a Llama-3-70B-AWQ judge on an
-  OpenAI-compatible endpoint. Plan is a separate long-running vLLM sbatch
-  whose URL/model lands in `clusters.yaml` as `AUDIOBENCH_JUDGE_URL` and
-  `AUDIOBENCH_JUDGE_MODEL`.
+- **Judge service hosting:** judge-dependent tasks need a Llama-3-70B-AWQ
+  judge on an OpenAI-compatible endpoint. Plan is a separate long-running
+  vLLM sbatch whose URL/model lands in `clusters.yaml` as
+  `AUDIOBENCH_JUDGE_URL` and `AUDIOBENCH_JUDGE_MODEL`.
 - **MERaLiON / IMDA NSC tasks:** ~21 gated AudioBench tasks require
-  corpora not on public HF. These will ship in a later phase — or not,
-  depending on whether WP4 needs them.
+  corpora not on public HF. Deferred until WP4 needs them.
