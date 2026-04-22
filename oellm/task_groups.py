@@ -324,20 +324,20 @@ def _lookup_dataset_specs_for_tasks(task_names: Iterable[str]) -> list[DatasetSp
 
 
 def _build_task_suite_map() -> dict[str, str]:
-    """Build a mapping from task names to their suite from all task groups."""
-    data = (
-        yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text()) or {}
-    )
+    """Return ``{task_name: eval_suite}`` across core YAML and contrib plugins.
 
+    Uses :func:`_parse_task_groups` + :func:`_iter_all_tasks` so contrib
+    registries (e.g. ``regiondial_bench``) are included, not just the core
+    ``task-groups.yaml``.  Task-level ``suite`` overrides group-level.  First
+    occurrence wins when a task name appears in multiple groups.
+
+    Consumers should still ``.get(task, "lm_eval")`` — tasks not registered
+    in any group simply aren't in the map.
+    """
+    parsed = _parse_task_groups(get_all_task_group_names())
     task_suite_map: dict[str, str] = {}
-    for _, group_data in data.get("task_groups", {}).items():
-        group_suite = group_data.get("suite", "lm-eval-harness")
-        for task_data in group_data.get("tasks", []):
-            task_name = task_data.get("task")
-            task_suite = task_data.get("suite", group_suite)
-            if task_name and task_name not in task_suite_map:
-                task_suite_map[task_name] = task_suite
-
+    for t, suite, _group in _iter_all_tasks(parsed):
+        task_suite_map.setdefault(t.name, suite)
     return task_suite_map
 
 
