@@ -48,6 +48,7 @@ METRIC_FALLBACK_KEYS: list[str] = [
     "acc,none",
     "acc",
     "accuracy",
+    "acc_norm",
     "f1",
     "exact_match",
 ]

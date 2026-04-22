@@ -71,6 +71,21 @@ def _resolve_metric(
     return None, None
 
 
+def _split_task_and_nshot(name: str) -> tuple[str, int | None]:
+    """Split ``'task|N'`` task names used by some harnesses.
+
+    Returns ``(task, N)`` when the suffix is numeric, ``(task, None)``
+    otherwise.  Non-string inputs pass through unchanged.
+    """
+    if not isinstance(name, str):
+        return name, None
+    if "|" in name:
+        base, after = name.rsplit("|", 1)
+        if after.isdigit():
+            return base, int(after)
+    return name, None
+
+
 def _infer_global_n_shot(n_shot_data: dict) -> int | None:
     """Infer a global n_shot if exactly one unique value exists."""
     try:
@@ -202,9 +217,21 @@ def collect_results(
         with open(json_file) as f:
             data = json.load(f)
 
-        # lmms-eval sets model_name to the adapter type (e.g. "llava_hf"),
-        # not the checkpoint path; the actual path is in model_name_or_path.
-        model_name = data.get("model_name_or_path") or data.get("model_name", "unknown")
+        # Model name lives in different keys depending on the harness:
+        # - lmms-eval: model_name_or_path is the checkpoint, model_name is the
+        #   adapter class (e.g. "llava_hf")
+        # - lighteval: config_general.{model_name,model,model_path}
+        # - legacy: summary_general.model or top-level model
+        model_name = (
+            data.get("model_name_or_path")
+            or data.get("model_name")
+            or data.get("config_general", {}).get("model_name")
+            or data.get("config_general", {}).get("model")
+            or data.get("config_general", {}).get("model_path")
+            or data.get("summary_general", {}).get("model")
+            or data.get("model")
+            or "unknown"
+        )
 
         results = data.get("results", {})
         n_shot_data = data.get("n-shot", {})
@@ -231,14 +258,20 @@ def collect_results(
         # Prefer only the first aggregate metric from groups (simplified)
         if groups_map:
             group_name, group_results = next(iter(groups_map.items()))
-            n_shot = n_shot_data.get(group_name, "unknown")
+            orig_group_name = group_name
+            n_shot = n_shot_data.get(orig_group_name, "unknown")
             if n_shot == "unknown":
-                for subtask_name in group_subtasks_map.get(group_name, []):
+                for subtask_name in group_subtasks_map.get(orig_group_name, []):
                     if subtask_name in n_shot_data:
                         n_shot = n_shot_data[subtask_name]
                         break
             if n_shot == "unknown" and global_n_shot is not None:
                 n_shot = global_n_shot
+            # Strip ``'|N'`` n-shot suffix from the group name, falling back
+            # to the parsed N when n_shot is still unknown.
+            group_name, parsed_n = _split_task_and_nshot(orig_group_name)
+            if n_shot == "unknown" and parsed_n is not None:
+                n_shot = parsed_n
             performance, metric_name = _resolve_metric(
                 group_name, group_results, task_metrics
             )
@@ -273,30 +306,35 @@ def collect_results(
             if task_name.startswith("global_mmlu_") and task_name.count("_") >= 4:
                 continue
 
+            # Strip ``'|N'`` n-shot suffix from the task name; use parsed N
+            # as a last-resort fallback when n_shot isn't otherwise resolvable.
+            task_name_clean, parsed_n = _split_task_and_nshot(task_name)
             n_shot = _resolve_n_shot(
-                task_name,
+                task_name_clean,
                 n_shot_data,
                 group_subtasks_map,
                 group_aggregate_names,
                 global_n_shot,
             )
+            if n_shot == "unknown" and parsed_n is not None:
+                n_shot = parsed_n
 
             # Skip lmms-eval parent task placeholders (no numeric metrics, just alias)
             if set(task_results.keys()) <= {"alias", " ", ""}:
                 continue
 
             performance, metric_name = _resolve_metric(
-                task_name, task_results, task_metrics
+                task_name_clean, task_results, task_metrics
             )
 
             if performance is not None:
                 if check:
-                    completed_jobs.add((model_name, task_name, n_shot))
+                    completed_jobs.add((model_name, task_name_clean, n_shot))
 
                 rows.append(
                     {
                         "model_name": model_name,
-                        "task": task_name,
+                        "task": task_name_clean,
                         "n_shot": n_shot,
                         "performance": performance,
                         "metric_name": metric_name if metric_name is not None else "",
