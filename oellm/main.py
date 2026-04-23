@@ -86,8 +86,8 @@ def schedule_evals(
             submitting to SLURM. Requires --venv_path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
-            (PARTITION, ACCOUNT, GPUS_PER_NODE). "TIME" overrides the time limit.
-            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
+            (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
+            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
     """
     from oellm.scheduler import schedule_evals as _sched
 

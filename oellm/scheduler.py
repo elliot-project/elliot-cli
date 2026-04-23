@@ -14,6 +14,7 @@ import pandas as pd
 from oellm.constants import EvaluationJob
 from oellm.runner import EvalRunner
 from oellm.task_groups import (
+    _build_task_suite_map,
     _collect_dataset_specs,
     _collect_hf_dataset_files,
     _collect_hf_model_repos,
@@ -48,6 +49,53 @@ def _resolve_hf_hub_offline(local: bool) -> int:
         except ValueError:
             logging.warning("Invalid HF_HUB_OFFLINE=%r; using default", raw)
     return 0 if local else 1
+
+
+def _resolve_slurm_mem() -> str:
+    """Return the host-memory request for the generated SLURM job.
+
+    Reads ``SLURM_MEM`` from the environment; falls back to ``96G``.  Can also
+    be overridden per-invocation via ``--slurm-template-var``.
+    """
+    explicit_mem = os.environ.get("SLURM_MEM")
+    if explicit_mem is not None and str(explicit_mem).strip() != "":
+        return str(explicit_mem).strip()
+
+    logging.warning("SLURM_MEM not set; falling back to default memory request '96G'.")
+    return "96G"
+
+
+def _resolve_additional_model_args(local: bool = False) -> str:
+    """Return model args for lighteval, defaulting to an explicit batch size.
+
+    - if ``local`` is True: ``batch_size=1``
+    - otherwise: ``batch_size=32``
+
+    Override the entire string via ``MODEL_ARGS`` or just the batch size via
+    ``BATCH_SIZE``.  Applied to the lighteval suite only.
+    """
+    explicit_model_args = os.environ.get("MODEL_ARGS")
+    if explicit_model_args is not None and str(explicit_model_args).strip() != "":
+        return str(explicit_model_args).strip()
+
+    batch_size = os.environ.get("BATCH_SIZE")
+    if batch_size is not None and str(batch_size).strip() != "":
+        batch_size_value = str(batch_size).strip()
+        try:
+            if int(batch_size_value) < 1:
+                raise ValueError
+        except ValueError:
+            fallback = "1" if local else "32"
+            logging.warning(
+                "Invalid BATCH_SIZE=%r; falling back to batch_size=%s",
+                batch_size,
+                fallback,
+            )
+            batch_size_value = fallback
+    else:
+        batch_size_value = "1" if local else "32"
+
+    return f"batch_size={batch_size_value}"
 
 
 @capture_third_party_output_from_kwarg("verbose")
@@ -106,8 +154,8 @@ def schedule_evals(
         local: If True, run evaluations directly on the local machine using bash instead of
             submitting to SLURM. Requires --venv_path.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
-            (PARTITION, ACCOUNT, GPUS_PER_NODE). "TIME" overrides the time limit.
-            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2}'
+            (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
+            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
     """
     _setup_logging(verbose)
 
@@ -186,13 +234,18 @@ def schedule_evals(
 
     elif models:
         if group_names is None:
+            # Look up each bare task name in the registered groups so
+            # ``--tasks belebele_eng_Latn_cf`` (lighteval) or ``--tasks
+            # regiondial_refcocog_all`` (contrib) get routed correctly.
+            # Tasks not in any group default to lm_eval.
+            task_suite_map = _build_task_suite_map()
             eval_jobs.extend(
                 [
                     EvaluationJob(
                         model_path=model,
                         task_path=task,
                         n_shot=shot,
-                        eval_suite="lm_eval",
+                        eval_suite=task_suite_map.get(task, "lm_eval"),
                     )
                     for model in models
                     for task in tasks
@@ -354,6 +407,9 @@ def schedule_evals(
                 os.environ[key] = str(value)
                 logging.info(f"Using slurm_template_var override: {key}={value}")
 
+    slurm_mem = _resolve_slurm_mem()
+    additional_model_args = _resolve_additional_model_args(local)
+
     logging.info("Evaluation planning:")
     logging.info(f"   Total evaluations: {total_evals}")
     logging.info(
@@ -361,6 +417,7 @@ def schedule_evals(
     )
     logging.info(f"   Evaluations per job: {evals_per_job}")
     logging.info(f"   Time limit: {time_limit}")
+    logging.info(f"   Requested host memory: {slurm_mem}")
 
     sbatch_script = sbatch_template.format(
         csv_path=csv_path,
@@ -371,14 +428,13 @@ def schedule_evals(
         log_dir=evals_dir / "slurm_logs",
         evals_dir=str(evals_dir / "results"),
         time_limit=time_limit,  # Dynamic time limit
+        slurm_mem=slurm_mem,
         limit=limit if limit else "",  # Sample limit for quick testing
         venv_path=venv_path or "",
         lm_eval_include_path=lm_eval_include_path
         or str(files("oellm.resources") / "custom_lm_eval_tasks"),
         hf_hub_offline=_resolve_hf_hub_offline(local),
-        lighteval_model_args="trust_remote_code=True,batch_size=1"
-        if local
-        else "trust_remote_code=True",
+        additional_model_args=additional_model_args,
         evalchemy_dir=os.environ.get("EVALCHEMY_DIR", "/opt/evalchemy"),
     )
 
