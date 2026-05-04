@@ -40,16 +40,11 @@ on-cluster clone. A dedicated venv is required: the `[audiobench]` extra
 pins `transformers<5` and `jiwer<3`, which conflict with the general eval
 venv (see [`docs/VENV.md`](../../../docs/VENV.md) for the framework venvs).
 
-### 1. Clone AudioBench
+### 1. Clone AudioBench and configure `clusters.yaml`
 
 ```bash
 git clone https://github.com/AudioLLMs/AudioBench /path/to/AudioBench
 ```
-
-AudioBench's `main` branch is tracked without a pinned SHA; updates are a
-`git pull` under `$AUDIOBENCH_DIR`.
-
-### 2. Configure clusters.yaml
 
 Add `AUDIOBENCH_DIR` to your cluster block in
 `oellm/resources/clusters.yaml`:
@@ -57,13 +52,10 @@ Add `AUDIOBENCH_DIR` to your cluster block in
 ```yaml
 leonardo:
   ...
-  AUDIOBENCH_DIR: "/leonardo/home/userexternal/<user>/AudioBench"
+  AUDIOBENCH_DIR: "/path/to/AudioBench"
 ```
 
-`oellm.contrib.dispatch`'s `CLUSTER_ENV_VARS` check raises a clear error
-at dispatch time if the variable is missing.
-
-### 3. Create a venv and install the `[audiobench]` extra
+### 2. Create the venv
 
 ```bash
 uv venv --python 3.12 audiobench-venv
@@ -71,49 +63,36 @@ source audiobench-venv/bin/activate
 uv pip install -e ".[audiobench]"
 ```
 
-The extra pins `transformers>=4.45,<5`, `jiwer<3`, `sacrebleu`,
-`pythainlp`, `evaluate`, `soundfile`, `librosa`.
+The `[audiobench]` extra pins `transformers>=4.45,<5`, `jiwer<3`,
+`sacrebleu`, `pythainlp`, `evaluate`, `soundfile`, `librosa`.
 
-### 4. Install AudioBench's runtime dependencies
-
-Filter `vllm` — it is only used by judge-dependent tasks (deferred):
+### 3. Install AudioBench's runtime dependencies
 
 ```bash
+# AudioBench's own requirements (filter vllm; only used by deferred judge tasks)
 grep -v -i '^vllm' /path/to/AudioBench/requirements.txt > /tmp/ab-reqs.txt
 uv pip install -r /tmp/ab-reqs.txt
-```
 
-### 5. Re-pin PyTorch for the cluster's CUDA driver
-
-PyPI's default torch wheels target a CUDA runtime newer than most HPC
-drivers (Leonardo, JURECA report CUDA 12.2) and crash with
-`NVIDIA driver too old`. Use the `cu121` index:
-
-```bash
+# PyTorch for cluster's CUDA driver — PyPI defaults target a newer runtime
+# than most HPC drivers (Leonardo / JURECA report CUDA 12.2) and crash with
+# `NVIDIA driver too old`.  Use the cu121 index.
 uv pip install torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
-```
 
-### 6. Reinstall rapidfuzz
-
-The pure-Python fallback raises `NotImplementedError` on
-`Levenshtein.editops`, which jiwer's WER scoring calls. Force a fresh
-install of the C extension:
-
-```bash
+# rapidfuzz C extension — without this, jiwer's WER scoring hits the
+# pure-Python fallback and raises NotImplementedError on Levenshtein.editops.
 uv pip install --reinstall rapidfuzz
 ```
 
-### 7. Verify
-
-```bash
-python -c "
-from transformers import Qwen2AudioForConditionalGeneration
-from rapidfuzz.distance import Levenshtein
-Levenshtein.editops('a', 'b')   # must not raise NotImplementedError
-print('audiobench venv OK')
-"
-```
+> Verify the venv works:
+> ```bash
+> python -c "
+> from transformers import Qwen2AudioForConditionalGeneration
+> from rapidfuzz.distance import Levenshtein
+> Levenshtein.editops('a', 'b')   # must not raise
+> print('audiobench venv OK')
+> "
+> ```
 
 ### Dataset pre-download
 
@@ -198,29 +177,3 @@ To override detection, pass the literal AudioBench key as a suffix:
 `audiobench:Qwen2-Audio-7B-Instruct`. Case is preserved end-to-end
 (AudioBench's match is case-sensitive).
 
-## How results flow end-to-end
-
-1. `schedule-eval` expands `audio-audiobench*` groups → 27 rows in
-   `jobs.csv` with `eval_suite=audiobench` (plus an adapter suffix from
-   `detect_model_flags`).
-2. `_collect_dataset_specs` auto-derives `needs_snapshot_download=True`
-   from the group-name prefix (`audio-*`) and snapshots every referenced
-   `AudioLLMs/*` repo to the shared HF cache.
-3. `template.sbatch`'s `*)` catch-all invokes
-   `python -m oellm.contrib.dispatch --suite audiobench:<adapter> …`.
-4. `oellm.contrib.audiobench.suite.run()` subprocesses
-   `python src/main_evaluate.py …` inside `$AUDIOBENCH_DIR`, captures
-   the result JSON AudioBench writes under its `--log_dir`, extracts the
-   metric value, and writes a lmms-eval-compatible JSON at
-   `$output_path`.
-5. `collect-results` reads it via `parse_results()` and the standard
-   `_resolve_metric` fallback chain — no special-casing in core code.
-
-## Open items
-
-- **Judge service hosting:** judge-dependent tasks need a Llama-3-70B-AWQ
-  judge on an OpenAI-compatible endpoint. Plan is a separate long-running
-  vLLM sbatch whose URL/model lands in `clusters.yaml` as
-  `AUDIOBENCH_JUDGE_URL` and `AUDIOBENCH_JUDGE_MODEL`.
-- **MERaLiON / IMDA NSC tasks:** ~21 gated AudioBench tasks require
-  corpora not on public HF. Deferred until WP4 needs them.
