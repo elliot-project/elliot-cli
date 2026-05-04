@@ -34,38 +34,22 @@ and depend on a vLLM judge service being provisioned on Leonardo.
 
 ## Prerequisites
 
-### 1. Clone AudioBench on the cluster
+AudioBench is not pip-installable (no upstream build backend, bare imports
+in `src/main_evaluate.py`); the plugin invokes it as a subprocess from an
+on-cluster clone. A dedicated venv is required: the `[audiobench]` extra
+pins `transformers<5` and `jiwer<3`, which conflict with the general eval
+venv (see [`docs/VENV.md`](../../../docs/VENV.md) for the framework venvs).
 
-AudioBench is **not** pip-installable — upstream is a script harness with
-bare imports (`from dataset import ...` inside `src/main_evaluate.py`) and
-no `pyproject.toml` / `setup.py`. The plugin invokes it as a subprocess
-from an on-cluster clone.
+### 1. Clone AudioBench
 
 ```bash
 git clone https://github.com/AudioLLMs/AudioBench /path/to/AudioBench
 ```
 
-We track the **latest `main`** — no pinned SHA — so updates are a simple
-`git pull` under `$AUDIOBENCH_DIR`. If a breaking upstream change lands,
-file an issue and we'll introduce a pin.
+AudioBench's `main` branch is tracked without a pinned SHA; updates are a
+`git pull` under `$AUDIOBENCH_DIR`.
 
-### 2. Install AudioBench's own runtime dependencies
-
-Still inside the clone:
-
-```bash
-cd /path/to/AudioBench
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-AudioBench's deps (unpinned upstream): `transformers`, `vllm`, `datasets`,
-`torchaudio`, `peft`, `autoawq`, `huggingface-hub`, `librosa`, `soundfile`,
-`fire`, `evaluate`, `jiwer`, `more_itertools`. Use a **separate venv**
-from the elliot-cli venv — AudioBench typically pulls in a bleeding-edge
-`transformers` that will conflict with lmms-eval's pin.
-
-### 3. Configure `clusters.yaml`
+### 2. Configure clusters.yaml
 
 Add `AUDIOBENCH_DIR` to your cluster block in
 `oellm/resources/clusters.yaml`:
@@ -76,29 +60,67 @@ leonardo:
   AUDIOBENCH_DIR: "/leonardo/home/userexternal/<user>/AudioBench"
 ```
 
-The plugin fails fast at dispatch time (via
-`oellm.contrib.dispatch`'s `CLUSTER_ENV_VARS` check) if the variable is
-missing, so you'll get a clean error message instead of a crash deep
-inside the subprocess.
+`oellm.contrib.dispatch`'s `CLUSTER_ENV_VARS` check raises a clear error
+at dispatch time if the variable is missing.
 
-### 4. Install the elliot-cli `audiobench` extra
-
-On the submission / login node where you run `oellm schedule-evals`:
+### 3. Create a venv and install the `[audiobench]` extra
 
 ```bash
+uv venv --python 3.12 audiobench-venv
+source audiobench-venv/bin/activate
 uv pip install -e ".[audiobench]"
 ```
 
-This installs our Python-side scorer deps (`jiwer`, `sacrebleu`,
-`pythainlp`, `evaluate`) used for result post-processing — **not**
-AudioBench itself.
+The extra pins `transformers>=4.45,<5`, `jiwer<3`, `sacrebleu`,
+`pythainlp`, `evaluate`, `soundfile`, `librosa`.
 
-### 5. Dataset pre-download
+### 4. Install AudioBench's runtime dependencies
 
-No manual steps required. `schedule-evals` auto-downloads every
-`AudioLLMs/*` HF repo referenced by the requested task group on the
-login node via `huggingface_hub.snapshot_download(max_workers=2)` so the
-compute nodes do not need internet access.
+Filter `vllm` — it is only used by judge-dependent tasks (deferred):
+
+```bash
+grep -v -i '^vllm' /path/to/AudioBench/requirements.txt > /tmp/ab-reqs.txt
+uv pip install -r /tmp/ab-reqs.txt
+```
+
+### 5. Re-pin PyTorch for the cluster's CUDA driver
+
+PyPI's default torch wheels target a CUDA runtime newer than most HPC
+drivers (Leonardo, JURECA report CUDA 12.2) and crash with
+`NVIDIA driver too old`. Use the `cu121` index:
+
+```bash
+uv pip install torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu121
+```
+
+### 6. Reinstall rapidfuzz
+
+The pure-Python fallback raises `NotImplementedError` on
+`Levenshtein.editops`, which jiwer's WER scoring calls. Force a fresh
+install of the C extension:
+
+```bash
+uv pip install --reinstall rapidfuzz
+```
+
+### 7. Verify
+
+```bash
+python -c "
+from transformers import Qwen2AudioForConditionalGeneration
+from rapidfuzz.distance import Levenshtein
+Levenshtein.editops('a', 'b')   # must not raise NotImplementedError
+print('audiobench venv OK')
+"
+```
+
+### Dataset pre-download
+
+No manual steps required. `schedule-eval` pre-downloads every
+`AudioLLMs/*` HF repo referenced by the requested task group on the login
+node via `huggingface_hub.snapshot_download(max_workers=2)`, so compute
+nodes do not need internet access.
 
 ## Running
 
@@ -115,23 +137,23 @@ compute nodes do not need internet access.
 
 ```bash
 # Full AudioBench suite on a Qwen2-Audio model:
-oellm schedule-evals \
+oellm schedule-eval \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench \
-    --venv-path ~/elliot-venv
+    --venv-path audiobench-venv
 
 # ASR only:
-oellm schedule-evals \
+oellm schedule-eval \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench-asr \
-    --venv-path ~/elliot-venv
+    --venv-path audiobench-venv
 
 # Smoke test with --limit:
-oellm schedule-evals \
+oellm schedule-eval \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench-asr \
     --limit 100 \
-    --venv-path ~/elliot-venv
+    --venv-path audiobench-venv
 ```
 
 `--limit N` is forwarded to AudioBench's `--number_of_samples N`. When
@@ -154,23 +176,31 @@ vs `lmms_eval`) — no silent averaging.
 
 ## Supported model adapters
 
-| Model path pattern                  | AudioBench `--model` key |
-|-------------------------------------|--------------------------|
-| `*qwen2-audio*` / `*qwen-audio*`    | `qwen2_audio`            |
-| `*salmonn*`                         | `salmonn`                |
-| `*ltu-*` / `*/ltu*` / `*ltu_as*`    | `ltu`                    |
-| `*whisper-*` / `*/whisper*`         | `whisper`                |
-| `*audio-flamingo*` / `*audioflamingo*` | `audioflamingo`        |
-| `*meralion*`                        | `meralion`               |
-| (anything else)                     | `generic` (default HF pipeline) |
+AudioBench dispatches on a fixed list of literal `model_name` strings
+(see `$AUDIOBENCH_DIR/src/model.py`); each loader under `model_src/`
+fetches its own HF repo. Arbitrary HF checkpoints are not supported —
+only the variants below:
 
-To override detection explicitly, pass the key as a suffix in the suite
-column: `audiobench:qwen2_audio`. The dispatcher in
-`oellm/contrib/dispatch.py` already splits on `:`.
+| Model path substring (lowered)                 | AudioBench `model_name` (literal)         |
+|------------------------------------------------|-------------------------------------------|
+| `qwen2-audio-7b-instruct` / `qwen2_audio_7b_instruct` | `Qwen2-Audio-7B-Instruct`          |
+| `qwen-audio-chat` / `qwen_audio_chat`          | `Qwen-Audio-Chat`                         |
+| `salmonn`                                      | `SALMONN_7B`                              |
+| `meralion-audiollm` / `meralion_audiollm`      | `MERaLiON-AudioLLM-Whisper-SEA-LION`      |
+| `whisper-large-v3` / `whisper_large_v3`        | `whisper_large_v3`                        |
+| `whisper-large-v2` / `whisper_large_v2`        | `whisper_large_v2`                        |
+| `phi-4-multimodal` / `phi_4_multimodal`        | `phi_4_multimodal_instruct`               |
+| `seallms-audio-7b` / `seallms_audio_7b`        | `seallms_audio_7b`                        |
+| `wavllm`                                       | `WavLLM_fairseq`                          |
+| (anything else)                                | error — no generic loader upstream        |
+
+To override detection, pass the literal AudioBench key as a suffix:
+`audiobench:Qwen2-Audio-7B-Instruct`. Case is preserved end-to-end
+(AudioBench's match is case-sensitive).
 
 ## How results flow end-to-end
 
-1. `schedule-evals` expands `audio-audiobench*` groups → 27 rows in
+1. `schedule-eval` expands `audio-audiobench*` groups → 27 rows in
    `jobs.csv` with `eval_suite=audiobench` (plus an adapter suffix from
    `detect_model_flags`).
 2. `_collect_dataset_specs` auto-derives `needs_snapshot_download=True`

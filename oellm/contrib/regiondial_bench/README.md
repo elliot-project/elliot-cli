@@ -16,17 +16,17 @@ plus per-round breakdown (R1–R7) for gIoU and bbox_AP.
 
 ## Prerequisites
 
+The benchmark calls `test/evaluation/evaluation_multi_segmentation.py` and
+the `test/vision_reasoner/` model wrapper from the RegionReasoner
+repository as a subprocess, so the repo must be present on the cluster
+filesystem. A dedicated venv is required for `flash-attn` (specific
+pre-built wheel) and HEIF image support (`pi-heif`); see
+[`docs/VENV.md`](../../../docs/VENV.md) for the framework venvs.
+
 ### 1. Clone RegionReasoner
 
-The benchmark relies on the inference script
-`test/evaluation/evaluation_multi_segmentation.py` and the model wrapper
-`test/vision_reasoner/` from the RegionReasoner repository. These are **not
-packaged** — the platform calls them directly as a subprocess, so the repo
-must be present on the cluster filesystem.
-
 ```bash
-git clone https://github.com/lmsdss/RegionReasoner \
-    /path/to/RegionReasoner
+git clone https://github.com/lmsdss/RegionReasoner /path/to/RegionReasoner
 ```
 
 ### 2. Configure clusters.yaml
@@ -38,40 +38,41 @@ my-cluster:
   ...
   HF_HOME: "/path/to/large/filesystem/huggingface"   # must have ~30 GB free
   REGION_REASONER_DIR: "/path/to/RegionReasoner"
-  GPUS_PER_NODE: 4                                   # controls both SLURM --gres and shard count
+  GPUS_PER_NODE: 4                                   # controls SLURM --gres and shard count
 ```
 
-> **`HF_HOME`** must point to a filesystem with at least **30 GB** of free
-> space. On CINECA Leonardo, use the work filesystem
-> (`/leonardo_work/<project>/huggingface`), not the home filesystem (50 GB
-> quota, fills up quickly).
+> `HF_HOME` must point to a filesystem with at least 30 GB free. On
+> CINECA Leonardo, use the work filesystem
+> (`/leonardo_work/<project>/huggingface`), not the home filesystem
+> (50 GB quota).
 
-### 3. Install dependencies in your venv
+### 3. Create a venv and install dependencies
 
 ```bash
-# PyTorch — match the CUDA version available on your cluster
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+uv venv --python 3.12 regiondial-venv
+source regiondial-venv/bin/activate
+uv pip install -e .
 
-# Matching torchvision
-pip install torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# PyTorch — match the cluster's CUDA driver (cu121 for driver supporting CUDA 12.2)
+uv pip install torch==2.5.1 torchvision==0.20.1 \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# flash-attn pre-built wheel (no compilation needed)
+# flash-attn pre-built wheel (Python 3.12 / CUDA 12.x / torch 2.5.1)
 wget https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
-pip install flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
+uv pip install flash_attn-2.7.4.post1+cu12torch2.5cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 
 # HEIF image support
-pip install pi-heif
+uv pip install pi-heif
 ```
 
-> **flash-attn note:** The pre-built wheel above is for Python 3.12, CUDA 12.x,
-> torch 2.5.1. If your configuration differs, find the matching wheel at
-> https://github.com/Dao-AILab/flash-attention/releases
+> If your Python / CUDA / torch combination differs, find the matching
+> flash-attn wheel at
+> <https://github.com/Dao-AILab/flash-attention/releases>.
 
-### 4. What gets auto-downloaded
+### What gets auto-downloaded
 
-When you run `oellm schedule-eval`, the platform automatically pre-downloads
-the following on the login node (before SLURM submission, so compute nodes do
-not need internet access):
+`oellm schedule-eval` pre-downloads the following on the login node so
+compute nodes do not need internet access:
 
 | Asset | HF repo | Size |
 |---|---|---|
