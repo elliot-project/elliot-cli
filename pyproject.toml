@@ -33,6 +33,19 @@ audio = [
     "librosa",
     "jiwer",
 ]
+# AudioBench contrib plugin.  AudioBench itself is not pip-installable
+# (no build backend upstream, bare imports), so AUDIOBENCH_DIR in
+# clusters.yaml points at a local git clone and suite.py subprocesses into
+# ``python src/main_evaluate.py``.  These are our post-processing deps.
+audiobench = [
+    "jiwer<3",                     # AudioBench uses jiwer.compute_measures, removed in 3.0
+    "transformers>=4.45,<5",       # AudioBench's Qwen2-Audio loader uses the v4 processor API (`audios=` kwarg); v5 silently drops audio inputs and produces garbage predictions
+    "sacrebleu",                   # BLEU verification (covost2)
+    "pythainlp",                   # Thai tokenisation for gigaspeech2_thai
+    "evaluate",                    # MMAU / METEOR post-processing
+    "soundfile",
+    "librosa",
+]
 
 [project.scripts]
 oellm = "oellm.main:main"

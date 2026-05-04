@@ -4,7 +4,29 @@
 
 Instead of using pre-built containers, you can run evaluations with your own Python virtual environment by passing `--venv-path`.
 
-## Setup
+## Choosing your venv
+
+Most evaluations share **one general venv**. A handful of framework-level
+suites have hard dependency conflicts and need their own venv:
+
+| Task group(s) | Engine | Venv | Setup |
+|---|---|---|---|
+| `open-sci-*`, `belebele_*_cf`, all text/multilingual tasks | `lm-eval-harness`, `lighteval` | **general** | [Setup](#setup-general-venv) |
+| `image-*`, `video-*`, `audio-*` (modality-prefixed) | `lmms-eval` | **general** | [Setup](#setup-general-venv) |
+| `dclm-core-22` | `lm-eval-harness` (pinned 0.4.9.2) | **dclm** | [DCLM-core-22](#dclm-core-22) |
+| `reasoning` (GPQA/MATH500/AIME/MBPP/etc.) | `evalchemy` + forked lm-eval | **evalchemy** | [Evalchemy](#evalchemy-reasoning) |
+
+Custom contrib benchmarks bring their own dependency stacks and are
+documented in `oellm/contrib/<name>/README.md`:
+
+| Task group(s) | Contrib | README |
+|---|---|---|
+| `audio-audiobench*` | `audiobench` | [`oellm/contrib/audiobench/README.md`](../oellm/contrib/audiobench/README.md) |
+| `regiondial-*` | `regiondial_bench` | [`oellm/contrib/regiondial_bench/README.md`](../oellm/contrib/regiondial_bench/README.md) |
+
+Use `oellm list-tasks` to see which suite a given task group routes to.
+
+## Setup (general venv)
 
 1. Create a venv with Python 3.12:
    ```bash

@@ -306,7 +306,16 @@ def schedule_evals(
         logging.warning("No evaluation jobs to schedule.")
         return None
 
-    df["eval_suite"] = df["eval_suite"].str.lower()
+    # Lowercase the suite name only, preserve any ``:model_flags`` suffix
+    # verbatim — contrib dispatch keys can be case-sensitive (e.g.
+    # AudioBench's ``Qwen2-Audio-7B-Instruct`` is matched literally).
+    def _lower_suite_only(s: str) -> str:
+        if ":" in s:
+            head, tail = s.split(":", 1)
+            return f"{head.lower()}:{tail}"
+        return s.lower()
+
+    df["eval_suite"] = df["eval_suite"].map(_lower_suite_only)
 
     # Ensure that all datasets required by the tasks are cached locally to avoid
     # network access on compute nodes.
