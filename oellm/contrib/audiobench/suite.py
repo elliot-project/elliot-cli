@@ -57,11 +57,10 @@ def _build_task_groups() -> dict:
     task_metrics: dict[str, str] = {t.name: t.metric for t in AUDIOBENCH_TASKS}
 
     def _task_entry(t: AudioBenchTaskSpec) -> dict:
-        # We deliberately omit ``subset`` — load_dataset treats it as a
-        # config name, but for gigaspeech2 / spoken-mqa the upstream
-        # distinction is a ``data_dir``.  The ``audio-*`` prefix triggers
-        # full-repo snapshot_download, so AudioBench can read the right
-        # data_dir at runtime.
+        # No ``subset`` — for gigaspeech2 / spoken-mqa the upstream split
+        # selection is encoded in ``upstream_name`` itself (e.g.
+        # ``gigaspeech2_thai``).  The ``audio-*`` group prefix triggers
+        # full-repo snapshot_download in :func:`_collect_dataset_specs`.
         return {"task": t.name, "dataset": t.hf_repo}
 
     groups: dict[str, dict] = {}
@@ -99,7 +98,13 @@ TASK_GROUPS: dict = _build_task_groups()
 
 
 def detect_model_flags(model_path: str) -> str | None:
-    """Return the AudioBench ``--model`` family key for *model_path*."""
+    """Return AudioBench's literal ``--model_name`` dispatch key for *model_path*.
+
+    Returns ``None`` when *model_path* does not match any AudioBench-supported
+    model family — :func:`run` then raises a clear error.  AudioBench has no
+    generic loader, so silently falling back to a fictitious key would just
+    move the error deeper inside the subprocess.
+    """
     from oellm.contrib.audiobench.adapter import AudioBenchModelAdapter
 
     return AudioBenchModelAdapter(model_path).to_contrib_flags()
@@ -136,27 +141,31 @@ def run(
         )
 
     spec = get_task_spec(task)
-    model_key = model_flags or "generic"
-
-    run_dir = output_path.parent / f"audiobench_{output_path.stem}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    if not model_flags:
+        raise RuntimeError(
+            f"Could not map model_path={model_path!r} to an AudioBench-supported "
+            f"model.  AudioBench dispatches on a fixed list of literal "
+            f"model_name strings (Qwen2-Audio-7B-Instruct, SALMONN_7B, "
+            f"whisper_large_v3, …) — see oellm/contrib/audiobench/adapter.py.  "
+            f"AudioBench cannot evaluate arbitrary HF checkpoints; it loads "
+            f"its own hardcoded HF repos per model family."
+        )
+    model_key = model_flags  # AudioBench's dispatch key, e.g. "Qwen2-Audio-7B-Instruct"
 
     cmd = [
         "python",
         "src/main_evaluate.py",
-        "--dataset",
+        "--dataset_name",
         spec.upstream_name,
-        "--model",
-        model_key,
         "--model_name",
-        model_path,
+        model_key,
         "--metrics",
         spec.upstream_metric,
-        "--log_dir",
-        str(run_dir),
+        # Force re-eval — AudioBench skips by default if a stale score file
+        # already exists under log_for_all_models/.
+        "--overwrite",
+        "True",
     ]
-    if spec.data_dir:
-        cmd.extend(["--data_dir", spec.data_dir])
 
     limit = env.get("LIMIT", "").strip()
     if limit:
@@ -172,10 +181,12 @@ def run(
     if completed.returncode != 0:
         raise RuntimeError(
             f"AudioBench exited with code {completed.returncode} for "
-            f"task={task!r} model={model_path!r}"
+            f"task={task!r} model={model_path!r} (dispatch key={model_key!r})"
         )
 
-    metrics = _extract_metrics(run_dir, spec)
+    metrics = _extract_metrics(
+        audiobench_dir=Path(ab_dir), model_key=model_key, spec=spec
+    )
     _write_lmms_shaped_json(
         output_path=output_path,
         model_path=model_path,
@@ -186,32 +197,48 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
-def _extract_metrics(run_dir: Path, spec: AudioBenchTaskSpec) -> dict[str, float]:
-    """Find AudioBench's per-task result JSON under *run_dir* and read it."""
-    candidates = sorted(run_dir.rglob("*.json"))
-    if not candidates:
+def _extract_metrics(
+    *,
+    audiobench_dir: Path,
+    model_key: str,
+    spec: AudioBenchTaskSpec,
+) -> dict[str, float]:
+    """Read AudioBench's score file from its hardcoded output path.
+
+    AudioBench writes to ``$cwd/log_for_all_models/<model_name>/<dataset_name>_<metric>_score.json``
+    (see ``main_evaluate.py:118``).  Path is fixed — there is no ``--log_dir``.
+    """
+    score_file = (
+        audiobench_dir
+        / "log_for_all_models"
+        / model_key
+        / f"{spec.upstream_name}_{spec.upstream_metric}_score.json"
+    )
+    if not score_file.exists():
         raise RuntimeError(
-            f"AudioBench produced no result JSON under {run_dir}.  "
-            "Check stdout/stderr for crashes."
+            f"AudioBench did not write expected score file at {score_file}.  "
+            f"Either AudioBench crashed silently, or the dispatch key "
+            f"{model_key!r} / dataset_name {spec.upstream_name!r} / metric "
+            f"{spec.upstream_metric!r} is wrong.  Check stdout/stderr."
         )
 
-    target_key = spec.upstream_metric
-    for path in candidates:
-        try:
-            with open(path) as f:
-                body = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            continue
-        value = _find_metric(body, target_key)
-        if value is not None:
-            # Emit under our canonical key so collect_results' metric
-            # resolution picks up task_metrics.yaml.
-            return {spec.metric: float(value)}
+    try:
+        with open(score_file) as f:
+            body = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        raise RuntimeError(
+            f"Could not read AudioBench score file {score_file}: {e}"
+        ) from e
 
-    raise RuntimeError(
-        f"Could not locate metric {target_key!r} in any of "
-        f"{len(candidates)} AudioBench result JSON(s) under {run_dir}"
-    )
+    value = _find_metric(body, spec.upstream_metric)
+    if value is None:
+        raise RuntimeError(
+            f"Could not locate metric {spec.upstream_metric!r} in AudioBench "
+            f"score file {score_file}.  Body: {body!r}"
+        )
+    # Emit under our canonical key so collect_results' metric resolution
+    # picks up task_metrics.yaml.
+    return {spec.metric: float(value)}
 
 
 def _find_metric(body: object, key: str) -> float | None:

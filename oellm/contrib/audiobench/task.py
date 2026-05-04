@@ -21,11 +21,10 @@ _TASK_NAME_PREFIX = "audiobench_"
 class AudioBenchTaskSpec:
     """Metadata for a single AudioBench task.
 
-    ``upstream_name`` is what AudioBench's ``--dataset`` flag expects;
-    ``upstream_metric`` is what ``--metrics`` expects (usually identical to
-    ``metric``).  ``data_dir`` is the optional upstream ``--data_dir``
-    selector used when multiple tasks share one HF repo (gigaspeech2,
-    spoken-mqa).
+    ``upstream_name`` is the literal string AudioBench's ``--dataset_name``
+    expects (matched exactly against ``$AUDIOBENCH_DIR/src/dataset.py``'s
+    dispatch table).  ``upstream_metric`` is what ``--metrics`` expects
+    (usually identical to our canonical ``metric``).
     """
 
     name: str
@@ -34,7 +33,6 @@ class AudioBenchTaskSpec:
     metric: str
     upstream_metric: str
     family: str
-    data_dir: str | None = None
 
     @property
     def task_group(self) -> str:
@@ -48,7 +46,6 @@ def _t(
     family: str,
     *,
     upstream_metric: str | None = None,
-    data_dir: str | None = None,
     name: str | None = None,
 ) -> AudioBenchTaskSpec:
     """Build a spec with ``name = audiobench_<upstream_name>`` by default."""
@@ -59,7 +56,6 @@ def _t(
         metric=metric,
         upstream_metric=upstream_metric or metric,
         family=family,
-        data_dir=data_dir,
     )
 
 
@@ -69,29 +65,28 @@ _NEW_ASR = [
     _t("earnings21_test", "AudioLLMs/earnings21_test", "wer", "asr"),
     _t("earnings22_test", "AudioLLMs/earnings22_test", "wer", "asr"),
     _t("tedlium3_long_form_test", "AudioLLMs/tedlium3_long_form_test", "wer", "asr"),
-    # GigaSpeech2 — 3 languages share one HF repo, disambiguated by data_dir.
+    # GigaSpeech2 — 3 languages share one HF repo.  AudioBench dispatches via
+    # the dataset_name string itself (gigaspeech2_thai/indo/viet), not via a
+    # --data_dir flag (which doesn't exist upstream).
     _t(
-        "gigaspeech2",
+        "gigaspeech2_thai",
         "AudioLLMs/gigaspeech2-test",
         "wer",
         "asr",
-        data_dir="th-test",
         name="audiobench_gigaspeech2_thai",
     ),
     _t(
-        "gigaspeech2",
+        "gigaspeech2_indo",
         "AudioLLMs/gigaspeech2-test",
         "wer",
         "asr",
-        data_dir="id-test",
         name="audiobench_gigaspeech2_indo",
     ),
     _t(
-        "gigaspeech2",
+        "gigaspeech2_viet",
         "AudioLLMs/gigaspeech2-test",
         "wer",
         "asr",
-        data_dir="vi-test",
         name="audiobench_gigaspeech2_viet",
     ),
     _t("seame_dev_man", "AudioLLMs/seame_dev_man", "wer", "asr"),
@@ -107,41 +102,38 @@ _NEW_ST = [
 ]
 
 _NEW_REASONING = [
-    # Spoken-MQA — 4 splits share one HF repo; split is an upstream data_dir.
+    # Spoken-MQA — 4 splits share one HF repo.  AudioBench dispatches via
+    # the hyphen-prefixed dataset_name (spoken-mqa_<split>), not --data_dir.
     _t(
-        "spoken-mqa",
+        "spoken-mqa_short_digit",
         "amao0o0/spoken-mqa",
         "accuracy",
         "reasoning",
         upstream_metric="acc",
-        data_dir="short_digit",
         name="audiobench_spoken_mqa_short_digit",
     ),
     _t(
-        "spoken-mqa",
+        "spoken-mqa_long_digit",
         "amao0o0/spoken-mqa",
         "accuracy",
         "reasoning",
         upstream_metric="acc",
-        data_dir="long_digit",
         name="audiobench_spoken_mqa_long_digit",
     ),
     _t(
-        "spoken-mqa",
+        "spoken-mqa_single_step_reasoning",
         "amao0o0/spoken-mqa",
         "accuracy",
         "reasoning",
         upstream_metric="acc",
-        data_dir="single_step_reasoning",
         name="audiobench_spoken_mqa_single_step_reasoning",
     ),
     _t(
-        "spoken-mqa",
+        "spoken-mqa_multi_step_reasoning",
         "amao0o0/spoken-mqa",
         "accuracy",
         "reasoning",
         upstream_metric="acc",
-        data_dir="multi_step_reasoning",
         name="audiobench_spoken_mqa_multi_step_reasoning",
     ),
     _t("mmau_mini", "AudioLLMs/MMAU-mini", "string_match", "reasoning"),
