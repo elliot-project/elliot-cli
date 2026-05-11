@@ -18,7 +18,8 @@ EXPECTED_TASKS = {
     "video_mmmu_perception",
     "video_mmmu_comprehension",
     "video_mmmu_adaptation",
-    "egoschema",
+    "mvbench",
+    "egoschema_subset",
     "videomme",
     "activitynetqa",
     "longvideobench_val_v",
@@ -26,6 +27,7 @@ EXPECTED_TASKS = {
 
 EXPECTED_DATASETS = {
     "lmms-lab/VideoMMMU",
+    "OpenGVLab/MVBench",
     "lmms-lab/egoschema",
     "lmms-lab/Video-MME",
     "lmms-lab/ActivityNetQA",
@@ -43,16 +45,18 @@ class TestVideoTaskGroupInRegistry:
         suite = data["task_groups"][VIDEO_TASK_GROUP]["suite"]
         assert suite == "lmms_eval"
 
-    def test_video_understanding_has_seven_tasks(self):
+    def test_video_understanding_has_eight_tasks(self):
         data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
         tasks = data["task_groups"][VIDEO_TASK_GROUP]["tasks"]
-        # 3 video_mmmu_* leaves + egoschema + videomme + activitynetqa + longvideobench
-        assert len(tasks) == 7
+        # 3 video_mmmu_* leaves + mvbench + egoschema_subset + videomme
+        # + activitynetqa + longvideobench
+        assert len(tasks) == 8
 
     def test_individual_video_groups_present(self):
         all_groups = get_all_task_group_names()
         for name in [
             "video-videommmu",
+            "video-mvbench",
             "video-egoschema",
             "video-videomme",
             "video-activitynet-qa",
@@ -141,6 +145,7 @@ class TestVideoTaskGroupScheduleEvals:
                 skip_checks=True,
                 venv_path=str(Path(sys.prefix)),
                 dry_run=True,
+                allow_missing_judge=True,
             )
 
         sbatch_files = list(tmp_path.glob("**/submit_evals.sbatch"))
@@ -168,6 +173,7 @@ class TestVideoTaskGroupScheduleEvals:
                 skip_checks=True,
                 venv_path=str(Path(sys.prefix)),
                 dry_run=True,
+                allow_missing_judge=True,
             )
 
         csv_files = list(tmp_path.glob("**/jobs.csv"))

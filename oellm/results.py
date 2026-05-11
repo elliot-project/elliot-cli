@@ -14,6 +14,62 @@ import yaml
 from oellm.constants import METRIC_FALLBACK_KEYS
 from oellm.utils import _setup_logging
 
+# Native scale (max value) of each lmms-eval / lm-eval metric.
+# Used to normalize all reported metrics to 0–100 for cross-benchmark
+# comparison in the Markdown report and JSON envelope. Whenever a new
+# metric is added to ``task_metrics`` in ``task-groups.yaml``, also add
+# its native scale here so the normalized column renders correctly.
+METRIC_NATIVE_SCALE: dict[str, float] = {
+    # ── 0–1 scale ──
+    "exact_match": 1.0,
+    "acc": 1.0,
+    "acc_norm": 1.0,
+    "accuracy": 1.0,
+    "mmmu_acc": 1.0,
+    "relaxed_overall": 1.0,
+    "relaxed_human_split": 1.0,
+    "relaxed_augmented_split": 1.0,
+    "anls": 1.0,
+    "ocrbench_accuracy": 1.0,
+    "lvb_acc": 1.0,
+    "score": 1.0,
+    "wer": 1.0,
+    "mer": 1.0,
+    "f1": 1.0,
+    "semantic_match": 1.0,
+    # ── 0–100 scale (no scaling needed) ──
+    "gpt_eval_score": 100.0,
+    "llm_as_judge_eval": 100.0,
+    "mvbench_accuracy": 100.0,
+    "videomme_perception_score": 100.0,
+    "gpt_eval_accuracy": 100.0,
+    "submission": 100.0,
+    "bleu": 100.0,
+    # ── 0–5 Likert scale (GPT-judge style) ──
+    "gpt_eval": 5.0,
+    # ── Unbounded / non-standard ──
+    # MME emits raw point sums: cognition is /800 (4 categories × 200),
+    # perception is /2000 (10 categories × 200). See
+    # lmms_eval/tasks/mme/utils.py::mme_aggregate_results.
+    "mme_cognition_score": 800.0,
+    "mme_perception_score": 2000.0,
+}
+
+
+def _normalize_to_100(value: float | None, metric_name: str | None) -> float | None:
+    """Normalize a metric value to a 0–100 scale for cross-benchmark display.
+
+    Returns ``None`` when the metric's native scale is unknown — caller
+    should fall back to the raw value rather than guess.
+    """
+    if value is None or metric_name is None:
+        return None
+    clean = metric_name.split(",")[0]
+    scale = METRIC_NATIVE_SCALE.get(clean)
+    if scale is None:
+        return None
+    return value * (100.0 / scale)
+
 
 def _resolve_metric(
     task_name: str, result_dict: dict, task_metrics: dict
@@ -284,6 +340,9 @@ def collect_results(
                         "task": group_name,
                         "n_shot": n_shot,
                         "performance": performance,
+                        "performance_normalized": _normalize_to_100(
+                            performance, metric_name
+                        ),
                         "metric_name": metric_name if metric_name is not None else "",
                     }
                 )
@@ -337,6 +396,9 @@ def collect_results(
                         "task": task_name_clean,
                         "n_shot": n_shot,
                         "performance": performance,
+                        "performance_normalized": _normalize_to_100(
+                            performance, metric_name
+                        ),
                         "metric_name": metric_name if metric_name is not None else "",
                     }
                 )
@@ -436,7 +498,7 @@ def collect_results(
 # Structured output: versioned JSON and Markdown report
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def write_results_json(
@@ -448,12 +510,23 @@ def write_results_json(
     The schema is::
 
         {
-            "version": "1.0",
+            "version": "1.1",
             "generated_at": "2026-04-02T12:00:00+00:00",
             "results": [
-                {"model": ..., "task": ..., "n_shot": ..., "metric": ..., "performance": ...}
+                {
+                    "model": ..., "task": ..., "n_shot": ..., "metric": ...,
+                    "performance": <raw lmms-eval value>,
+                    "performance_normalized": <0-100 or null if scale unknown>
+                }
             ]
         }
+
+    ``performance`` is the raw value emitted by the underlying engine
+    (lmms-eval / lm-eval / lighteval).  ``performance_normalized`` rescales
+    it to 0–100 using ``METRIC_NATIVE_SCALE`` so values are comparable
+    across benchmarks (e.g. VQAv2 exact_match=0.755 → 75.5; MVBench
+    mvbench_accuracy=56.2 → 56.2). The field is ``null`` when the metric's
+    native scale is not registered.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -467,6 +540,7 @@ def write_results_json(
                 "n_shot": row.get("n_shot", 0),
                 "metric": row.get("metric_name", ""),
                 "performance": row.get("performance", 0.0),
+                "performance_normalized": row.get("performance_normalized"),
             }
         )
 
@@ -483,20 +557,35 @@ def write_results_markdown(
     rows: list[dict],
     output_path: str | Path,
 ) -> None:
-    """Write evaluation results as a Markdown table."""
+    """Write evaluation results as a Markdown table.
+
+    The ``Performance`` column shows the normalized 0–100 value when the
+    metric's native scale is known (see ``METRIC_NATIVE_SCALE``); otherwise
+    it falls back to the raw value with a ``*`` suffix.
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     lines = [
-        "| Model | Task | N-shot | Metric | Performance |",
-        "|-------|------|--------|--------|-------------|",
+        "| Model | Task | N-shot | Metric | Performance (0–100) |",
+        "|-------|------|--------|--------|---------------------|",
     ]
     for row in rows:
         model = row.get("model_name", "")
         task = row.get("task", "")
         n_shot = row.get("n_shot", 0)
         metric = row.get("metric_name", "")
-        perf = row.get("performance", 0.0)
-        lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf:.4f} |")
+        normalized = row.get("performance_normalized")
+        if normalized is not None:
+            perf_cell = f"{normalized:.2f}"
+        else:
+            raw = row.get("performance", 0.0)
+            perf_cell = f"{raw:.4f}*"
+        lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf_cell} |")
+
+    lines.append("")
+    lines.append("> `*` = raw value (metric native scale not registered in")
+    lines.append("> `METRIC_NATIVE_SCALE`; cannot normalize). Note that WER/MER are")
+    lines.append("> lower-is-better — a normalized WER of 5.3 means 5.3% error rate.")
 
     output_path.write_text("\n".join(lines) + "\n")

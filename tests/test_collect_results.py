@@ -391,9 +391,14 @@ class TestCollectResultsStructuredOutput:
         json_path = tmp_path / "out.json"
         assert json_path.exists()
         envelope = json.loads(json_path.read_text())
-        assert envelope["version"] == "1.0"
+        assert envelope["version"] == "1.1"
         assert len(envelope["results"]) == 1
-        assert envelope["results"][0]["task"] == "copa"
+        record = envelope["results"][0]
+        assert record["task"] == "copa"
+        # acc is a 0-1 scale metric in METRIC_NATIVE_SCALE, so the
+        # normalized value is the raw value × 100.
+        assert record["performance"] == pytest.approx(0.80)
+        assert record["performance_normalized"] == pytest.approx(80.0)
 
     def test_markdown_file_written_alongside_csv(self, tmp_path):
         results_dir = tmp_path / "results"

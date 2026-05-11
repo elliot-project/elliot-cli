@@ -565,3 +565,42 @@ def _filter_warnings():
 
     warnings.filterwarnings("ignore", module="lm_eval")
     warnings.filterwarnings("ignore", module="lighteval")
+
+
+def check_judge_llm_pre_flight(
+    tasks: Iterable[str], *, allow_missing: bool = False
+) -> None:
+    """Refuse to schedule judge-graded tasks without ``OPENAI_API_KEY``.
+
+    Runs before SLURM submission. Inspects ``tasks`` against
+    ``JUDGE_REQUIRED_TASKS`` and raises ``SystemExit`` if any are present
+    and ``OPENAI_API_KEY`` is unset, unless ``allow_missing=True`` (the
+    user explicitly opted in to letting those tasks emit null scores).
+    """
+    import os
+
+    from oellm.constants import JUDGE_REQUIRED_TASKS
+
+    needed = sorted({t for t in tasks if t in JUDGE_REQUIRED_TASKS})
+    if not needed:
+        return
+    if os.environ.get("OPENAI_API_KEY"):
+        return
+    if allow_missing:
+        logging.warning(
+            "Scheduling %d judge-required task(s) without OPENAI_API_KEY: %s. "
+            "These will emit null performance values in collect-results.",
+            len(needed),
+            ", ".join(needed),
+        )
+        return
+    raise SystemExit(
+        "Refusing to schedule judge-required task(s) without OPENAI_API_KEY:\n"
+        f"  {', '.join(needed)}\n\n"
+        "These tasks need an LLM judge / extractor to produce a valid metric. "
+        "Either:\n"
+        "  - export OPENAI_API_KEY=... before re-running, or\n"
+        "  - pass --allow-missing-judge to acknowledge that these tasks will "
+        "emit null scores, or\n"
+        "  - remove them from the task list."
+    )
