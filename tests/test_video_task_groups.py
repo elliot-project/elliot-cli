@@ -123,6 +123,32 @@ class TestVideoTaskGroupDatasetSpecs:
                 f"DatasetSpec for {s.repo_id} missing needs_snapshot_download=True flag"
             )
 
+    def test_mvbench_has_main_and_video_revisions(self):
+        """OpenGVLab/MVBench splits content across two branches: `main`
+        (parquet metadata) and `video` (.mp4 files). Both must be
+        pre-downloaded for offline compute-node evaluation. This is the
+        regression guard for the `revisions: [main, video]` YAML field."""
+        specs = _collect_dataset_specs([VIDEO_TASK_GROUP])
+        mvbench = next((s for s in specs if s.repo_id == "OpenGVLab/MVBench"), None)
+        assert mvbench is not None, "MVBench spec missing from video-understanding"
+        assert mvbench.revisions == ["main", "video"], (
+            f"MVBench DatasetSpec.revisions is {mvbench.revisions!r}, "
+            f"expected ['main', 'video']. Check that the `revisions:` field is "
+            f"set on the mvbench task entry in task-groups.yaml."
+        )
+
+    def test_default_revisions_is_main_for_other_video_specs(self):
+        """Other video datasets that don't set `revisions:` in YAML must
+        still pre-download `main` by default."""
+        specs = _collect_dataset_specs([VIDEO_TASK_GROUP])
+        for s in specs:
+            if s.repo_id == "OpenGVLab/MVBench":
+                continue
+            assert s.revisions == ["main"], (
+                f"DatasetSpec for {s.repo_id} has unexpected revisions "
+                f"{s.revisions!r}; default should be ['main']."
+            )
+
 
 class TestVideoTaskGroupScheduleEvals:
     """Verify video-understanding integrates with the schedule_evals dry-run path."""

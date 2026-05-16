@@ -198,6 +198,53 @@ class TestCollectResultsLmmsEvalFormat:
         df = run_collect(tmp_path, data)
         assert df.iloc[0]["performance"] == pytest.approx(0.49)
 
+    def test_mvbench_group_aggregates_from_subtasks(self, tmp_path):
+        """lmms-eval emits MVBench as an empty-placeholder parent
+        (``{" ": " ", "alias": "mvbench"}``) plus 20 metric-bearing
+        children, with the parent listed in ``group_subtasks``. Without an
+        aggregation fallback, both parent (empty placeholder) and children
+        (group-subtask skip) get dropped from the output. This test pins
+        the synthetic-row behavior — average of children's metrics."""
+        data = {
+            "model_name": "qwen2_vl",
+            "model_name_or_path": "/models/Qwen2-VL-2B-Instruct",
+            "results": {
+                # Empty parent — what lmms-eval actually writes for MVBench.
+                "mvbench": {" ": " ", "alias": "mvbench"},
+                "mvbench_action_antonym": {
+                    "mvbench_action_antonym/mvbench_accuracy,none": 75.0,
+                },
+                "mvbench_moving_direction": {
+                    "mvbench_moving_direction/mvbench_accuracy,none": 100.0,
+                },
+                "mvbench_action_sequence": {
+                    "mvbench_action_sequence/mvbench_accuracy,none": 0.0,
+                },
+                "mvbench_scene_transition": {
+                    "mvbench_scene_transition/mvbench_accuracy,none": 25.0,
+                },
+            },
+            "n-shot": {"mvbench": 0},
+            "group_subtasks": {
+                "mvbench": [
+                    "mvbench_action_antonym",
+                    "mvbench_moving_direction",
+                    "mvbench_action_sequence",
+                    "mvbench_scene_transition",
+                ]
+            },
+        }
+        df = run_collect(tmp_path, data)
+
+        # One row for the mvbench group, none for its children.
+        assert len(df) == 1
+        row = df.iloc[0]
+        assert row["task"] == "mvbench"
+        # Mean of the 4 children: (75 + 100 + 0 + 25) / 4 = 50.
+        assert row["performance"] == pytest.approx(50.0)
+        # The metric_name should come from a child (mvbench_accuracy,none).
+        assert "mvbench_accuracy" in row["metric_name"]
+
     def test_multiple_image_tasks_in_one_file(self, tmp_path):
         data = {
             "model_name": "llava_hf",

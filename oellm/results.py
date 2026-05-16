@@ -378,13 +378,32 @@ def collect_results(
             if n_shot == "unknown" and parsed_n is not None:
                 n_shot = parsed_n
 
-            # Skip lmms-eval parent task placeholders (no numeric metrics, just alias)
+            # Lmms-eval emits some groups (e.g. mvbench) as empty-placeholder
+            # parents whose actual values live on the children in
+            # `group_subtasks`. Aggregate (mean) to recover the headline.
             if set(task_results.keys()) <= {"alias", " ", ""}:
-                continue
-
-            performance, metric_name = _resolve_metric(
-                task_name_clean, task_results, task_metrics
-            )
+                subtasks = group_subtasks_map.get(task_name_clean, [])
+                if not subtasks:
+                    continue
+                child_values: list[float] = []
+                child_metric_name: str | None = None
+                for subtask_name in subtasks:
+                    sub_results = results.get(subtask_name, {})
+                    sub_val, sub_metric = _resolve_metric(
+                        task_name_clean, sub_results, task_metrics
+                    )
+                    if sub_val is not None:
+                        child_values.append(sub_val)
+                        if child_metric_name is None:
+                            child_metric_name = sub_metric
+                if not child_values:
+                    continue
+                performance = sum(child_values) / len(child_values)
+                metric_name = child_metric_name
+            else:
+                performance, metric_name = _resolve_metric(
+                    task_name_clean, task_results, task_metrics
+                )
 
             if performance is not None:
                 if check:
@@ -505,28 +524,10 @@ def write_results_json(
     rows: list[dict],
     output_path: str | Path,
 ) -> None:
-    """Write evaluation results as a versioned JSON file.
+    """Write versioned JSON: {version, generated_at, results: [...]}.
 
-    The schema is::
-
-        {
-            "version": "1.1",
-            "generated_at": "2026-04-02T12:00:00+00:00",
-            "results": [
-                {
-                    "model": ..., "task": ..., "n_shot": ..., "metric": ...,
-                    "performance": <raw lmms-eval value>,
-                    "performance_normalized": <0-100 or null if scale unknown>
-                }
-            ]
-        }
-
-    ``performance`` is the raw value emitted by the underlying engine
-    (lmms-eval / lm-eval / lighteval).  ``performance_normalized`` rescales
-    it to 0–100 using ``METRIC_NATIVE_SCALE`` so values are comparable
-    across benchmarks (e.g. VQAv2 exact_match=0.755 → 75.5; MVBench
-    mvbench_accuracy=56.2 → 56.2). The field is ``null`` when the metric's
-    native scale is not registered.
+    Each result row has `performance` (raw engine value) and
+    `performance_normalized` (0-100 via METRIC_NATIVE_SCALE, or null).
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -557,12 +558,7 @@ def write_results_markdown(
     rows: list[dict],
     output_path: str | Path,
 ) -> None:
-    """Write evaluation results as a Markdown table.
-
-    The ``Performance`` column shows the normalized 0–100 value when the
-    metric's native scale is known (see ``METRIC_NATIVE_SCALE``); otherwise
-    it falls back to the raw value with a ``*`` suffix.
-    """
+    """Write a Markdown results table on a 0-100 normalized scale."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -570,6 +566,8 @@ def write_results_markdown(
         "| Model | Task | N-shot | Metric | Performance (0–100) |",
         "|-------|------|--------|--------|---------------------|",
     ]
+    has_raw_fallback = False
+    has_lower_is_better = False
     for row in rows:
         model = row.get("model_name", "")
         task = row.get("task", "")
@@ -581,11 +579,19 @@ def write_results_markdown(
         else:
             raw = row.get("performance", 0.0)
             perf_cell = f"{raw:.4f}*"
+            has_raw_fallback = True
+        if any(k in metric.lower() for k in ("wer", "mer", "cer")):
+            has_lower_is_better = True
         lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf_cell} |")
 
-    lines.append("")
-    lines.append("> `*` = raw value (metric native scale not registered in")
-    lines.append("> `METRIC_NATIVE_SCALE`; cannot normalize). Note that WER/MER are")
-    lines.append("> lower-is-better — a normalized WER of 5.3 means 5.3% error rate.")
+    # Only emit footnotes that apply to this report.
+    footnotes = []
+    if has_raw_fallback:
+        footnotes.append("> `*` = raw value (metric scale not in `METRIC_NATIVE_SCALE`).")
+    if has_lower_is_better:
+        footnotes.append("> WER/MER/CER are lower-is-better.")
+    if footnotes:
+        lines.append("")
+        lines.extend(footnotes)
 
     output_path.write_text("\n".join(lines) + "\n")

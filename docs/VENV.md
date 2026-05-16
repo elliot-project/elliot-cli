@@ -28,27 +28,30 @@ Use `oellm list-tasks` to see which suite a given task group routes to.
 
 ## Setup (general venv)
 
-1. Create a venv with Python 3.12:
-   ```bash
-   uv venv --python 3.12 /path/to/.venv
-   ```
+```bash
+# 1. Create venv
+uv venv --python 3.12 /path/to/.venv
 
-2. Install lm-eval + lmms-eval dependencies via pyproject extras:
-   ```bash
-   uv pip install --python /path/to/.venv/bin/python -e '.[text,image,audio]'
-   ```
+# 2. Install lmms-eval editable from main
+#    (Editable is required — wheel build drops `_default_template_yaml` files.)
+uv pip install --python /path/to/.venv/bin/python \
+    -e "git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git#egg=lmms-eval"
 
-   This installs `lm-eval`, `torch`, `transformers`, `accelerate`, `lmms-eval`,
-   and the audio helpers (`soundfile`, `librosa`, `jiwer`).  The core
-   `datasets<4.0.0` pin comes from `pyproject.toml`'s base dependencies.
+# 3. Install oellm-cli with engine extras
+uv pip install --python /path/to/.venv/bin/python -e '.[text,image,audio]'
 
-3. Install lighteval as isolated tool (avoids datasets version conflict):
-   ```bash
-   UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \
-     uv tool install --python 3.12 \
-       --with "langcodes[data]" --with "pillow" \
-       "lighteval[multilingual] @ git+https://github.com/huggingface/lighteval.git"
-   ```
+# 4. Install lighteval as an isolated uv tool (datasets version conflict)
+UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \
+  uv tool install --python 3.12 \
+    --with "langcodes[data]" --with "pillow" \
+    "lighteval[multilingual] @ git+https://github.com/huggingface/lighteval.git"
+```
+
+Verify with:
+```bash
+/path/to/.venv/bin/python -c \
+  'from lmms_eval.tasks import TaskManager; TaskManager("INFO"); print("OK")'
+```
 
 ## Usage
 
@@ -73,18 +76,13 @@ lm-eval requires `datasets<4.0.0` while lighteval requires `datasets>=4.0.0`. In
 
 ## Dependency Summary
 
-All engine deps live in `pyproject.toml`'s `[project.optional-dependencies]`
-table — there are no separate `requirements-venv*.txt` files. Pick the
-extras that match your task list.
-
-| Extras | Install command | Reason |
+| Component | Install | Reason |
 |---|---|---|
-| `text`, `image`, `audio` | `uv pip install '.[text,image,audio]'` | General venv: lm-eval text + lmms-eval image/audio, compatible dataset pin |
-| `lighteval` (separate tool) | `uv tool install` (isolated) | Requires `datasets>=4.0.0` — must be isolated from lm-eval's `<4.0.0` |
-| `evalchemy` | `uv pip install '.[evalchemy]'` (own venv) | Forked lm-eval pinned to ``etashg/tokenize_fix`` — cannot share venv with mainline lm-eval |
-| `dclm` | `uv pip install '.[dclm]'` (own venv) | Pinned `lm-eval==0.4.9.2` (v0.4.10+ breaks `agieval_lsat_ar`) |
-
-lm-eval requires `datasets<4.0.0` while lighteval requires `datasets>=4.0.0`. Installing lighteval as an isolated uv tool (like the containers do) avoids this conflict.
+| `lmms-eval` | `uv pip install -e "git+https://…@<commit>#egg=lmms-eval"` | Editable: wheel drops template files |
+| `text`, `image`, `audio` extras | `uv pip install '.[text,image,audio]'` | lm-eval + transformers pin + audio helpers |
+| `lighteval` | `uv tool install …` (isolated) | Needs `datasets>=4.0.0`; conflicts with lm-eval |
+| `evalchemy` | `uv pip install '.[evalchemy]'` (own venv) | Forked lm-eval |
+| `dclm` | `uv pip install '.[dclm]'` (own venv) | Pinned `lm-eval==0.4.9.2` |
 
 ## DCLM-core-22
 

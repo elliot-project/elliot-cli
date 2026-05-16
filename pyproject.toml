@@ -31,15 +31,22 @@ text = [
     "transformers",
     "accelerate",
 ]
+# NOTE: lmms-eval is NOT a pip dep — its wheel drops `_default_template_yaml`
+# files. Install it editable (`uv pip install -e "git+…"`); see docs/VENV.md.
 image = [
-    "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
+    # transformers 4.50+ fast llava_onevision processor crashes on images=[].
+    "transformers>=4.45,<4.50",
+    # Phi-4-multimodal trust_remote_code modeling imports backoff.
+    "backoff",
 ]
 video = [
-    "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
+    "transformers>=4.45,<4.50",
+    "backoff",
+    # PyAV 14 renamed AVError to OSError; torchvision still uses the old name.
+    "av<14",
 ]
 # HPC Singularity image must also include ffmpeg for non-WAV decode.
 audio = [
-    "lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git",
     "soundfile",
     "librosa",
     "jiwer",
@@ -98,16 +105,23 @@ module-name = "oellm"
 module-root = ""
 include = ["oellm/resources/*", "oellm/resources/**/*"]
 
-# Engine extras that pin incompatible versions of lm-eval / transformers /
-# datasets / accelerate.  Declared as conflicts so ``uv sync`` does not try
-# to find a single resolution that satisfies all of them at once — they are
-# meant to be installed in **separate venvs**, see docs/VENV.md.
+# Conflict groups: extras with incompatible pins (must live in separate
+# venvs). text/image/video can coexist; evalchemy/dclm cannot share with
+# anything pinning a different lm-eval or transformers version. See docs/VENV.md.
 [tool.uv]
 conflicts = [
     [
         { extra = "text" },
         { extra = "evalchemy" },
         { extra = "dclm" },
+    ],
+    [
+        { extra = "image" },
+        { extra = "evalchemy" },
+    ],
+    [
+        { extra = "video" },
+        { extra = "evalchemy" },
     ],
 ]
 

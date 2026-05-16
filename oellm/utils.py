@@ -379,9 +379,44 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
                 logging.warning(f"Failed to download dataset files from '{repo_id}': {e}")
 
 
+def _materialize_external_urls(ds, *, max_workers: int = 16) -> None:
+    """Iterate every row to force HF ``dl_manager`` to fetch external URLs.
+
+    Datasets like ``facebook/textvqa`` store image URLs (not bytes) in
+    parquet rows; only per-row access triggers the HTTP fetch into the
+    cache. Strict: exceptions propagate so ``_pre_download_datasets_…``
+    aborts the schedule before SLURM submission.
+    """
+    if ds is None:
+        return
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _materialize_split(split) -> None:
+        n = len(split)
+        if n == 0:
+            return
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for _ in pool.map(lambda i: split[i], range(n)):
+                pass
+
+    if hasattr(ds, "keys"):
+        for split_name in list(ds.keys()):
+            _materialize_split(ds[split_name])
+    elif hasattr(ds, "__len__") and hasattr(ds, "__getitem__"):
+        # Skip anything that isn't a recognizable dataset shape (e.g. test stubs).
+        _materialize_split(ds)
+
+
 def _pre_download_datasets_from_specs(
     specs: Iterable, trust_remote_code: bool = True
 ) -> None:
+    """Pre-fetch every dataset spec into the local HF cache.
+
+    Strict: any failure raises ``RuntimeError`` and aborts the schedule
+    before SLURM submission — compute nodes run ``HF_HUB_OFFLINE=1`` and
+    can't recover from a cache miss. Override with ``--skip-checks``.
+    """
     from datasets import get_dataset_config_names, load_dataset
     from huggingface_hub import snapshot_download
 
@@ -390,6 +425,7 @@ def _pre_download_datasets_from_specs(
         return
 
     console = get_console()
+    failures: list[tuple[str, Exception]] = []
 
     with console.status(
         f"Downloading datasets… {len(specs_list)} datasets",
@@ -399,44 +435,60 @@ def _pre_download_datasets_from_specs(
             label = f"{spec.repo_id}" + (f"/{spec.subset}" if spec.subset else "")
             status.update(f"Downloading '{label}' ({idx}/{len(specs_list)})")
 
+            snapshot_failed = False
+            revisions = getattr(spec, "revisions", None) or ["main"]
             if spec.needs_snapshot_download:
-                try:
-                    # max_workers=2 keeps concurrent HEAD requests below HF's
-                    # per-IP rate limit for many-file audio/video repos (e.g.
-                    # lmms-lab/WenetSpeech). Higher values trigger HTTP 429
-                    # and long exponential backoffs even with auth.
-                    snapshot_download(
-                        repo_id=spec.repo_id,
-                        repo_type="dataset",
-                        max_workers=2,
-                    )
-                except Exception as e:
-                    logging.warning(f"Failed to snapshot_download '{spec.repo_id}': {e}")
+                # Iterate every requested revision (e.g. OpenGVLab/MVBench
+                # splits content across `main` and `video` branches).
+                for rev in revisions:
+                    rev_label = f"{label}@{rev}" if rev != "main" else label
+                    status.update(f"Downloading '{rev_label}' ({idx}/{len(specs_list)})")
+                    try:
+                        # max_workers=2 keeps HEAD requests under HF's per-IP
+                        # rate limit; higher triggers HTTP 429.
+                        snapshot_download(
+                            repo_id=spec.repo_id,
+                            repo_type="dataset",
+                            revision=rev,
+                            max_workers=2,
+                        )
+                    except Exception as e:
+                        snapshot_failed = True
+                        logging.warning(
+                            f"snapshot_download failed for '{rev_label}': {e}; "
+                            f"falling back to load_dataset."
+                        )
 
             try:
-                load_dataset(
+                ds = load_dataset(
                     spec.repo_id,
                     name=spec.subset,
                     trust_remote_code=trust_remote_code,
                 )
+                _materialize_external_urls(ds)
             except ValueError as e:
                 if "Config name is missing" in str(e) and spec.subset is None:
-                    configs = get_dataset_config_names(
-                        spec.repo_id, trust_remote_code=trust_remote_code
-                    )
-                    logging.info(
-                        f"Dataset '{spec.repo_id}' requires config. "
-                        f"Downloading all {len(configs)} configs."
-                    )
-                    for cfg in configs:
-                        status.update(
-                            f"Downloading '{spec.repo_id}/{cfg}' ({idx}/{len(specs_list)})"
+                    try:
+                        configs = get_dataset_config_names(
+                            spec.repo_id, trust_remote_code=trust_remote_code
                         )
-                        load_dataset(
-                            spec.repo_id,
-                            name=cfg,
-                            trust_remote_code=trust_remote_code,
+                        logging.info(
+                            f"Dataset '{spec.repo_id}' requires config. "
+                            f"Downloading all {len(configs)} configs."
                         )
+                        for cfg in configs:
+                            status.update(
+                                f"Downloading '{spec.repo_id}/{cfg}' "
+                                f"({idx}/{len(specs_list)})"
+                            )
+                            ds_cfg = load_dataset(
+                                spec.repo_id,
+                                name=cfg,
+                                trust_remote_code=trust_remote_code,
+                            )
+                            _materialize_external_urls(ds_cfg)
+                    except Exception as inner:
+                        failures.append((label, inner))
                     continue
                 if "Feature type" in str(e) and "not found" in str(e):
                     hf_datasets_cache = os.environ.get(
@@ -450,9 +502,31 @@ def _pre_download_datasets_from_specs(
                         f"datasets version ('{e}'). Delete the stale cache and re-run:\n\n"
                         f"    rm -rf {cache_dir}\n"
                     ) from None
-                raise
+                failures.append((label, e))
+            except Exception as e:
+                # Network / hub / OS errors — catch and aggregate, don't swallow.
+                failures.append((label, e))
+            else:
+                logging.debug(f"Finished downloading dataset '{label}'.")
+                continue
 
-            logging.debug(f"Finished downloading dataset '{label}'.")
+            if snapshot_failed:
+                logging.debug(
+                    f"Both snapshot_download and load_dataset failed for '{label}'."
+                )
+
+    if failures:
+        details = "\n".join(
+            f"  - {label}: {type(e).__name__}: {e}" for label, e in failures
+        )
+        raise RuntimeError(
+            f"Pre-download failed for {len(failures)}/{len(specs_list)} dataset(s); "
+            f"aborting before SLURM submission (compute nodes run offline).\n\n"
+            f"Failures:\n{details}\n\n"
+            f"Common fixes: set HF_TOKEN / accept dataset license on HF / retry "
+            f"after rate-limit cools off. Bypass with `--skip-checks` if the cache "
+            f"is already populated out-of-band.\n"
+        )
 
 
 @contextmanager
