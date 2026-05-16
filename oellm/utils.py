@@ -529,72 +529,88 @@ def _pre_download_datasets_from_specs(
         )
 
 
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+# Saved originals when capture is active. Module-level (not a closure) so
+# the filtered_* functions are importable as `oellm.utils.filtered_*` —
+# required for HF datasets' multiprocessing workers to resolve them when
+# the patched print/logger gets pickled across processes.
+_capture_originals: dict = {"active": False}
+
+
+def _is_internal_stack(skip: int = 2, max_depth: int = 20) -> bool:
+    f = sys._getframe(skip)
+    depth = 0
+    while f and depth < max_depth:
+        code = f.f_code
+        filename = code.co_filename if code else ""
+        if filename:
+            p = Path(filename).resolve()
+            name = code.co_name if code else ""
+            # Skip logging internals and our filtering wrappers to find the real caller.
+            if "/logging/__init__.py" in filename or name.startswith("filtered_"):
+                f = f.f_back
+                depth += 1
+                continue
+            return p.is_relative_to(_PACKAGE_ROOT)
+        f = f.f_back
+        depth += 1
+    return False
+
+
+def filtered_print(*args, **kwargs):
+    orig = _capture_originals.get("print")
+    if orig is None or _is_internal_stack():
+        return (orig or builtins.print)(*args, **kwargs)
+    return None
+
+
+def filtered_logger_info(self, msg, *args, **kwargs):
+    orig = _capture_originals.get("logger_info")
+    if orig is None or _is_internal_stack():
+        return (orig or logging.Logger.info)(self, msg, *args, **kwargs)
+    return None
+
+
+def filtered_logger_debug(self, msg, *args, **kwargs):
+    orig = _capture_originals.get("logger_debug")
+    if orig is None or _is_internal_stack():
+        return (orig or logging.Logger.debug)(self, msg, *args, **kwargs)
+    return None
+
+
+def filtered_module_info(msg, *args, **kwargs):
+    orig = _capture_originals.get("module_info")
+    if orig is None or _is_internal_stack():
+        return (orig or logging.info)(msg, *args, **kwargs)
+    return None
+
+
+def filtered_module_debug(msg, *args, **kwargs):
+    orig = _capture_originals.get("module_debug")
+    if orig is None or _is_internal_stack():
+        return (orig or logging.debug)(msg, *args, **kwargs)
+    return None
+
+
 @contextmanager
 def capture_third_party_output(verbose: bool = False):
-    """
-    Suppresses print/logging.info/logging.debug originating from non-project modules
-    unless verbose=True.
-
-    A call is considered "third-party" if its immediate caller's file path is not
-    under the repository root (parent of the `oellm` package directory).
-    """
+    """Suppress print/logging.info/logging.debug from non-project modules
+    unless verbose=True. A call is "third-party" if its caller's file path
+    is not under the `oellm` package directory."""
     if verbose:
         yield
         return
 
-    package_root = Path(__file__).resolve().parent
-
-    def is_internal_stack(skip: int = 2, max_depth: int = 20) -> bool:
-        f = sys._getframe(skip)
-        depth = 0
-        while f and depth < max_depth:
-            code = f.f_code
-            filename = code.co_filename if code else ""
-            if filename:
-                p = Path(filename).resolve()
-                name = code.co_name if code else ""
-                # Skip logging internals and our filtering wrappers to find the real caller
-                if "/logging/__init__.py" in filename or name.startswith("filtered_"):
-                    f = f.f_back
-                    depth += 1
-                    continue
-                return p.is_relative_to(package_root)
-            f = f.f_back
-            depth += 1
-        return False
-
-    orig_print = builtins.print
-    orig_logger_info = logging.Logger.info
-    orig_logger_debug = logging.Logger.debug
-    orig_module_info = logging.info
-    orig_module_debug = logging.debug
-
-    def filtered_print(*args, **kwargs):
-        if is_internal_stack():
-            return orig_print(*args, **kwargs)
-        # third-party: drop
-        return None
-
-    def filtered_logger_info(self, msg, *args, **kwargs):
-        if is_internal_stack():
-            return orig_logger_info(self, msg, *args, **kwargs)
-        return None
-
-    def filtered_logger_debug(self, msg, *args, **kwargs):
-        if is_internal_stack():
-            return orig_logger_debug(self, msg, *args, **kwargs)
-        return None
-
-    def filtered_module_info(msg, *args, **kwargs):
-        if is_internal_stack():
-            return orig_module_info(msg, *args, **kwargs)
-        return None
-
-    def filtered_module_debug(msg, *args, **kwargs):
-        if is_internal_stack():
-            return orig_module_debug(msg, *args, **kwargs)
-        return None
-
+    _capture_originals.update(
+        {
+            "active": True,
+            "print": builtins.print,
+            "logger_info": logging.Logger.info,
+            "logger_debug": logging.Logger.debug,
+            "module_info": logging.info,
+            "module_debug": logging.debug,
+        }
+    )
     builtins.print = filtered_print  # type: ignore
     logging.Logger.info = filtered_logger_info  # type: ignore[assignment]
     logging.Logger.debug = filtered_logger_debug  # type: ignore[assignment]
@@ -604,11 +620,12 @@ def capture_third_party_output(verbose: bool = False):
     try:
         yield
     finally:
-        builtins.print = orig_print
-        logging.Logger.info = orig_logger_info  # type: ignore[assignment]
-        logging.Logger.debug = orig_logger_debug  # type: ignore[assignment]
-        logging.info = orig_module_info  # type: ignore[assignment]
-        logging.debug = orig_module_debug  # type: ignore[assignment]
+        builtins.print = _capture_originals["print"]
+        logging.Logger.info = _capture_originals["logger_info"]  # type: ignore[assignment]
+        logging.Logger.debug = _capture_originals["logger_debug"]  # type: ignore[assignment]
+        logging.info = _capture_originals["module_info"]  # type: ignore[assignment]
+        logging.debug = _capture_originals["module_debug"]  # type: ignore[assignment]
+        _capture_originals["active"] = False
 
 
 def capture_third_party_output_from_kwarg(

@@ -364,6 +364,70 @@ class TestMaterializeExternalUrls:
         assert "ConnectionError" in msg
 
 
+def _resolve_filtered_print_in_worker(out_queue):
+    """Worker target: import `oellm.utils` and look up `filtered_print` as
+    a module attribute. Mirrors what HF datasets' multiprocessing workers
+    do when they unpickle a reference to the patched `print`."""
+    try:
+        from oellm import utils as _u  # noqa: PLC0415
+
+        fn = _u.filtered_print
+        out_queue.put(("ok", fn.__name__))
+    except Exception as e:
+        out_queue.put(("err", f"{type(e).__name__}: {e}"))
+
+
+class TestFilteredFunctionsAreModuleAttributes:
+    """Regression guard: the filtered_* functions used by
+    `capture_third_party_output` must be true module-level attributes,
+    not closures.
+
+    HF datasets' Audio feature decoder spawns multiprocessing workers
+    that pickle/unpickle references to the patched `print`. When
+    `filtered_print` was a local closure, workers raised
+    ``AttributeError: module 'oellm.utils' has no attribute
+    'filtered_print'`` — which surfaced as the audio pre-download
+    failing during `_materialize_external_urls`.
+    """
+
+    def test_module_exports_filtered_functions(self):
+        """Each filtered_* function must be reachable via getattr on the
+        module — this is what pickle's resolution uses."""
+        from oellm import utils
+
+        for name in (
+            "filtered_print",
+            "filtered_logger_info",
+            "filtered_logger_debug",
+            "filtered_module_info",
+            "filtered_module_debug",
+        ):
+            fn = getattr(utils, name, None)
+            assert callable(fn), f"oellm.utils.{name} must be a module attribute"
+            assert fn.__module__ == "oellm.utils", (
+                f"{name}.__module__ is {fn.__module__!r}; "
+                f"expected 'oellm.utils'. Closures defined inside "
+                f"capture_third_party_output won't resolve in multiprocessing workers."
+            )
+
+    def test_filtered_print_resolvable_in_multiprocessing_worker(self):
+        """End-to-end: a child process can resolve and call filtered_print."""
+        import multiprocessing as _mp
+
+        ctx = _mp.get_context("spawn")
+        q = ctx.Queue()
+        p = ctx.Process(target=_resolve_filtered_print_in_worker, args=(q,))
+        p.start()
+        p.join(timeout=30)
+        assert p.exitcode == 0, f"Worker process crashed; exitcode={p.exitcode}"
+        status, payload = q.get(timeout=5)
+        assert status == "ok", (
+            f"Worker failed to resolve oellm.utils.filtered_print: {payload}. "
+            f"This means a closure regression has been re-introduced and "
+            f"HF datasets' multiprocessing workers will crash again."
+        )
+
+
 class _NoopConsole:
     """Stub for rich.console.Console that satisfies the `.status()`
     context-manager interface used by _pre_download_datasets_from_specs."""
