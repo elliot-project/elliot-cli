@@ -71,7 +71,7 @@ uv pip install pi-heif
 
 ### What gets auto-downloaded
 
-`oellm schedule-eval` pre-downloads the following on the login node so
+`oellm-eval schedule` pre-downloads the following on the login node so
 compute nodes do not need internet access:
 
 | Asset | HF repo | Size |
@@ -99,13 +99,13 @@ Three task groups are available:
 
 ```bash
 # Both splits
-oellm schedule-eval \
+oellm-eval schedule \
   --models lmsdss/RegionReasoner-7B \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv
 
 # Single split
-oellm schedule-eval \
+oellm-eval schedule \
   --models lmsdss/RegionReasoner-7B \
   --task-groups regiondial-refcocog \
   --venv-path ~/elliot-venv
@@ -114,7 +114,7 @@ oellm schedule-eval \
 ### Collecting results
 
 ```bash
-oellm collect-results \
+oellm-eval collect \
   --eval-output-dir /path/to/evals \
   --output-csv results.csv
 ```
@@ -132,7 +132,7 @@ which is detected automatically from the model name. To evaluate a different
 model, just pass it to `--models`:
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models Qwen/Qwen2.5-VL-7B-Instruct \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv
@@ -150,7 +150,7 @@ The model type is resolved as follows:
 To evaluate multiple models in one go:
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models "lmsdss/RegionReasoner-7B,Qwen/Qwen2.5-VL-7B-Instruct" \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv

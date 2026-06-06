@@ -23,7 +23,7 @@ task_groups:
 ```
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models org/MyModel \
   --task-groups my-benchmark \
   --venv-path ~/elliot-venv

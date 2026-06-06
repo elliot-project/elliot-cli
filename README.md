@@ -25,12 +25,12 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
 # Run evaluations using a task group
-oellm schedule-eval \
+oellm-eval schedule \
     --models "EleutherAI/pythia-160m" \
     --task-groups "open-sci-0.01"
 
 # Image evaluation (requires venv with lmms-eval)
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
     --venv-path ~/elliot-venv
@@ -118,26 +118,26 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 
 ```bash
 # Run all 8 image benchmarks
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
     --venv-path ~/elliot-venv
 
 # Run all 5 video benchmarks
-oellm schedule-eval \
+oellm-eval schedule \
     --models "lmms-lab/llava-onevision-7b" \
     --task-groups "video-understanding" \
     --venv-path ~/elliot-venv
 
 # Mix image and text benchmarks in one submission
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-mmbench,open-sci-0.01" \
     --venv-path ~/elliot-venv
 
 # Use multiple task groups or a super group
-oellm schedule-eval --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
-oellm schedule-eval --models "model-name" --task-groups "oellm-multilingual"
+oellm-eval schedule --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
+oellm-eval schedule --models "model-name" --task-groups "oellm-multilingual"
 ```
 
 ## Running Locally (without SLURM)
@@ -154,7 +154,7 @@ oellm-eval schedule \
     --tasks "gsm8k" \
     --n-shot 0 \
     --venv-path .venv \
-    --local true \
+    --local \
     --limit 1
 ```
 
@@ -165,7 +165,7 @@ Results are written to `./oellm-output/<timestamp>/results/`.
 ```bash
 export HF_HOME=/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-evals/hf_data
 export HF_HUB_OFFLINE=1
-oellm-eval schedule ... --venv_path .venv --local true
+oellm-eval schedule ... --venv-path .venv --local
 ```
 
 The `HF_HUB_OFFLINE` value is read when you invoke `oellm-eval` and baked into the generated script.
@@ -176,11 +176,11 @@ Override cluster defaults (partition, account, time limit, memory, etc.) with `-
 
 ```bash
 # Use a different partition (e.g. dev-g on LUMI when small-g is crowded)
-oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" \
   --slurm-template-var '{"PARTITION":"dev-g"}'
 
 # Multiple overrides: partition, account, time limit, GPUs, exact RAM
-oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" \
   --slurm-template-var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
 ```
 
@@ -206,7 +206,7 @@ If you need full manual control over all model args, set `MODEL_ARGS`,
 for example:
 
 ```bash
-MODEL_ARGS='batch_size=8' oellm schedule-eval \
+MODEL_ARGS='batch_size=8' oellm-eval schedule \
   --models "model-name" --task-groups "belebele-eu-cf" --venv-path .venv
 ```
 
@@ -219,7 +219,7 @@ If you use custom tasks via `--tasks` that are not in the task groups registry, 
 **Recommendation:** Use `--task-groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
 ## Collecting Results
 
-After evaluations complete, collect results into a CSV.  `collect-results` **recursively** searches the given directory for every `jobs.csv` file and every `.json` result file, so you can point it at a top-level output folder that contains many sub-runs:
+After evaluations complete, collect results into a CSV.  `collect` **recursively** searches the given directory for every `jobs.csv` file and every `.json` result file, so you can point it at a top-level output folder that contains many sub-runs:
 
 ```
 output/
@@ -236,10 +236,10 @@ output/
 
 ```bash
 # Basic collection
-oellm collect-results --results-dir /path/to/eval-output-dir
+oellm-eval collect /path/to/eval-output-dir
 
 # Check for missing evaluations and create a CSV for re-running them
-oellm collect-results --results-dir /path/to/eval-output-dir --check true --output-csv results.csv
+oellm-eval collect /path/to/eval-output-dir --check --output-csv results.csv
 ```
 
 All `jobs.csv` files found under `results_dir` are merged into one; if the same `(model_path, task_path, n_shot)` row appears in multiple files the later-sorted entry wins (override duplicates). The merged jobs list is then compared against all `.json` result files found recursively.
@@ -247,7 +247,7 @@ All `jobs.csv` files found under `results_dir` are merged into one; if the same 
 The `--check` flag outputs a `results_missing.csv` that can be used to re-schedule failed jobs:
 
 ```bash
-oellm schedule-eval --eval-csv-path results_missing.csv
+oellm-eval schedule --eval-csv-path results_missing.csv
 ```
 
 ## CSV-Based Scheduling
@@ -255,7 +255,7 @@ oellm schedule-eval --eval-csv-path results_missing.csv
 For full control, provide a CSV file with columns: `model_path`, `task_path`, `n_shot`, and optionally `eval_suite`:
 
 ```bash
-oellm schedule-eval --eval-csv-path custom_evals.csv
+oellm-eval schedule --eval-csv-path custom_evals.csv
 ```
 
 ## Installation
@@ -300,7 +300,7 @@ uv sync --extra dev
 uv run pytest tests/ -v
 
 # Download-only mode for testing
-uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task-groups "open-sci-0.01" --download-only
+uv run oellm-eval schedule --models "EleutherAI/pythia-160m" --task-groups "open-sci-0.01" --download-only
 ```
 
 ## Documentation

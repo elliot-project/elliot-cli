@@ -680,7 +680,7 @@ def check_judge_llm_pre_flight(
     if allow_missing:
         logging.warning(
             "Scheduling %d judge-required task(s) without OPENAI_API_KEY: %s. "
-            "These will emit null performance values in collect-results.",
+            "These will emit null performance values in collect.",
             len(needed),
             ", ".join(needed),
         )

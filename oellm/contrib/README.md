@@ -15,7 +15,7 @@ To add your own benchmark, see the [Contributing Guide](CONTRIBUTING.md).
 **Metrics:** gIoU (primary), cIoU, bbox_AP, pass_rate@0.3/0.5/0.7/0.9, per-round R1–R7
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models lmsdss/RegionReasoner-7B \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv

@@ -49,7 +49,7 @@ task_groups:
 2. Use it:
 
 ```bash
-oellm schedule-eval --models "model-name" --task-groups "my-benchmark"
+oellm-eval schedule --models "model-name" --task-groups "my-benchmark"
 ```
 
 ## Adding an Image Task Group
@@ -72,7 +72,7 @@ task_groups:
 Run with:
 
 ```bash
-oellm schedule-eval --models "path/to/vlm" --task-groups "my-image-benchmark"
+oellm-eval schedule --models "path/to/vlm" --task-groups "my-image-benchmark"
 ```
 
 The lmms-eval model adapter (e.g. `llava_hf`, `qwen2_vl`) is auto-detected

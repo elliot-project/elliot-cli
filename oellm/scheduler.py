@@ -153,7 +153,7 @@ def schedule_evals(
             Passed as --include_path to lm_eval. Defaults to the bundled custom_lm_eval_tasks
             directory shipped with the package.
         local: If True, run evaluations directly on the local machine using bash instead of
-            submitting to SLURM. Requires --venv_path.
+            submitting to SLURM. Requires --venv-path.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
             (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
             Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
@@ -163,7 +163,7 @@ def schedule_evals(
     if local:
         if not venv_path:
             raise ValueError(
-                "--local requires --venv_path. Provide a path to a Python virtual "
+                "--local requires --venv-path. Provide a path to a Python virtual "
                 "environment with lm_eval/lighteval installed."
             )
         local_output = str(Path.cwd() / "oellm-output")

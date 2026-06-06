@@ -242,7 +242,7 @@ do
                     --output_path "$RESULTS_SUBDIR" \
                     ${{LIMIT:+--limit $LIMIT}}
             else
-                echo "[error] evalchemy suite requires --venv_path (not supported in container mode)."
+                echo "[error] evalchemy suite requires --venv-path (not supported in container mode)."
                 exit 1
             fi
             ;;

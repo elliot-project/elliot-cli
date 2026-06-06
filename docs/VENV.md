@@ -57,13 +57,13 @@ Verify with:
 
 ```bash
 # Text evaluation
-oellm schedule-eval \
+oellm-eval schedule \
     --models HuggingFaceTB/SmolLM2-135M-Instruct \
     --task-groups open-sci-0.01 \
     --venv-path /path/to/.venv
 
 # Image evaluation (lmms-eval)
-oellm schedule-eval \
+oellm-eval schedule \
     --models path/to/vlm \
     --task-groups image-vqa \
     --venv-path /path/to/.venv
@@ -98,7 +98,7 @@ oellm-eval schedule \
     --models Qwen/Qwen3-0.6B-Base \
     --task-groups dclm-core-22 \
     --venv-path dclm-core-venv \
-    --skip-checks true
+    --skip-checks
 ```
 
 ## Evalchemy (reasoning)
@@ -124,11 +124,11 @@ We use [Ali's fork](https://github.com/Ali-Elganzory/evalchemy) which includes a
 3. Run with `EVALCHEMY_DIR` pointing to the cloned repo:
    ```bash
    export HF_ALLOW_CODE_EVAL=1  # required by MBPP
-   EVALCHEMY_DIR=$(pwd)/evalchemy oellm schedule-eval \
+   EVALCHEMY_DIR=$(pwd)/evalchemy oellm-eval schedule \
        --models HuggingFaceTB/SmolLM2-135M \
        --task-groups reasoning \
        --venv-path evalchemy-venv \
-       --skip-checks true
+       --skip-checks
    ```
 
 > **Note:** `HF_ALLOW_CODE_EVAL=1` is required because MBPP (run via lm-eval-harness) uses HuggingFace's `code_eval` metric which executes model-generated code. The evalchemy benchmarks (GPQADiamond, MATH500, LiveCodeBench) do not require this variable as they handle code execution safely through internal guards.

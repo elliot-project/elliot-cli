@@ -21,7 +21,7 @@ rich_utils.STYLE_METAVAR = "dark_orange3"
 rich_utils.STYLE_OPTION_DEFAULT = "dim"
 
 app = typer.Typer(
-    name="oellm",
+    name="oellm-eval",
     help="ELLIOT: Multi-cluster evaluation tool for language models",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
@@ -84,7 +84,7 @@ def schedule_evals(
             directory shipped with the package, which overrides broken upstream tasks
             (e.g. mgsm_native_cot_fr/de/es). Override to point at additional task YAMLs.
         local: If True, run evaluations directly on the local machine using bash instead of
-            submitting to SLURM. Requires --venv_path. Skips cluster environment detection and
+            submitting to SLURM. Requires --venv-path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
             (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
@@ -297,7 +297,7 @@ def eval_command(
 ) -> None:
     """Run evaluations from a YAML config file.
 
-    All CLI flags override values in --config. Delegates to schedule-eval.
+    All CLI flags override values in --config. Delegates to schedule.
 
     Args:
         config: Path to a YAML config file.
@@ -341,9 +341,9 @@ def eval_command(
 
 
 # Register CLI commands
-app.command("schedule-eval")(schedule_evals)
+app.command("schedule")(schedule_evals)
 app.command("eval")(eval_command)
-app.command("collect-results")(collect_results)
+app.command("collect")(collect_results)
 app.command("list-tasks")(list_tasks)
 app.command("compare")(compare)
 

@@ -538,7 +538,7 @@ def collect_results(
             missing_df.to_csv(missing_csv, index=False)
             logging.info(f"Missing jobs saved to: {missing_csv}")
             logging.info(
-                f"You can run these with: oellm schedule-eval --eval-csv-path {missing_csv}"
+                f"You can run these with: oellm-eval schedule --eval-csv-path {missing_csv}"
             )
 
             if verbose and len(missing_jobs) > 0:
