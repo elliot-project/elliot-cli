@@ -4,15 +4,27 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 
 ## Features
 
-- **Schedule evaluations** on multiple models and tasks: `oellm schedule-eval`
-- **Collect results** and check for missing evaluations: `oellm collect-results`
+- **Schedule evaluations** on multiple models and tasks: `oellm-eval schedule`
+- **Collect results** and check for missing evaluations: `oellm-eval collect`
+- **Diagnose your environment** (cluster vars, HF cache, venv engines): `oellm-eval doctor`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
-- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Snellius)
+- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
 - **Video evaluation** via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
+
+## Commands at a Glance
+
+| Command | What it does |
+|---|---|
+| `oellm-eval schedule` | Expand models × tasks, pre-download models/datasets on the login node, generate and submit a SLURM array job (or run locally with `--local`) |
+| `oellm-eval eval --config eval.yaml` | Same as `schedule`, driven by a YAML config file; CLI flags override the file |
+| `oellm-eval collect <dir>` | Aggregate result JSONs into `eval_results.csv` + `.json` + `.md`; `--check` writes a re-schedulable CSV of missing jobs |
+| `oellm-eval list-tasks` | Show every task group, its engine, task count, and n-shot settings |
+| `oellm-eval compare <a> <b>` | Diff two collected `results.json` files task by task |
+| `oellm-eval doctor` | Diagnose the environment: cluster detection, env vars, HF cache, venv engines |
 
 ## Quick Start
 
@@ -25,19 +37,19 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
 # Run evaluations using a task group
-oellm schedule-eval \
+oellm-eval schedule \
     --models "EleutherAI/pythia-160m" \
     --task-groups "open-sci-0.01"
 
 # Image evaluation (requires venv with lmms-eval)
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
     --venv-path ~/elliot-venv
 ```
 
 This will automatically:
-- Detect your current HPC cluster (Leonardo, LUMI, JURECA, or Snellius)
+- Detect your current HPC cluster (Leonardo, LUMI, JURECA, Jupiter, or Snellius)
 - Download and cache the specified models
 - Pre-download datasets for known tasks (see warning below)
 - Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
@@ -88,7 +100,7 @@ Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 | `video-activitynet-qa` | ActivityNet-QA (requires GPT API) | lmms-eval |
 | `video-longvideobench` | LongVideoBench (cross-segment reasoning) | lmms-eval |
 
-The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) is auto-detected from the model name. Install with `pip install oellm[video]` (or use a venv with lmms-eval).
+The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) is auto-detected from the model name. Video (like image and audio) tasks run through **lmms-eval, which is not included in the cluster containers or any pip extra** — set up the general venv as described in [docs/VENV.md](docs/VENV.md) and pass `--venv-path`.
 
 ### Audio
 
@@ -110,7 +122,7 @@ The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) 
 | `audio-alpaca-audio`, `audio-openhermes`, `audio-wavcaps` | Instruction / captioning (GPT judge) | lmms-eval |
 | `audio-clotho-aqa`, `audio-cn-college-listen-mcq`, `audio-dream-tts-mcq`, `audio-voicebench`, `audio-step2-paralinguistic` | QA / MCQ / paralinguistic probes | lmms-eval |
 
-Install with `pip install oellm[audio]`. Judge-model groups (AIR-Bench chat, Alpaca-Audio, OpenHermes, WavCaps) need `OPENAI_API_KEY` on the compute node. The HPC Singularity image must include `ffmpeg` for non-WAV decode.
+Audio tasks also run through lmms-eval — use the general venv from [docs/VENV.md](docs/VENV.md) (the `[audio]` extra adds the audio decoding helpers, but lmms-eval itself must be installed per that guide). Judge-model groups (AIR-Bench chat, Alpaca-Audio, OpenHermes, WavCaps) need `OPENAI_API_KEY` on the compute node — scheduling refuses without it unless you pass `--allow-missing-judge`. The HPC Singularity image must include `ffmpeg` for non-WAV decode.
 
 ### Custom Benchmarks (contrib)
 
@@ -118,26 +130,26 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 
 ```bash
 # Run all 8 image benchmarks
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
     --venv-path ~/elliot-venv
 
 # Run all 5 video benchmarks
-oellm schedule-eval \
+oellm-eval schedule \
     --models "lmms-lab/llava-onevision-7b" \
     --task-groups "video-understanding" \
     --venv-path ~/elliot-venv
 
 # Mix image and text benchmarks in one submission
-oellm schedule-eval \
+oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-mmbench,open-sci-0.01" \
     --venv-path ~/elliot-venv
 
 # Use multiple task groups or a super group
-oellm schedule-eval --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
-oellm schedule-eval --models "model-name" --task-groups "oellm-multilingual"
+oellm-eval schedule --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
+oellm-eval schedule --models "model-name" --task-groups "oellm-multilingual"
 ```
 
 ## Running Locally (without SLURM)
@@ -149,12 +161,12 @@ The `--local` flag lets you run evaluations directly on your machine without a c
 uv pip install lm-eval torch transformers accelerate "datasets<4.0.0"
 
 # 2. Run evaluations locally — useful for smoke-testing with a small sample
-oellm schedule-eval \
+oellm-eval schedule \
     --models "EleutherAI/pythia-160m" \
     --tasks "gsm8k" \
     --n-shot 0 \
     --venv-path .venv \
-    --local true \
+    --local \
     --limit 1
 ```
 
@@ -163,12 +175,12 @@ Results are written to `./oellm-output/<timestamp>/results/`.
 **Air-gapped cluster nodes (no internet):** batch jobs set `HF_HUB_OFFLINE=1` and get `HF_HOME` from your cluster env. With `--local`, the CLI defaults `HF_HOME` to `~/.cache/huggingface` if unset and would otherwise allow Hub access—so on a compute node without network, export your real cache and offline flag before running, for example:
 
 ```bash
-export HF_HOME=/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-evals/hf_data
+export HF_HOME=/path/to/your/shared/hf_cache   # e.g. $WORK/hf_cache on Leonardo
 export HF_HUB_OFFLINE=1
-oellm schedule-eval ... --venv_path .venv --local true
+oellm-eval schedule ... --venv-path .venv --local
 ```
 
-The `HF_HUB_OFFLINE` value is read when you invoke `oellm` and baked into the generated script.
+The `HF_HUB_OFFLINE` value is read when you invoke `oellm-eval` and baked into the generated script.
 
 ## SLURM Overrides
 
@@ -176,11 +188,11 @@ Override cluster defaults (partition, account, time limit, memory, etc.) with `-
 
 ```bash
 # Use a different partition (e.g. dev-g on LUMI when small-g is crowded)
-oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" \
   --slurm-template-var '{"PARTITION":"dev-g"}'
 
 # Multiple overrides: partition, account, time limit, GPUs, exact RAM
-oellm schedule-eval --models "model-name" --task-groups "open-sci-0.01" \
+oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" \
   --slurm-template-var '{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
 ```
 
@@ -196,7 +208,7 @@ override these defaults:
 
 ```bash
 # Set an explicit batch size (overrides the local/cluster default)
-BATCH_SIZE=8 oellm schedule-eval \
+BATCH_SIZE=8 oellm-eval schedule \
   --models "model-name" \
   --task-groups "belebele-eu-cf" \
   --venv-path .venv
@@ -206,7 +218,7 @@ If you need full manual control over all model args, set `MODEL_ARGS`,
 for example:
 
 ```bash
-MODEL_ARGS='batch_size=8' oellm schedule-eval \
+MODEL_ARGS='batch_size=8' oellm-eval schedule \
   --models "model-name" --task-groups "belebele-eu-cf" --venv-path .venv
 ```
 
@@ -217,18 +229,51 @@ MODEL_ARGS='batch_size=8' oellm schedule-eval \
 If you use custom tasks via `--tasks` that are not in the task groups registry, the CLI will attempt to look them up but **cannot guarantee the datasets will be cached**. This may cause failures on compute nodes that don't have network access.
 
 **Recommendation:** Use `--task-groups` when possible, or ensure your custom task datasets are already cached in `$HF_HOME` before scheduling.
+
 ## Collecting Results
 
+After evaluations complete, collect results into a CSV.  `collect` **recursively** searches the given directory for every `jobs.csv` file and every `.json` result file, so you can point it at a top-level output folder that contains many sub-runs:
+
+```
+output/
+├── hellaswag_mt1/
+│   ├── jobs.csv
+│   └── results/
+├── hellaswag_mt2/
+│   ├── jobs.csv
+│   └── results/
+└── global_mmlu1/
+    ├── jobs.csv
+    └── results/
+```
+
 ```bash
-# Basic collection
-oellm collect-results --results-dir /path/to/eval-output-dir
+# Basic collection — writes eval_results.csv, eval_results.json, eval_results.md
+oellm-eval collect /path/to/eval-output-dir
 
 # Check for missing evaluations and create a CSV for re-running them
-oellm collect-results --results-dir /path/to/eval-output-dir --check true --output-csv results.csv
-
-# Re-schedule failed jobs
-oellm schedule-eval --eval-csv-path results_missing.csv
+oellm-eval collect /path/to/eval-output-dir --check --output-csv results.csv
 ```
+
+Three output files are written next to your `--output-csv` path: the CSV (raw metric per row), a versioned JSON envelope, and a Markdown table with metrics normalized to a 0–100 scale.
+
+All `jobs.csv` files found under `results_dir` are merged into one; if the same `(model_path, task_path, n_shot)` row appears in multiple files the later-sorted entry wins (override duplicates). The merged jobs list is then compared against all `.json` result files found recursively.
+
+The `--check` flag outputs a `results_missing.csv` that can be used to re-schedule failed jobs:
+
+```bash
+oellm-eval schedule --eval-csv-path results_missing.csv
+```
+
+## CSV-Based Scheduling
+
+For full control, provide a CSV file with columns: `model_path`, `task_path`, `n_shot`, and optionally `eval_suite` (one of `lm_eval` — the default, `lighteval`, `lmms_eval`, `evalchemy`, or a contrib suite name):
+
+```bash
+oellm-eval schedule --eval-csv-path custom_evals.csv
+```
+
+> **Note:** field values must not contain commas, quotes, or newlines — the SLURM-side reader splits rows on commas, and scheduling rejects such rows with an error. Model args like `model,revision=...` are not supported.
 
 ## Installation
 
@@ -238,7 +283,7 @@ uv tool install -p 3.12 git+https://github.com/elliot-project/elliot-cli.git
 
 Update to latest:
 ```bash
-uv tool upgrade oellm
+uv tool upgrade oellm-eval
 ```
 
 ### JURECA/JSC Specifics
@@ -252,13 +297,28 @@ export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python
 export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
 ```
 
-## Supported Clusters:
-We support: Leonardo, Lumi, Jureca, Jupiter, and Snellius
+## Supported Clusters
+
+Leonardo, LUMI, JURECA, Jupiter, and Snellius — detected automatically from the login node's hostname (see [`oellm/resources/clusters.yaml`](oellm/resources/clusters.yaml)). Any value there can be overridden by exporting the environment variable before scheduling.
+
+## Environment Diagnostics
+
+`schedule` verifies before submission that the chosen runtime (venv or container) can actually run the scheduled suites — missing engines, missing suite env vars (e.g. `AUDIOBENCH_DIR`), and version-pinned groups on the wrong engine (`dclm-core-22` needs `lm-eval==0.4.9.2`) are rejected with an actionable message instead of failing hours later on a compute node. Bypass with `--skip-checks`.
+
+Run the same checks standalone at any time:
+
+```bash
+# Full report: cluster detection, env vars, HF cache, SLURM binaries, venv engines
+oellm-eval doctor --venv-path /path/to/.venv
+
+# Treat the engines these groups need as required (exit 1 if missing)
+oellm-eval doctor --venv-path /path/to/.venv --task-groups "image-vqa,open-sci-0.01"
+```
 
 ## CLI Options
 
 ```bash
-oellm schedule-eval --help
+oellm-eval schedule --help
 ```
 
 ## Development
@@ -272,7 +332,7 @@ uv sync --extra dev
 uv run pytest tests/ -v
 
 # Download-only mode for testing
-uv run oellm schedule-eval --models "EleutherAI/pythia-160m" --task-groups "open-sci-0.01" --download-only
+uv run oellm-eval schedule --models "EleutherAI/pythia-160m" --task-groups "open-sci-0.01" --download-only
 ```
 
 ## Documentation

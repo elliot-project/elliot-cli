@@ -23,7 +23,7 @@ task_groups:
 ```
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models org/MyModel \
   --task-groups my-benchmark \
   --venv-path ~/elliot-venv
@@ -207,7 +207,16 @@ def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
     return None
 ```
 
-`CLUSTER_ENV_VARS` are validated by `dispatch.py` before `run()` is called.
+`CLUSTER_ENV_VARS` are validated twice: by the scheduler's environment
+pre-flight on the login node (before SLURM submission) and by `dispatch.py`
+on the compute node before `run()` is called.
+
+> **Note on `parse_results`:** the protocol requires it (and the registry
+> tests enforce it), but result collection currently parses the
+> lmms-eval-shaped JSON that `run()` writes *generically* — `parse_results`
+> is not invoked by `collect`. Treat the JSON shape written by `run()` as the
+> real contract; keep `parse_results` correct so the suite is ready for
+> format-specific collection.
 
 ---
 

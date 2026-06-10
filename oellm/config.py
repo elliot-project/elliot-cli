@@ -26,10 +26,14 @@ class SlurmOverrides:
     gpus_per_node: int | None = None
     time_limit: str | None = None
     max_array_len: int = 128
+    # Template vars the dataclass doesn't model (SLURM_MEM, CPUS_PER_TASK, …).
+    # The scheduler applies any key to the environment, so these must survive
+    # the EvalConfig round-trip verbatim instead of being dropped.
+    extra_template_vars: dict[str, str] = field(default_factory=dict)
 
     def to_template_var_dict(self) -> dict[str, str]:
         """Return a dict suitable for ``slurm_template_var`` JSON consumption."""
-        d: dict[str, str] = {}
+        d: dict[str, str] = dict(self.extra_template_vars)
         if self.partition is not None:
             d["PARTITION"] = self.partition
         if self.account is not None:
@@ -84,6 +88,12 @@ class EvalConfig:
     # ---- SLURM overrides ----
     slurm: SlurmOverrides = field(default_factory=SlurmOverrides)
 
+    # Set by from_cli_kwargs: names of fields explicitly provided on the CLI
+    # ("slurm.max_array_len" for the nested one). Plain class attribute, not a
+    # dataclass field, so it stays out of __init__/fields(). merge() uses it
+    # to distinguish "--no-dry-run" from "flag not given".
+    _cli_provided = None
+
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
@@ -125,22 +135,24 @@ class EvalConfig:
         task_groups: str | None = None,
         n_shot: int | list[int] | None = None,
         eval_csv_path: str | None = None,
-        max_array_len: int = 128,
+        max_array_len: int | None = None,
         limit: int | None = None,
-        verbose: bool = False,
-        download_only: bool = False,
-        dry_run: bool = False,
-        skip_checks: bool = False,
-        trust_remote_code: bool = True,
+        verbose: bool | None = None,
+        download_only: bool | None = None,
+        dry_run: bool | None = None,
+        skip_checks: bool | None = None,
+        trust_remote_code: bool | None = None,
         venv_path: str | None = None,
         lm_eval_include_path: str | None = None,
-        local: bool = False,
+        local: bool | None = None,
         slurm_template_var: str | None = None,
     ) -> EvalConfig:
         """Build an ``EvalConfig`` from the loose CLI parameters.
 
-        This is the bridge that keeps the existing CLI signature 100 %
-        backward-compatible.
+        Every parameter defaults to ``None`` meaning "not provided on the CLI".
+        Provided parameters are recorded so :meth:`merge` can let an explicit
+        CLI value override YAML even when it equals the class default
+        (e.g. ``--no-dry-run`` against ``dry_run: true``).
         """
         import json
 
@@ -165,7 +177,30 @@ class EvalConfig:
         elif isinstance(n_shot, list):
             n_shot_list = n_shot
 
-        slurm = SlurmOverrides(max_array_len=max_array_len)
+        provided: set[str] = set()
+        for field_name, value in (
+            ("models", models_list),
+            ("tasks", tasks_list),
+            ("task_groups", groups_list),
+            ("n_shot", n_shot_list),
+            ("eval_csv_path", eval_csv_path),
+            ("limit", limit),
+            ("verbose", verbose),
+            ("download_only", download_only),
+            ("dry_run", dry_run),
+            ("skip_checks", skip_checks),
+            ("trust_remote_code", trust_remote_code),
+            ("venv_path", venv_path),
+            ("lm_eval_include_path", lm_eval_include_path),
+            ("local", local),
+        ):
+            if value is not None:
+                provided.add(field_name)
+
+        slurm = SlurmOverrides()
+        if max_array_len is not None:
+            slurm.max_array_len = max_array_len
+            provided.add("slurm.max_array_len")
         if slurm_template_var:
             try:
                 opts = json.loads(slurm_template_var)
@@ -178,35 +213,84 @@ class EvalConfig:
                     "slurm_template_var must be a JSON object, e.g. "
                     '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00"}'
                 )
-            slurm.partition = opts.get("PARTITION", opts.get("partition"))
-            slurm.account = opts.get("ACCOUNT", opts.get("account"))
-            gpus = opts.get("GPUS_PER_NODE", opts.get("gpus_per_node"))
-            if gpus is not None:
-                slurm.gpus_per_node = int(gpus)
-            slurm.time_limit = opts.get("TIME", opts.get("time_limit"))
+            for key, value in opts.items():
+                upper = str(key).upper()
+                if upper == "PARTITION":
+                    slurm.partition = value
+                elif upper == "ACCOUNT":
+                    slurm.account = value
+                elif upper == "GPUS_PER_NODE":
+                    slurm.gpus_per_node = int(value)
+                elif upper == "TIME" or key == "time_limit":
+                    slurm.time_limit = str(value)
+                else:
+                    # Unmodeled keys (SLURM_MEM, …) pass through verbatim — the
+                    # scheduler exports any key into the job environment.
+                    slurm.extra_template_vars[str(key)] = str(value)
 
-        return cls(
+        cfg = cls(
             models=models_list,
             tasks=tasks_list,
             task_groups=groups_list,
             n_shot=n_shot_list,
             eval_csv_path=eval_csv_path,
             limit=limit,
-            verbose=verbose,
-            download_only=download_only,
-            dry_run=dry_run,
-            skip_checks=skip_checks,
-            trust_remote_code=trust_remote_code,
+            verbose=bool(verbose) if verbose is not None else False,
+            download_only=bool(download_only) if download_only is not None else False,
+            dry_run=bool(dry_run) if dry_run is not None else False,
+            skip_checks=bool(skip_checks) if skip_checks is not None else False,
+            trust_remote_code=bool(trust_remote_code)
+            if trust_remote_code is not None
+            else True,
             venv_path=venv_path,
             lm_eval_include_path=lm_eval_include_path,
-            local=local,
+            local=bool(local) if local is not None else False,
             slurm=slurm,
         )
+        cfg._cli_provided = provided
+        return cfg
+
+    _KNOWN_KEYS = frozenset(
+        {
+            "models",
+            "tasks",
+            "task_groups",
+            "n_shot",
+            "eval_csv_path",
+            "limit",
+            "verbose",
+            "download_only",
+            "dry_run",
+            "skip_checks",
+            "trust_remote_code",
+            "venv_path",
+            "lm_eval_include_path",
+            "local",
+            "slurm",
+        }
+    )
+    _KNOWN_SLURM_KEYS = frozenset(
+        {"partition", "account", "gpus_per_node", "time_limit", "max_array_len"}
+    )
 
     @classmethod
     def _from_dict(cls, raw: dict[str, Any]) -> EvalConfig:
         """Construct from a raw dict (YAML or programmatic)."""
+        unknown = set(raw) - cls._KNOWN_KEYS
+        if unknown:
+            logging.warning(
+                f"Ignoring unknown config key(s): {', '.join(sorted(unknown))}. "
+                f"Known keys: {', '.join(sorted(cls._KNOWN_KEYS))}."
+            )
+
         slurm_raw = raw.get("slurm", {}) or {}
+        unknown_slurm = set(slurm_raw) - cls._KNOWN_SLURM_KEYS
+        if unknown_slurm:
+            logging.warning(
+                f"Ignoring unknown slurm config key(s): "
+                f"{', '.join(sorted(unknown_slurm))}. "
+                f"Known keys: {', '.join(sorted(cls._KNOWN_SLURM_KEYS))}."
+            )
         slurm = SlurmOverrides(
             partition=slurm_raw.get("partition"),
             account=slurm_raw.get("account"),
@@ -242,8 +326,15 @@ class EvalConfig:
     def merge(self, cli: EvalConfig) -> EvalConfig:
         """Return a new config where *cli* values override *self* (the YAML base).
 
-        A CLI field is considered "set" when it differs from the class default.
+        When *cli* was built by :meth:`from_cli_kwargs`, "set" means the flag
+        was actually provided (tracked explicitly), so a CLI value equal to
+        the class default still overrides YAML (e.g. ``--no-dry-run`` beats
+        ``dry_run: true``). For configs constructed directly (without the
+        tracking attribute), falls back to the legacy heuristic of comparing
+        against the class default.
         """
+        provided: set[str] | None = getattr(cli, "_cli_provided", None)
+
         merged_kwargs: dict[str, Any] = {}
         for f in fields(self):
             yaml_val = getattr(self, f.name)
@@ -251,9 +342,11 @@ class EvalConfig:
             default_val = _field_default(f)
 
             if f.name == "slurm":
-                merged_kwargs["slurm"] = _merge_slurm(yaml_val, cli_val)
+                merged_kwargs["slurm"] = _merge_slurm(yaml_val, cli_val, provided)
+            elif provided is not None:
+                merged_kwargs[f.name] = cli_val if f.name in provided else yaml_val
             elif cli_val != default_val:
-                # CLI explicitly set — use it
+                # Legacy heuristic: CLI considered set when ≠ class default
                 merged_kwargs[f.name] = cli_val
             else:
                 merged_kwargs[f.name] = yaml_val
@@ -379,23 +472,41 @@ def _field_default(f: Any) -> Any:
     return None
 
 
-def _merge_slurm(yaml_slurm: SlurmOverrides, cli_slurm: SlurmOverrides) -> SlurmOverrides:
-    """Merge two SlurmOverrides — CLI wins when non-default."""
-    default = SlurmOverrides()
+def _merge_slurm(
+    yaml_slurm: SlurmOverrides,
+    cli_slurm: SlurmOverrides,
+    provided: set[str] | None = None,
+) -> SlurmOverrides:
+    """Merge two SlurmOverrides — CLI wins when set (None means unset)."""
+    if provided is not None:
+        max_array_len = (
+            cli_slurm.max_array_len
+            if "slurm.max_array_len" in provided
+            else yaml_slurm.max_array_len
+        )
+    else:
+        # Legacy heuristic for configs without provenance tracking
+        max_array_len = (
+            cli_slurm.max_array_len
+            if cli_slurm.max_array_len != SlurmOverrides().max_array_len
+            else yaml_slurm.max_array_len
+        )
     return SlurmOverrides(
         partition=cli_slurm.partition
-        if cli_slurm.partition != default.partition
+        if cli_slurm.partition is not None
         else yaml_slurm.partition,
         account=cli_slurm.account
-        if cli_slurm.account != default.account
+        if cli_slurm.account is not None
         else yaml_slurm.account,
         gpus_per_node=cli_slurm.gpus_per_node
-        if cli_slurm.gpus_per_node != default.gpus_per_node
+        if cli_slurm.gpus_per_node is not None
         else yaml_slurm.gpus_per_node,
         time_limit=cli_slurm.time_limit
-        if cli_slurm.time_limit != default.time_limit
+        if cli_slurm.time_limit is not None
         else yaml_slurm.time_limit,
-        max_array_len=cli_slurm.max_array_len
-        if cli_slurm.max_array_len != default.max_array_len
-        else yaml_slurm.max_array_len,
+        max_array_len=max_array_len,
+        extra_template_vars={
+            **yaml_slurm.extra_template_vars,
+            **cli_slurm.extra_template_vars,
+        },
     )

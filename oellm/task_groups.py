@@ -4,6 +4,12 @@ from importlib.resources import files
 
 import yaml
 
+# Datasets that store media as external URLs (not embedded bytes). A bare
+# snapshot_download only fetches the URLs, not the media — they MUST go through
+# load_dataset()+_materialize_external_urls() so the per-row HTTP fetch runs on
+# the (online) login node. Excluded from the snapshot-only fast path below.
+_URL_BASED_DATASETS = {"facebook/textvqa"}
+
 
 @dataclass
 class DatasetSpec:
@@ -235,7 +241,11 @@ def _collect_dataset_specs(group_names: Iterable[str]) -> list[DatasetSpec]:
                 existing.needs_snapshot_download = True
 
     for t, _, group_name in _iter_all_tasks(parsed):
-        needs_snapshot = group_name.startswith(("audio-", "video-"))
+        needs_snapshot = group_name.startswith(("audio-", "video-", "image-"))
+        if t.dataset in _URL_BASED_DATASETS:
+            # URL-based dataset: snapshot would grab only links. Force the
+            # load_dataset()+materialize path so images are actually fetched.
+            needs_snapshot = False
 
         if t.dataset == "facebook/flores" and not t.subset:
             for lang in _extract_flores_subsets(t.name):

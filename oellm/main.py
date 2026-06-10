@@ -21,7 +21,7 @@ rich_utils.STYLE_METAVAR = "dark_orange3"
 rich_utils.STYLE_OPTION_DEFAULT = "dim"
 
 app = typer.Typer(
-    name="oellm",
+    name="oellm-eval",
     help="ELLIOT: Multi-cluster evaluation tool for language models",
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
@@ -36,16 +36,16 @@ def schedule_evals(
     eval_csv_path: str | None = None,
     *,
     config: str | None = None,
-    max_array_len: int = 128,
+    max_array_len: int | None = None,
     limit: int | None = None,
-    verbose: bool = False,
-    download_only: bool = False,
-    dry_run: bool = False,
-    skip_checks: bool = False,
-    trust_remote_code: bool = True,
+    verbose: bool | None = None,
+    download_only: bool | None = None,
+    dry_run: bool | None = None,
+    skip_checks: bool | None = None,
+    trust_remote_code: bool | None = None,
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
-    local: bool = False,
+    local: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
 ) -> None:
@@ -53,8 +53,9 @@ def schedule_evals(
 
     Args:
         models: A string of comma-separated model paths or Hugging Face model identifiers.
-            Warning: does not allow passing model args such as `EleutherAI/pythia-160m,revision=step100000`
-            since we split on commas. If you need to pass model args, use the `eval_csv_path` option.
+            Warning: model args such as `EleutherAI/pythia-160m,revision=step100000` are
+            not supported — commas separate models here, and the SLURM-side CSV reader
+            also splits rows on commas, so `eval_csv_path` cannot carry them either.
             For local paths:
             - If a directory contains `.safetensors` files directly, it will be treated as a single model
             - If a directory contains subdirectories with models (e.g., converted_checkpoints/),
@@ -68,14 +69,18 @@ def schedule_evals(
         n_shot: An integer or list of integers specifying the number of shots applied to `tasks`.
         eval_csv_path: A path to a CSV file containing evaluation data.
             Warning: exclusive argument. Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided.
-        config: Path to a YAML config file. CLI flags override YAML values.
-        max_array_len: The maximum number of jobs to schedule to run concurrently.
+        config: Path to a YAML config file. CLI flags override YAML values
+            (explicitly passing a flag wins even when it equals the default,
+            e.g. `--no-dry-run` overrides a YAML `dry_run: true`).
+        max_array_len: The maximum number of jobs to schedule to run concurrently. Default 128.
             Warning: this is not the number of jobs in the array job. This is determined by the environment variable `QUEUE_LIMIT`.
         limit: If set, limit the number of samples per task (useful for quick testing).
             Passes --limit to lm_eval and --max_samples to lighteval.
         download_only: If True, only download the datasets and models and exit.
         dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
-        skip_checks: If True, skip container image, model validation, and dataset pre-download checks for faster execution.
+        skip_checks: If True, skip container image, environment pre-flight (engine availability
+            in the venv/container per scheduled suite), model validation, and dataset
+            pre-download checks for faster execution.
         trust_remote_code: If True, trust remote code when downloading datasets. Default is True. Workflow might fail if set to False.
         venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
             this venv instead of inside a Singularity/Apptainer container.
@@ -84,7 +89,7 @@ def schedule_evals(
             directory shipped with the package, which overrides broken upstream tasks
             (e.g. mgsm_native_cot_fr/de/es). Override to point at additional task YAMLs.
         local: If True, run evaluations directly on the local machine using bash instead of
-            submitting to SLURM. Requires --venv_path. Skips cluster environment detection and
+            submitting to SLURM. Requires --venv-path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
             (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
@@ -274,6 +279,56 @@ def compare(
     console.print(table)
 
 
+def doctor(
+    *,
+    venv_path: str | None = None,
+    task_groups: str | None = None,
+) -> None:
+    """Diagnose the evaluation environment.
+
+    Checks cluster detection, required environment variables, HF cache health,
+    SLURM binaries, the container image, and — when --venv-path is given —
+    probes the venv for every engine the platform knows about (lm-eval,
+    lighteval, lmms-eval, evalchemy, contrib plugins).
+
+    Args:
+        venv_path: Venv to probe; same value you would pass to schedule.
+        task_groups: Comma-separated task groups you intend to run. Engines
+            these groups need are treated as required — if they are missing,
+            the command exits non-zero. Without this, missing engines are
+            reported as warnings only.
+    """
+    from rich.table import Table
+
+    from oellm.envcheck import FAIL, OK, WARN, run_doctor_checks
+    from oellm.utils import get_console
+
+    groups_list = (
+        [g.strip() for g in task_groups.split(",") if g.strip()] if task_groups else None
+    )
+    results = run_doctor_checks(venv_path=venv_path, task_groups=groups_list)
+
+    console = get_console()
+    table = Table(title="oellm-eval doctor")
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Detail", overflow="fold")
+    icons = {
+        OK: "[green]OK[/green]",
+        WARN: "[yellow]WARN[/yellow]",
+        FAIL: "[red]FAIL[/red]",
+    }
+    for r in results:
+        table.add_row(r.name, icons.get(r.status, r.status), r.detail)
+    console.print(table)
+
+    failures = [r for r in results if r.status == FAIL]
+    if failures:
+        console.print(f"[red]{len(failures)} check(s) failed.[/red]")
+        raise typer.Exit(1)
+    console.print("[green]No failing checks.[/green]")
+
+
 def eval_command(
     config: str | None = None,
     *,
@@ -282,22 +337,22 @@ def eval_command(
     task_groups: str | None = None,
     n_shot: list[int] | None = None,
     eval_csv_path: str | None = None,
-    max_array_len: int = 128,
+    max_array_len: int | None = None,
     limit: int | None = None,
-    verbose: bool = False,
-    download_only: bool = False,
-    dry_run: bool = False,
-    skip_checks: bool = False,
-    trust_remote_code: bool = True,
+    verbose: bool | None = None,
+    download_only: bool | None = None,
+    dry_run: bool | None = None,
+    skip_checks: bool | None = None,
+    trust_remote_code: bool | None = None,
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
-    local: bool = False,
+    local: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
 ) -> None:
     """Run evaluations from a YAML config file.
 
-    All CLI flags override values in --config. Delegates to schedule-eval.
+    All CLI flags override values in --config. Delegates to schedule.
 
     Args:
         config: Path to a YAML config file.
@@ -341,11 +396,12 @@ def eval_command(
 
 
 # Register CLI commands
-app.command("schedule-eval")(schedule_evals)
+app.command("schedule")(schedule_evals)
 app.command("eval")(eval_command)
-app.command("collect-results")(collect_results)
+app.command("collect")(collect_results)
 app.command("list-tasks")(list_tasks)
 app.command("compare")(compare)
+app.command("doctor")(doctor)
 
 
 def main() -> None:

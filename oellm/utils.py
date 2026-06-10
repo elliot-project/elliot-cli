@@ -166,12 +166,16 @@ def _load_cluster_env() -> None:
         os.environ.setdefault(k, v)
 
     # Validate that critical sbatch variables resolved to real values.
+    # HF_HOME is included because the job script derives every cache path from
+    # it (`HF_DATASETS_CACHE="$HF_HOME/datasets"`); unset, the compute node
+    # would resolve caches to "/datasets" and fail far from the real cause.
     _required_vars = [
         "PARTITION",
         "ACCOUNT",
         "EVAL_BASE_DIR",
         "EVAL_OUTPUT_DIR",
         "GPUS_PER_NODE",
+        "HF_HOME",
     ]
     missing = [
         v for v in _required_vars if not os.environ.get(v) or "{" in os.environ.get(v, "")
@@ -304,10 +308,12 @@ def _process_model_paths(models: Iterable[str]):
                         )
                         per_model_paths.append(model)
                     except Exception as e:
-                        logging.debug(
-                            f"Failed to download model {model} from Hugging Face Hub. Continuing..."
+                        logging.warning(
+                            f"Failed to download model {model} from Hugging Face Hub "
+                            f"({type(e).__name__}: {e}). The job will still be "
+                            f"scheduled and will fail on the offline compute node "
+                            f"unless the model is already cached."
                         )
-                        logging.debug(e)
                 else:
                     cache_dir = (
                         Path(os.getenv("HF_HOME")) / "hub"
@@ -458,6 +464,18 @@ def _pre_download_datasets_from_specs(
                             f"snapshot_download failed for '{rev_label}': {e}; "
                             f"falling back to load_dataset."
                         )
+
+                if spec.needs_snapshot_download and not snapshot_failed:
+                    # Snapshot already cached the raw files. Skip the
+                    # load_dataset() build below: it fully materializes the
+                    # dataset into Arrow (decoding every image/audio sample),
+                    # which OOM-kills large media datasets on the memory-capped
+                    # login node. The compute node builds at runtime from the
+                    # cached files (offline-safe and has far more RAM).
+                    logging.debug(
+                        f"Snapshot complete for '{label}'; skipping load_dataset build."
+                    )
+                    continue
 
             try:
                 ds = load_dataset(
@@ -680,7 +698,7 @@ def check_judge_llm_pre_flight(
     if allow_missing:
         logging.warning(
             "Scheduling %d judge-required task(s) without OPENAI_API_KEY: %s. "
-            "These will emit null performance values in collect-results.",
+            "These will emit null performance values in collect.",
             len(needed),
             ", ".join(needed),
         )

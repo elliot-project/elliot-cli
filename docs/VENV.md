@@ -24,7 +24,9 @@ documented in `oellm/contrib/<name>/README.md`:
 | `audio-audiobench*` | `audiobench` | [`oellm/contrib/audiobench/README.md`](../oellm/contrib/audiobench/README.md) |
 | `regiondial-*` | `regiondial_bench` | [`oellm/contrib/regiondial_bench/README.md`](../oellm/contrib/regiondial_bench/README.md) |
 
-Use `oellm list-tasks` to see which suite a given task group routes to.
+Use `oellm-eval list-tasks` to see which suite a given task group routes to,
+and `oellm-eval doctor --venv-path <venv> --task-groups <groups>` to verify a
+venv against the groups you plan to run.
 
 ## Setup (general venv)
 
@@ -32,8 +34,10 @@ Use `oellm list-tasks` to see which suite a given task group routes to.
 # 1. Create venv
 uv venv --python 3.12 /path/to/.venv
 
-# 2. Install lmms-eval editable from main
+# 2. Install lmms-eval editable from git
 #    (Editable is required — wheel build drops `_default_template_yaml` files.)
+#    Pin a known-good commit (`...lmms-eval.git@<commit>#egg=...`) so two venvs
+#    created on different days run the same engine — unpinned `main` drifts.
 uv pip install --python /path/to/.venv/bin/python \
     -e "git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git#egg=lmms-eval"
 
@@ -49,21 +53,21 @@ UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \
 
 Verify with:
 ```bash
-/path/to/.venv/bin/python -c \
-  'from lmms_eval.tasks import TaskManager; TaskManager("INFO"); print("OK")'
+oellm-eval doctor --venv-path /path/to/.venv --task-groups "open-sci-0.01,image-vqa"
 ```
+(or manually: `/path/to/.venv/bin/python -c 'from lmms_eval.tasks import TaskManager; TaskManager("INFO"); print("OK")'`)
 
 ## Usage
 
 ```bash
 # Text evaluation
-oellm schedule-eval \
+oellm-eval schedule \
     --models HuggingFaceTB/SmolLM2-135M-Instruct \
     --task-groups open-sci-0.01 \
     --venv-path /path/to/.venv
 
 # Image evaluation (lmms-eval)
-oellm schedule-eval \
+oellm-eval schedule \
     --models path/to/vlm \
     --task-groups image-vqa \
     --venv-path /path/to/.venv
@@ -94,12 +98,16 @@ uv pip install --python dclm-core-venv/bin/python -e '.[dclm]'
 ```
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
     --models Qwen/Qwen3-0.6B-Base \
     --task-groups dclm-core-22 \
     --venv-path dclm-core-venv \
-    --skip-checks true
+    --skip-checks   # skips dataset pre-download AND the environment pre-flight — make sure datasets are already cached
 ```
+
+> Without `--skip-checks`, the scheduler verifies the venv actually contains
+> `lm-eval==0.4.9.2` — running this group on any other lm-eval version
+> silently changes the scores.
 
 ## Evalchemy (reasoning)
 
@@ -124,11 +132,11 @@ We use [Ali's fork](https://github.com/Ali-Elganzory/evalchemy) which includes a
 3. Run with `EVALCHEMY_DIR` pointing to the cloned repo:
    ```bash
    export HF_ALLOW_CODE_EVAL=1  # required by MBPP
-   EVALCHEMY_DIR=$(pwd)/evalchemy oellm schedule-eval \
+   EVALCHEMY_DIR=$(pwd)/evalchemy oellm-eval schedule \
        --models HuggingFaceTB/SmolLM2-135M \
        --task-groups reasoning \
        --venv-path evalchemy-venv \
-       --skip-checks true
+       --skip-checks
    ```
 
 > **Note:** `HF_ALLOW_CODE_EVAL=1` is required because MBPP (run via lm-eval-harness) uses HuggingFace's `code_eval` metric which executes model-generated code. The evalchemy benchmarks (GPQADiamond, MATH500, LiveCodeBench) do not require this variable as they handle code execution safely through internal guards.

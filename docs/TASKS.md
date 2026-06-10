@@ -4,13 +4,18 @@
 
 Tasks are defined in `oellm/resources/task-groups.yaml`. Only tasks in this file are tested and guaranteed to work. The CLI parses this via `task_groups.py` and expands groups into `(task, n_shot, suite)` tuples for scheduling.
 
-Three evaluation suites are supported:
+Supported evaluation suites:
 
 | Suite value | Engine | Use case |
 |---|---|---|
-| `lm_eval` | [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness) | Text benchmarks |
+| `lm_eval` (alias `lm-eval-harness`) | [lm-eval](https://github.com/EleutherAI/lm-evaluation-harness) | Text benchmarks |
 | `lighteval` | [lighteval](https://github.com/huggingface/lighteval) | Translation / multilingual |
-| `lmms_eval` | [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) | Image / VQA benchmarks |
+| `lmms_eval` | [lmms-eval](https://github.com/EvolvingLMMs-Lab/lmms-eval) | Image / video / audio benchmarks |
+| `evalchemy` | [evalchemy](https://github.com/mlfoundations/evalchemy) (fork) | Free-form reasoning (GPQA, MATH500, LiveCodeBench) — needs its own venv, see [VENV.md](VENV.md) |
+| `<contrib name>` | a contrib plugin | Custom benchmarks — see [CONTRIBUTING.md](../oellm/contrib/CONTRIBUTING.md) |
+
+`suite` is set at the group level and can be overridden per task — the
+`reasoning` group uses this to mix lm-eval and evalchemy tasks in one group.
 
 ## YAML Structure
 
@@ -49,7 +54,7 @@ task_groups:
 2. Use it:
 
 ```bash
-oellm schedule-eval --models "model-name" --task-groups "my-benchmark"
+oellm-eval schedule --models "model-name" --task-groups "my-benchmark"
 ```
 
 ## Adding an Image Task Group
@@ -72,7 +77,7 @@ task_groups:
 Run with:
 
 ```bash
-oellm schedule-eval --models "path/to/vlm" --task-groups "my-image-benchmark"
+oellm-eval schedule --models "path/to/vlm" --task-groups "my-image-benchmark"
 ```
 
 The lmms-eval model adapter (e.g. `llava_hf`, `qwen2_vl`) is auto-detected
@@ -83,19 +88,34 @@ from the model name. No manual override is needed.
 | Field | Required | Level | Description |
 |-------|----------|-------|-------------|
 | `description` | Yes | group | Short description of the task group |
-| `suite` | Yes | group | Evaluation suite: `lm_eval`, `lighteval`, or `lmms_eval` |
+| `suite` | Yes (group) | group or task | Evaluation suite; a task-level value overrides the group |
 | `n_shots` | Yes | group or task | List of shot counts; must be set at group or task level |
-| `dataset` | Yes | group or task | HuggingFace dataset repo ID (required for pre-download and testing) |
+| `dataset` | Recommended | group or task | HuggingFace dataset repo ID — without it, nothing is pre-downloaded for the task |
 | `task` | Yes | task | Task name as recognized by the evaluation suite |
 | `subset` | No | task | HuggingFace dataset config/subset name |
+| `revisions` | No | task | HF dataset revisions/branches to pre-fetch (default `["main"]`; e.g. MVBench keeps videos on a `video` branch) |
+| `hf_models` | No | task | Auxiliary HF *model* repos to pre-download (e.g. a task router or SAM checkpoint) |
+| `hf_dataset_files` | No | task | Specific files to fetch from a dataset repo: `{repo_id, patterns, revision?}` — use for large repos where only a subset is needed |
 
-## Important: Dataset Requirement
+## Important: Dataset Pre-Download Behavior
 
-**You must provide the `dataset` field** (at group or task level) for:
-1. **Automatic pre-download** - Compute nodes often lack network access; datasets are cached beforehand
-2. **CI testing** - The test suite validates that all datasets in `task-groups.yaml` are accessible
+**Provide the `dataset` field** (at group or task level) wherever possible:
+compute nodes run with `HF_HUB_OFFLINE=1`, so anything not cached on the
+login node before submission fails at eval time. Tasks without a `dataset`
+field are simply skipped by the pre-download step.
 
-Tasks without a `dataset` field will not have their data pre-downloaded and are not covered by CI validation.
+Two details worth knowing:
+
+1. **The group-name prefix selects the download strategy.** Groups whose name
+   starts with `audio-`, `video-`, or `image-` are fetched with
+   `snapshot_download` (raw repo files; the compute node builds the dataset at
+   runtime — this avoids out-of-memory kills on the login node for large
+   media datasets). All other groups go through `load_dataset()`. If you add
+   a media group, keep the prefix.
+2. **Dataset accessibility is verified by `tests/test_datasets.py`**, which
+   needs network access and is therefore excluded from the offline CI run —
+   execute it locally when adding datasets:
+   `uv run pytest tests/test_datasets.py -k my-group`.
 
 ## Custom Benchmarks (contrib plugins)
 

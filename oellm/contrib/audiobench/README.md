@@ -96,7 +96,7 @@ uv pip install --reinstall rapidfuzz
 
 ### Dataset pre-download
 
-No manual steps required. `schedule-eval` pre-downloads every
+No manual steps required. `schedule` pre-downloads every
 `AudioLLMs/*` HF repo referenced by the requested task group on the login
 node via `huggingface_hub.snapshot_download(max_workers=2)`, so compute
 nodes do not need internet access.
@@ -116,19 +116,19 @@ nodes do not need internet access.
 
 ```bash
 # Full AudioBench suite on a Qwen2-Audio model:
-oellm schedule-eval \
+oellm-eval schedule \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench \
     --venv-path audiobench-venv
 
 # ASR only:
-oellm schedule-eval \
+oellm-eval schedule \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench-asr \
     --venv-path audiobench-venv
 
 # Smoke test with --limit:
-oellm schedule-eval \
+oellm-eval schedule \
     --models Qwen/Qwen2-Audio-7B-Instruct \
     --task-groups audio-audiobench-asr \
     --limit 100 \
@@ -141,9 +141,7 @@ unset, the full test split is evaluated.
 ### Collecting results
 
 ```bash
-oellm collect-results \
-    --eval-output-dir /path/to/evals \
-    --output-csv audiobench_results.csv
+oellm-eval collect /path/to/evals --output-csv audiobench_results.csv
 ```
 
 The primary metric per task is what's registered in `task_metrics`

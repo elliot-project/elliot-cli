@@ -71,7 +71,7 @@ uv pip install pi-heif
 
 ### What gets auto-downloaded
 
-`oellm schedule-eval` pre-downloads the following on the login node so
+`oellm-eval schedule` pre-downloads the following on the login node so
 compute nodes do not need internet access:
 
 | Asset | HF repo | Size |
@@ -99,13 +99,13 @@ Three task groups are available:
 
 ```bash
 # Both splits
-oellm schedule-eval \
+oellm-eval schedule \
   --models lmsdss/RegionReasoner-7B \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv
 
 # Single split
-oellm schedule-eval \
+oellm-eval schedule \
   --models lmsdss/RegionReasoner-7B \
   --task-groups regiondial-refcocog \
   --venv-path ~/elliot-venv
@@ -114,14 +114,13 @@ oellm schedule-eval \
 ### Collecting results
 
 ```bash
-oellm collect-results \
-  --eval-output-dir /path/to/evals \
-  --output-csv results.csv
+oellm-eval collect /path/to/evals --output-csv results.csv
 ```
 
-The primary metric in the CSV is **gIoU**. Per-round metrics (e.g.
-`gIoU_R1`, `bbox_AP_R3`) are included when the inference script outputs
-a `round` field per sample.
+The primary metric in the CSV is **gIoU**. Per-round metrics (`gIoU_R1..R7`,
+`bbox_AP_R1..R7`) are always computed — rounds are inferred from the order
+in which each image's turns appear in the inference output (the script does
+not emit an explicit round field).
 
 ---
 
@@ -132,7 +131,7 @@ which is detected automatically from the model name. To evaluate a different
 model, just pass it to `--models`:
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models Qwen/Qwen2.5-VL-7B-Instruct \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv
@@ -140,9 +139,10 @@ oellm schedule-eval \
 
 The model type is resolved as follows:
 
-| Model name pattern | `--model` flag |
+| Model name pattern (checked in order) | `--model` flag |
 |---|---|
 | `*regionreasoner*` / `*region_reasoner*` | `vision_reasoner` |
+| `*qwen2.5*` | `qwen2.5` |
 | `*qwen2*` | `qwen2` |
 | `*qwen*` | `qwen` |
 | anything else | `vision_reasoner` (default) |
@@ -150,7 +150,7 @@ The model type is resolved as follows:
 To evaluate multiple models in one go:
 
 ```bash
-oellm schedule-eval \
+oellm-eval schedule \
   --models "lmsdss/RegionReasoner-7B,Qwen/Qwen2.5-VL-7B-Instruct" \
   --task-groups regiondial-bench \
   --venv-path ~/elliot-venv

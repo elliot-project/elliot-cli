@@ -45,6 +45,7 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     "gpt_eval_accuracy": 100.0,
     "submission": 100.0,
     "bleu": 100.0,
+    "chrf++": 100.0,
     # ── 0–5 Likert scale (GPT-judge style) ──
     "gpt_eval": 5.0,
     # ── Unbounded / non-standard ──
@@ -200,6 +201,22 @@ def _resolve_n_shot(
     return n_shot
 
 
+def _model_paths_match(scheduled: str, completed: str) -> bool:
+    """Match a scheduled model_path against a model id found in a result JSON.
+
+    Result JSONs often record a suffix of the scheduled path (a basename or an
+    HF id), so path-component-suffix matches are accepted in both directions.
+    Bare substring containment is NOT: it marks ``…/pythia-160m-deduped`` as
+    completed by a ``pythia-160m`` result and silently drops the job from the
+    missing list.
+    """
+    if scheduled == completed:
+        return True
+    if scheduled.endswith("/" + completed) or completed.endswith("/" + scheduled):
+        return True
+    return False
+
+
 def _load_task_metrics() -> dict:
     """Load task_metrics from core YAML and all contrib suites."""
     task_groups_yaml = files("oellm.resources") / "task-groups.yaml"
@@ -256,22 +273,47 @@ def collect_results(
 
     logging.info(f"Found {len(json_files)} result files")
 
-    # If check mode, also load the jobs.csv to compare
+    # If check mode, recursively find and merge every jobs.csv under
+    # results_dir. Paths are sorted so later-sorted files override earlier
+    # duplicate (model_path, task_path, n_shot) rows (keep="last"). This
+    # mirrors the recursive JSON discovery above so a single top-level
+    # directory containing many sub-runs can be checked at once.
     if check:
-        jobs_csv_path = results_path / "jobs.csv"
-        if not jobs_csv_path.exists():
-            logging.warning(f"No jobs.csv found in {results_dir}, cannot perform check")
+        jobs_csv_paths = sorted(results_path.rglob("jobs.csv"))
+        if not jobs_csv_paths:
+            logging.warning(
+                f"No jobs.csv found under {results_dir}, cannot perform check"
+            )
             check = False
         else:
-            jobs_df = pd.read_csv(jobs_csv_path)
-            logging.info(f"Found {len(jobs_df)} scheduled jobs in jobs.csv")
+            logging.info(
+                f"Found {len(jobs_csv_paths)} jobs.csv file(s): "
+                f"{[str(p) for p in jobs_csv_paths]}"
+            )
+            jobs_df = pd.concat(
+                [pd.read_csv(p) for p in jobs_csv_paths], ignore_index=True
+            )
+            dup_cols = [
+                c for c in ("model_path", "task_path", "n_shot") if c in jobs_df.columns
+            ]
+            if dup_cols:
+                jobs_df = jobs_df.drop_duplicates(subset=dup_cols, keep="last")
+            logging.info(f"Merged jobs.csv: {len(jobs_df)} unique scheduled jobs")
 
     rows = []
     completed_jobs = set()
 
     for json_file in json_files:
-        with open(json_file) as f:
-            data = json.load(f)
+        # A truncated file (OOM-killed / timed-out SLURM task) must not abort
+        # the whole collection; skip it and let --check report the job missing.
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            logging.warning(
+                f"Skipping unreadable result file {json_file}: {type(e).__name__}: {e}"
+            )
+            continue
 
         # Model name lives in different keys depending on the harness:
         # - lmms-eval: model_name_or_path is the checkpoint, model_name is the
@@ -350,6 +392,9 @@ def collect_results(
                 continue
 
         for task_name, task_results in results.items():
+            # Skip the lighteval 'all' aggregate pseudo-task
+            if task_name == "all":
+                continue
             # Skip entries already added from groups
             if groups_map and task_name in group_aggregate_names:
                 continue
@@ -435,6 +480,23 @@ def collect_results(
         return
 
     if rows:
+        # Drop duplicate (model, task, n_shot, metric) rows, keeping the last
+        # occurrence. Dedup the row list directly (not just the DataFrame) so
+        # the CSV, JSON, and Markdown outputs stay consistent and None values
+        # in performance_normalized survive (a pandas round-trip would coerce
+        # them to NaN and break the JSON envelope).
+        _deduped: dict[tuple, dict] = {}
+        for _row in rows:
+            _deduped[
+                (
+                    _row.get("model_name"),
+                    _row.get("task"),
+                    _row.get("n_shot"),
+                    _row.get("metric_name"),
+                )
+            ] = _row
+        rows = list(_deduped.values())
+
         df = pd.DataFrame(rows)
         df.to_csv(output_csv, index=False)
         logging.info(f"Results saved to {output_csv}")
@@ -477,9 +539,8 @@ def collect_results(
                     if (
                         job["n_shot"] == completed_n_shot
                         and job["task_path"] == completed_task
-                        and (
-                            str(job["model_path"]).endswith(completed_model)
-                            or completed_model in str(job["model_path"])
+                        and _model_paths_match(
+                            str(job["model_path"]), str(completed_model)
                         )
                     ):
                         is_completed = True
@@ -496,11 +557,14 @@ def collect_results(
 
         if len(missing_jobs) > 0:
             missing_df = pd.DataFrame(missing_jobs)
-            missing_csv = output_csv.replace(".csv", "_missing.csv")
+            _out = Path(output_csv)
+            missing_csv = str(
+                _out.with_name(f"{_out.stem}_missing{_out.suffix or '.csv'}")
+            )
             missing_df.to_csv(missing_csv, index=False)
             logging.info(f"Missing jobs saved to: {missing_csv}")
             logging.info(
-                f"You can run these with: oellm schedule-eval --eval_csv_path {missing_csv}"
+                f"You can run these with: oellm-eval schedule --eval-csv-path {missing_csv}"
             )
 
             if verbose and len(missing_jobs) > 0:
