@@ -398,3 +398,106 @@ class TestModelConfig:
         )
         with pytest.raises(KeyError):
             EvalConfig.from_yaml(str(cfg_file))
+
+
+# ---------------------------------------------------------------------------
+# merge provenance: explicit CLI values override YAML even at the default
+# ---------------------------------------------------------------------------
+
+
+class TestMergeProvenance:
+    def _yaml_cfg(self, **overrides):
+        raw = {"models": ["m"], "task_groups": ["g"], **overrides}
+        return EvalConfig._from_dict(raw)
+
+    def test_no_dry_run_overrides_yaml_dry_run(self):
+        yaml_cfg = self._yaml_cfg(dry_run=True)
+        cli_cfg = EvalConfig.from_cli_kwargs(dry_run=False)
+        assert yaml_cfg.merge(cli_cfg).dry_run is False
+
+    def test_trust_remote_code_overrides_yaml_false(self):
+        yaml_cfg = self._yaml_cfg(trust_remote_code=False)
+        cli_cfg = EvalConfig.from_cli_kwargs(trust_remote_code=True)
+        assert yaml_cfg.merge(cli_cfg).trust_remote_code is True
+
+    def test_unprovided_bool_keeps_yaml_value(self):
+        yaml_cfg = self._yaml_cfg(dry_run=True, trust_remote_code=False)
+        cli_cfg = EvalConfig.from_cli_kwargs()
+        merged = yaml_cfg.merge(cli_cfg)
+        assert merged.dry_run is True
+        assert merged.trust_remote_code is False
+
+    def test_default_valued_max_array_len_overrides_yaml(self):
+        yaml_cfg = self._yaml_cfg(slurm={"max_array_len": 64})
+        cli_cfg = EvalConfig.from_cli_kwargs(max_array_len=128)
+        assert yaml_cfg.merge(cli_cfg).slurm.max_array_len == 128
+
+    def test_unprovided_max_array_len_keeps_yaml(self):
+        yaml_cfg = self._yaml_cfg(slurm={"max_array_len": 64})
+        cli_cfg = EvalConfig.from_cli_kwargs()
+        assert yaml_cfg.merge(cli_cfg).slurm.max_array_len == 64
+
+
+# ---------------------------------------------------------------------------
+# slurm_template_var passthrough: unmodeled keys must survive the round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestSlurmTemplateVarPassthrough:
+    def test_slurm_mem_round_trips(self):
+        cfg = EvalConfig.from_cli_kwargs(
+            slurm_template_var='{"SLURM_MEM":"123G","PARTITION":"dev-g"}'
+        )
+        assert cfg.slurm.extra_template_vars == {"SLURM_MEM": "123G"}
+        assert cfg.slurm.partition == "dev-g"
+
+        rendered = cfg.slurm_template_var_json
+        assert rendered is not None
+        assert '"SLURM_MEM": "123G"' in rendered or '"SLURM_MEM":"123G"' in rendered
+
+    def test_extras_survive_merge(self):
+        yaml_cfg = EvalConfig._from_dict({"models": ["m"], "task_groups": ["g"]})
+        cli_cfg = EvalConfig.from_cli_kwargs(
+            slurm_template_var='{"SLURM_MEM":"96G","CPUS_PER_TASK":"8"}'
+        )
+        merged = yaml_cfg.merge(cli_cfg)
+        assert merged.slurm.extra_template_vars == {
+            "SLURM_MEM": "96G",
+            "CPUS_PER_TASK": "8",
+        }
+
+    def test_known_keys_not_duplicated_into_extras(self):
+        cfg = EvalConfig.from_cli_kwargs(
+            slurm_template_var='{"PARTITION":"p","ACCOUNT":"a","GPUS_PER_NODE":2,"TIME":"01:00:00"}'
+        )
+        assert cfg.slurm.extra_template_vars == {}
+        d = cfg.slurm.to_template_var_dict()
+        assert d == {
+            "PARTITION": "p",
+            "ACCOUNT": "a",
+            "GPUS_PER_NODE": "2",
+            "TIME": "01:00:00",
+        }
+
+
+# ---------------------------------------------------------------------------
+# unknown YAML keys warn instead of vanishing silently
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownYamlKeys:
+    def test_unknown_top_level_key_warns(self, tmp_path, caplog):
+        cfg_file = tmp_path / "eval.yaml"
+        cfg_file.write_text("models:\n  - 'm'\ntask_groups:\n  - 'g'\nn_shots: 5\n")
+        with caplog.at_level("WARNING"):
+            EvalConfig.from_yaml(str(cfg_file))
+        assert "n_shots" in caplog.text
+
+    def test_unknown_slurm_key_warns(self, tmp_path, caplog):
+        cfg_file = tmp_path / "eval.yaml"
+        cfg_file.write_text(
+            "models:\n  - 'm'\ntask_groups:\n  - 'g'\nslurm:\n  partion: 'x'\n"
+        )
+        with caplog.at_level("WARNING"):
+            EvalConfig.from_yaml(str(cfg_file))
+        assert "partion" in caplog.text

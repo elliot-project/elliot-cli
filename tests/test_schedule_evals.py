@@ -57,7 +57,7 @@ def test_schedule_evals_slurm_template_var_overrides(tmp_path):
             skip_checks=True,
             venv_path=str(Path(sys.prefix)),
             dry_run=True,
-            slurm_template_var='{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:15:00","GPUS_PER_NODE":2}',
+            slurm_template_var='{"PARTITION":"dev-g","ACCOUNT":"myproject","TIME":"02:15:00","GPUS_PER_NODE":2,"SLURM_MEM":"123G"}',
         )
 
     sbatch_files = list(tmp_path.glob("**/submit_evals.sbatch"))
@@ -67,6 +67,9 @@ def test_schedule_evals_slurm_template_var_overrides(tmp_path):
     assert "#SBATCH --account=myproject" in sbatch_content
     assert "#SBATCH --time=02:15:00" in sbatch_content
     assert "#SBATCH --gres=gpu:2" in sbatch_content
+    # SLURM_MEM is not modeled by SlurmOverrides — it must survive the
+    # EvalConfig round-trip via the extra_template_vars passthrough.
+    assert "#SBATCH --mem=123G" in sbatch_content
 
 
 def test_schedule_evals_slurm_template_var_invalid_json(tmp_path):
@@ -96,3 +99,114 @@ def test_schedule_evals_slurm_template_var_invalid_json(tmp_path):
                 dry_run=True,
                 slurm_template_var='["partition", "dev-g"]',
             )
+
+
+def test_schedule_evals_dry_run_with_full_queue(tmp_path):
+    """A full queue must not crash a --dry-run (ZeroDivisionError regression)."""
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=5),
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path), "QUEUE_LIMIT": "5"}),
+    ):
+        schedule_evals(
+            models="EleutherAI/pythia-70m",
+            tasks="hellaswag",
+            n_shot=0,
+            skip_checks=True,
+            venv_path=str(Path(sys.prefix)),
+            dry_run=True,
+        )
+
+    sbatch_files = list(tmp_path.glob("**/submit_evals.sbatch"))
+    assert len(sbatch_files) == 1
+    assert "#SBATCH --array=0-0%" in sbatch_files[0].read_text()
+
+
+def test_schedule_evals_rejects_comma_in_model_path(tmp_path):
+    """Comma-bearing fields would be shredded by the bash CSV reader — refuse early."""
+    csv_path = tmp_path / "jobs.csv"
+    csv_path.write_text(
+        "model_path,task_path,n_shot,eval_suite\n"
+        '"EleutherAI/pythia-160m,revision=step100000",hellaswag,0,lm_eval\n'
+    )
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+    ):
+        with pytest.raises(ValueError, match="comma"):
+            schedule_evals(
+                eval_csv_path=str(csv_path),
+                skip_checks=True,
+                venv_path=str(Path(sys.prefix)),
+                dry_run=True,
+            )
+
+
+def test_schedule_evals_sbatch_failure_exits_nonzero(tmp_path):
+    """sbatch submission failure must surface as a non-zero exit, not exit 0."""
+    import subprocess as _subprocess
+
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+        patch(
+            "oellm.scheduler.subprocess.run",
+            side_effect=FileNotFoundError("sbatch"),
+        ),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            schedule_evals(
+                models="EleutherAI/pythia-70m",
+                tasks="hellaswag",
+                n_shot=0,
+                skip_checks=True,
+                venv_path=str(Path(sys.prefix)),
+                dry_run=False,
+            )
+        assert excinfo.value.code == 1
+
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+        patch(
+            "oellm.scheduler.subprocess.run",
+            side_effect=_subprocess.CalledProcessError(1, ["sbatch"]),
+        ),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            schedule_evals(
+                models="EleutherAI/pythia-70m",
+                tasks="hellaswag",
+                n_shot=0,
+                skip_checks=True,
+                venv_path=str(Path(sys.prefix)),
+                dry_run=False,
+            )
+        assert excinfo.value.code == 1
+
+
+def test_schedule_evals_local_failure_exits_nonzero(tmp_path):
+    """A failed --local run must propagate the script's exit code."""
+    import subprocess as _subprocess
+
+    with (
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+        patch(
+            "oellm.scheduler.subprocess.run",
+            side_effect=_subprocess.CalledProcessError(7, ["bash"]),
+        ),
+    ):
+        with pytest.raises(SystemExit) as excinfo:
+            schedule_evals(
+                models="EleutherAI/pythia-70m",
+                tasks="hellaswag",
+                n_shot=0,
+                skip_checks=True,
+                venv_path=str(Path(sys.prefix)),
+                local=True,
+                dry_run=False,
+            )
+        assert excinfo.value.code == 7

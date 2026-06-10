@@ -141,9 +141,7 @@ unset, the full test split is evaluated.
 ### Collecting results
 
 ```bash
-oellm-eval collect \
-    --eval-output-dir /path/to/evals \
-    --output-csv audiobench_results.csv
+oellm-eval collect /path/to/evals --output-csv audiobench_results.csv
 ```
 
 The primary metric per task is what's registered in `task_metrics`

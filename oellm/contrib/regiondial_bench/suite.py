@@ -172,12 +172,20 @@ def run(
         )
 
     with tempfile.TemporaryDirectory(prefix="rr_shards_") as tmp_dir:
-        shard_paths = _stream_preshard(test_json, tmp_dir, num_gpus)
+        shard_paths, expected_turns = _stream_preshard(test_json, tmp_dir, num_gpus)
 
         procs = []
         for idx in range(num_gpus):
             shard_env = dict(env)
             shard_env["CUDA_VISIBLE_DEVICES"] = str(idx)
+            # Each shard gets its own output dir and runs with
+            # ``--idx 0 --num_parts 1``: the script slices its input with
+            # ``dataset[idx*part_size : ...]``, so any idx > 0 combined with
+            # num_parts=1 yields an EMPTY slice (the shard silently evaluates
+            # nothing). Distinct output dirs replace distinct --idx values as
+            # the collision guard for the script's output_{idx}.json naming.
+            shard_out = Path(tmp_dir) / f"shard_{idx}"
+            shard_out.mkdir()
             cmd = [
                 "python",
                 str(inference_script),
@@ -188,11 +196,11 @@ def run(
                 "--test_data_path",
                 shard_paths[idx],
                 "--output_path",
-                tmp_dir,
+                str(shard_out),
                 "--vis_output_path",
-                str(Path(tmp_dir) / f"vis_{idx}"),
+                str(shard_out / "vis"),
                 "--idx",
-                str(idx),
+                "0",
                 "--num_parts",
                 "1",
                 "--batch_size",
@@ -205,16 +213,20 @@ def run(
             proc = subprocess.Popen(cmd, env=shard_env, cwd=str(Path(test_json).parent))
             procs.append(proc)
 
-        for idx, proc in enumerate(procs):
-            ret = proc.wait()
-            if ret != 0:
-                raise RuntimeError(
-                    f"RegionDial-Bench inference shard {idx} exited with code {ret}"
-                )
+        # Wait for ALL shards before raising: raising on the first failure
+        # would leave sibling GPU processes running while the enclosing
+        # TemporaryDirectory tears down the files they are writing to.
+        exit_codes = [proc.wait() for proc in procs]
+        failed = [(idx, ret) for idx, ret in enumerate(exit_codes) if ret != 0]
+        if failed:
+            raise RuntimeError(
+                "RegionDial-Bench inference shard(s) failed: "
+                + ", ".join(f"shard {idx} exited with code {ret}" for idx, ret in failed)
+            )
 
         logger.info("All %d shards completed. Computing metrics.", num_gpus)
 
-        metrics = _aggregate_shards(tmp_dir)
+        metrics = _aggregate_shards(tmp_dir, expected_samples=expected_turns)
 
     result_json = {
         "model_name_or_path": model_path,
@@ -227,18 +239,25 @@ def run(
     logger.info("Results written to %s", output_path)
 
 
-def _stream_preshard(json_path: str, out_dir: str, num_shards: int) -> list[str]:
+def _stream_preshard(
+    json_path: str, out_dir: str, num_shards: int
+) -> tuple[list[str], int]:
     """Split a large JSON array into *num_shards* files using streaming.
 
     Uses ``ijson`` to iterate over the top-level array without loading the
-    entire file into memory.  Items are distributed round-robin.
+    entire file into memory.  Items (whole conversations) are distributed
+    round-robin — turns within an item always stay together, which the
+    per-round metric inference in :func:`_aggregate_shards` relies on.
 
-    Returns a list of shard file paths.
+    Returns ``(shard_paths, total_turns)`` where *total_turns* is the number
+    of per-turn result records the inference run is expected to emit (one per
+    entry in each item's ``conversational_turns``).
     """
     import ijson
 
     shard_files = []
     shard_counts = [0] * num_shards
+    total_turns = 0
     for idx in range(num_shards):
         p = str(Path(out_dir) / f"shard_{idx}.json")
         shard_files.append(open(p, "w"))  # noqa: SIM115
@@ -251,8 +270,12 @@ def _stream_preshard(json_path: str, out_dir: str, num_shards: int) -> list[str]
             shard_idx = i % num_shards
             if shard_counts[shard_idx] > 0:
                 shard_files[shard_idx].write(",\n")
-            json.dump(item, shard_files[shard_idx])
+            # ijson yields decimal.Decimal for JSON floats (bbox coordinates);
+            # json.dump cannot serialize Decimal without a default.
+            json.dump(item, shard_files[shard_idx], default=float)
             shard_counts[shard_idx] += 1
+            if isinstance(item, dict):
+                total_turns += len(item.get("conversational_turns") or [])
 
     shard_paths = []
     for idx in range(num_shards):
@@ -261,8 +284,10 @@ def _stream_preshard(json_path: str, out_dir: str, num_shards: int) -> list[str]
         shard_paths.append(str(Path(out_dir) / f"shard_{idx}.json"))
         logger.info("Shard %d: %d samples", idx, shard_counts[idx])
 
-    logger.info("Pre-sharding complete: %d total samples", sum(shard_counts))
-    return shard_paths
+    logger.info(
+        "Pre-sharding complete: %d items, %d turns", sum(shard_counts), total_turns
+    )
+    return shard_paths, total_turns
 
 
 def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> str:
@@ -296,16 +321,27 @@ def _resolve_test_json(task: str, json_filename: str, env: dict[str, str]) -> st
     return str(Path(local_dir) / "raw" / json_filename)
 
 
-def _aggregate_shards(shard_dir: str) -> dict[str, float]:
+def _aggregate_shards(
+    shard_dir: str, *, expected_samples: int | None = None
+) -> dict[str, float]:
     """Read per-shard output files and compute all metrics.
 
-    Each shard file contains a list of per-sample dicts with pre-computed
-    ``intersection``, ``union``, ``bbox_iou``, and ``round`` fields written
-    by the upstream ``evaluation_multi_segmentation.py`` script.
+    Each shard output file contains a list of per-turn dicts with
+    pre-computed ``image_id``, ``intersection``, ``union``, and ``bbox_iou``
+    fields written by the upstream ``evaluation_multi_segmentation.py``
+    script (there is no explicit round/turn field — rounds are inferred from
+    ``image_id`` occurrence order below).
+
+    Output files are discovered recursively (``shard_*/output_0.json`` from
+    the per-shard run dirs, or flat ``output_*.json`` from single-GPU runs).
 
     Computes:
     - Aggregate metrics across all rounds: gIoU, cIoU, bbox_AP, pass_rate_*
     - Per-round metrics (R1–R7): gIoU_R1..R7, bbox_AP_R1..R7
+
+    When *expected_samples* is given, raises if the aggregated sample count
+    differs — this catches shards that silently evaluated a partial (or
+    empty) slice, e.g. through upstream ``--idx``/``--num_parts`` drift.
 
     Returns a flat dict of ``{metric_name: value}``.
     """
@@ -316,7 +352,7 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         PassRate,
     )
 
-    shard_files = sorted(Path(shard_dir).glob("output_*.json"))
+    shard_files = sorted(Path(shard_dir).rglob("output_*.json"))
     if not shard_files:
         raise RuntimeError(
             f"No shard output files found in {shard_dir!r}. "
@@ -333,6 +369,13 @@ def _aggregate_shards(shard_dir: str) -> dict[str, float]:
         raise RuntimeError(
             "No samples found across shard files. "
             "The inference script produced empty output."
+        )
+    if expected_samples is not None and len(all_samples) != expected_samples:
+        raise RuntimeError(
+            f"Shard outputs contain {len(all_samples)} samples but the input "
+            f"had {expected_samples} turns. One or more shards evaluated a "
+            f"partial or empty slice — refusing to report metrics over a "
+            f"subset of the benchmark."
         )
     logger.info(
         "Aggregating %d samples from %d shards", len(all_samples), len(shard_files)

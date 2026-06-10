@@ -114,14 +114,13 @@ oellm-eval schedule \
 ### Collecting results
 
 ```bash
-oellm-eval collect \
-  --eval-output-dir /path/to/evals \
-  --output-csv results.csv
+oellm-eval collect /path/to/evals --output-csv results.csv
 ```
 
-The primary metric in the CSV is **gIoU**. Per-round metrics (e.g.
-`gIoU_R1`, `bbox_AP_R3`) are included when the inference script outputs
-a `round` field per sample.
+The primary metric in the CSV is **gIoU**. Per-round metrics (`gIoU_R1..R7`,
+`bbox_AP_R1..R7`) are always computed — rounds are inferred from the order
+in which each image's turns appear in the inference output (the script does
+not emit an explicit round field).
 
 ---
 
@@ -140,9 +139,10 @@ oellm-eval schedule \
 
 The model type is resolved as follows:
 
-| Model name pattern | `--model` flag |
+| Model name pattern (checked in order) | `--model` flag |
 |---|---|
 | `*regionreasoner*` / `*region_reasoner*` | `vision_reasoner` |
+| `*qwen2.5*` | `qwen2.5` |
 | `*qwen2*` | `qwen2` |
 | `*qwen*` | `qwen` |
 | anything else | `vision_reasoner` (default) |

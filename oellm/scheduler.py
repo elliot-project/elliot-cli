@@ -124,8 +124,9 @@ def schedule_evals(
 
     Args:
         models: A string of comma-separated model paths or Hugging Face model identifiers.
-            Warning: does not allow passing model args such as `EleutherAI/pythia-160m,revision=step100000`
-            since we split on commas. If you need to pass model args, use the `eval_csv_path` option.
+            Warning: model args such as `EleutherAI/pythia-160m,revision=step100000` are
+            not supported — commas separate models here, and the SLURM-side CSV reader
+            also splits rows on commas, so `eval_csv_path` cannot carry them either.
             For local paths:
             - If a directory contains `.safetensors` files directly, it will be treated as a single model
             - If a directory contains subdirectories with models (e.g., converted_checkpoints/),
@@ -300,6 +301,18 @@ def schedule_evals(
     runner.prepare_jobs(expanded_eval_jobs)
 
     if not skip_checks:
+        # Verify the runtime can actually execute the scheduled suites before
+        # any network work: missing engines otherwise fail row-by-row on the
+        # compute node hours later, and a version-pinned group (dclm-core-22)
+        # on the wrong engine produces silently wrong scores.
+        from oellm.envcheck import check_scheduled_environment
+
+        check_scheduled_environment(
+            {job.eval_suite for job in expanded_eval_jobs},
+            venv_path=venv_path,
+            group_names=group_names,
+        )
+
         hub_models: set[str | Path] = {
             job.model_path
             for job in expanded_eval_jobs
@@ -327,6 +340,18 @@ def schedule_evals(
         return s.lower()
 
     df["eval_suite"] = df["eval_suite"].map(_lower_suite_only)
+
+    # The SLURM-side reader slices the CSV with bash `IFS=, read`, which cannot
+    # parse quoted fields — a comma/quote/newline in any value would be split
+    # into the wrong columns silently at eval time. Refuse early instead.
+    for _col in ("model_path", "task_path", "eval_suite"):
+        _bad = df[df[_col].astype(str).str.contains(r'[,"\n\r]', regex=True)]
+        if not _bad.empty:
+            raise ValueError(
+                f"{_col} value {_bad.iloc[0][_col]!r} contains a comma, quote, or "
+                f"newline, which the SLURM job's CSV reader cannot parse. Model "
+                f"args like 'model,revision=...' are not supported."
+            )
 
     # Ensure that all datasets required by the tasks are cached locally to avoid
     # network access on compute nodes.
@@ -401,7 +426,9 @@ def schedule_evals(
     sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
 
     total_evals = len(df)
-    actual_array_size = min(remaining_queue_capacity, total_evals)
+    # max(1, …): with --dry-run the zero-capacity early-return above is skipped,
+    # and a full queue would otherwise make this 0 (ZeroDivisionError below).
+    actual_array_size = max(1, min(remaining_queue_capacity, total_evals))
     evals_per_job = max(1, int(math.ceil(total_evals / actual_array_size)))
 
     time_limit = os.environ.get("TIME_LIMIT", "12:00:00")
@@ -501,6 +528,7 @@ def schedule_evals(
             logging.info("Local evaluation completed.")
         except subprocess.CalledProcessError as e:
             logging.error(f"Evaluation failed with exit code {e.returncode}")
+            raise SystemExit(e.returncode or 1) from e
         return
 
     try:
@@ -526,7 +554,9 @@ def schedule_evals(
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to submit job: {e}")
         logging.error(f"sbatch stderr: {e.stderr}")
-    except FileNotFoundError:
+        raise SystemExit(1) from e
+    except FileNotFoundError as e:
         logging.error(
             "sbatch command not found. Please make sure you are on a system with SLURM installed."
         )
+        raise SystemExit(1) from e

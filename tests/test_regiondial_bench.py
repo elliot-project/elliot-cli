@@ -789,3 +789,164 @@ class TestCollectResultsCompatibility:
         row = df.iloc[0]
         assert row["task"] == RD_TASK_REFCOCOPLUS
         assert float(row["performance"]) == pytest.approx(0.55)
+
+
+# ---------------------------------------------------------------------------
+# Multi-GPU sharding (regression: shards 1..G-1 must not evaluate empty slices)
+# ---------------------------------------------------------------------------
+
+
+def _conversation(image_id: str, ious: list[tuple[int, int, float]]) -> dict:
+    """Build a test-JSON item with one conversational turn per (i, u, bbox) tuple."""
+    return {
+        "image_id": image_id,
+        "image_path": f"{image_id}.jpg",
+        "conversational_turns": [
+            {"question": f"q{k}", "bboxes": [[0, 0, 1, 1]], "ann_ids": [k]}
+            for k, _ in enumerate(ious)
+        ],
+        # carried separately for the fake inference below
+        "_expected_ious": ious,
+    }
+
+
+class _FakeInferencePopen:
+    """Stands in for the RegionReasoner inference subprocess.
+
+    Reads the shard file given via --test_data_path and writes one per-turn
+    record per conversational turn into --output_path/output_0.json — i.e.
+    behaves like the real script invoked correctly. Records every cmd for
+    later assertions.
+    """
+
+    calls: list[list[str]] = []
+    returncode_for_dir: dict[str, int] = {}
+    write_empty_for_dir: set[str] = set()
+
+    def __init__(self, cmd, env=None, cwd=None):
+        type(self).calls.append(list(cmd))
+        out_dir = Path(cmd[cmd.index("--output_path") + 1])
+        shard_file = Path(cmd[cmd.index("--test_data_path") + 1])
+        self._rc = type(self).returncode_for_dir.get(out_dir.name, 0)
+
+        records = []
+        if out_dir.name not in type(self).write_empty_for_dir:
+            items = json.loads(shard_file.read_text())
+            for item in items:
+                for inter, union, bbox_iou in item["_expected_ious"]:
+                    records.append(
+                        {
+                            "image_id": str(item["image_id"]),
+                            "intersection": inter,
+                            "union": union,
+                            "bbox_iou": bbox_iou,
+                        }
+                    )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "output_0.json").write_text(json.dumps(records))
+
+    def wait(self):
+        return self._rc
+
+
+class TestMultiGpuSharding:
+    @pytest.fixture
+    def rr_env(self, tmp_path):
+        """A fake REGION_REASONER_DIR plus a 2-conversation test JSON."""
+        rr_dir = tmp_path / "RegionReasoner"
+        script = rr_dir / "test" / "evaluation" / "evaluation_multi_segmentation.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("# fake inference script\n")
+
+        test_json = tmp_path / "refcocog_multi_turn.json"
+        test_json.write_text(
+            json.dumps(
+                [
+                    _conversation("img1", [(100, 100, 1.0), (0, 100, 0.0)]),
+                    _conversation("img2", [(50, 100, 0.6), (80, 100, 0.8)]),
+                ]
+            )
+        )
+        return {
+            "REGION_REASONER_DIR": str(rr_dir),
+            "GPUS_PER_NODE": "2",
+            "REGION_REASONER_TEST_JSON_REFCOCOG": str(test_json),
+        }
+
+    @pytest.fixture(autouse=True)
+    def _reset_fake(self):
+        _FakeInferencePopen.calls = []
+        _FakeInferencePopen.returncode_for_dir = {}
+        _FakeInferencePopen.write_empty_for_dir = set()
+        yield
+
+    def _run(self, rr_env, tmp_path):
+        from oellm.contrib.regiondial_bench import suite
+
+        output_path = tmp_path / "result.json"
+        with patch.object(suite.subprocess, "Popen", _FakeInferencePopen):
+            suite.run(
+                model_path="/models/RegionReasoner-7B",
+                task=RD_TASK_REFCOCOG,
+                n_shot=0,
+                output_path=output_path,
+                model_flags="vision_reasoner",
+                env=rr_env,
+            )
+        return output_path
+
+    def test_stream_preshard_counts_turns(self, tmp_path):
+        from oellm.contrib.regiondial_bench.suite import _stream_preshard
+
+        src = tmp_path / "src.json"
+        src.write_text(
+            json.dumps(
+                [
+                    _conversation("a", [(1, 1, 1.0), (1, 1, 1.0)]),
+                    _conversation("b", [(1, 1, 1.0)]),
+                    _conversation("c", [(1, 1, 1.0)] * 3),
+                ]
+            )
+        )
+        out = tmp_path / "shards"
+        out.mkdir()
+        paths, total_turns = _stream_preshard(str(src), str(out), 2)
+        assert len(paths) == 2
+        assert total_turns == 6
+        # conversations stay whole: 2 items in shard 0, 1 in shard 1
+        assert len(json.loads(Path(paths[0]).read_text())) == 2
+        assert len(json.loads(Path(paths[1]).read_text())) == 1
+
+    def test_every_shard_runs_with_idx_zero_and_own_output_dir(self, rr_env, tmp_path):
+        self._run(rr_env, tmp_path)
+
+        assert len(_FakeInferencePopen.calls) == 2
+        out_dirs = set()
+        for cmd in _FakeInferencePopen.calls:
+            assert cmd[cmd.index("--idx") + 1] == "0"
+            assert cmd[cmd.index("--num_parts") + 1] == "1"
+            out_dirs.add(cmd[cmd.index("--output_path") + 1])
+        assert len(out_dirs) == 2  # no output filename collision possible
+
+    def test_metrics_cover_all_shards(self, rr_env, tmp_path):
+        output_path = self._run(rr_env, tmp_path)
+
+        result = json.loads(output_path.read_text())
+        metrics = result["results"][RD_TASK_REFCOCOG]
+        # gIoU over all four turns from both shards: (1.0+0.0+0.5+0.8)/4
+        assert metrics["gIoU"] == pytest.approx(0.575)
+        # per-round: R1 = mean(1.0, 0.5), R2 = mean(0.0, 0.8)
+        assert metrics["gIoU_R1"] == pytest.approx(0.75)
+        assert metrics["gIoU_R2"] == pytest.approx(0.4)
+
+    def test_empty_shard_output_is_refused(self, rr_env, tmp_path):
+        """Regression for the --idx/--num_parts bug: a shard that silently
+        evaluates nothing must fail the run, not shrink the benchmark."""
+        _FakeInferencePopen.write_empty_for_dir = {"shard_1"}
+        with pytest.raises(RuntimeError, match="subset|partial"):
+            self._run(rr_env, tmp_path)
+
+    def test_failed_shard_reported_after_all_finish(self, rr_env, tmp_path):
+        _FakeInferencePopen.returncode_for_dir = {"shard_1": 3}
+        with pytest.raises(RuntimeError, match="shard 1 exited with code 3"):
+            self._run(rr_env, tmp_path)

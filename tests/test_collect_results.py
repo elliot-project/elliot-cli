@@ -476,3 +476,120 @@ class TestCollectResultsStructuredOutput:
 
         assert not (tmp_path / "out.json").exists()
         assert not (tmp_path / "out.md").exists()
+
+
+# ── corrupt result files must not abort collection ───────────────────────────
+
+
+class TestCorruptResultFiles:
+    def test_truncated_json_is_skipped(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        write_result(
+            results_dir,
+            {
+                "model_name": "/path/to/model",
+                "results": {"mmlu": {"acc,none": 0.75}},
+                "n-shot": {"mmlu": 5},
+            },
+            filename="good.json",
+        )
+        # Simulate an OOM-killed job's torn write.
+        (results_dir / "truncated.json").write_text('{"model_name": "/path/to/mo')
+
+        output_csv = str(tmp_path / "out.csv")
+        # NOTE: collect_results calls _setup_logging, which replaces root
+        # handlers — caplog can't observe the skip warning. The behavioral
+        # assertions below are the contract: the good file is collected,
+        # the truncated one doesn't abort the run.
+        collect_results(str(results_dir), output_csv=output_csv)
+
+        df = pd.read_csv(output_csv)
+        assert len(df) == 1
+        assert df.iloc[0]["performance"] == pytest.approx(0.75)
+
+    def test_corrupt_json_counts_as_missing_in_check(self, tmp_path):
+        (tmp_path / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\n/models/pythia-160m,mmlu,5,lm_eval\n"
+        )
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        (results_dir / "truncated.json").write_text("[not json")
+
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(tmp_path), output_csv=output_csv, check=True)
+
+        missing = pd.read_csv(tmp_path / "out_missing.csv")
+        assert len(missing) == 1
+        assert missing.iloc[0]["model_path"] == "/models/pythia-160m"
+
+
+# ── --check completion matching: exact/suffix, not substring ─────────────────
+
+
+class TestCheckModeMatching:
+    def _run_check(self, tmp_path, jobs_rows: list[str], result_payloads: list[dict]):
+        (tmp_path / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\n" + "".join(jobs_rows)
+        )
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        for i, payload in enumerate(result_payloads):
+            write_result(results_dir, payload, filename=f"r{i}.json")
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(tmp_path), output_csv=output_csv, check=True)
+        missing_path = tmp_path / "out_missing.csv"
+        if not missing_path.exists():
+            return pd.DataFrame()
+        return pd.read_csv(missing_path)
+
+    def test_shared_prefix_model_is_not_marked_complete(self, tmp_path):
+        """A pythia-160m result must NOT complete the pythia-160m-deduped job."""
+        missing = self._run_check(
+            tmp_path,
+            [
+                "/models/pythia-160m,mmlu,5,lm_eval\n",
+                "/models/pythia-160m-deduped,mmlu,5,lm_eval\n",
+            ],
+            [
+                {
+                    "model_name": "/models/pythia-160m",
+                    "results": {"mmlu": {"acc,none": 0.75}},
+                    "n-shot": {"mmlu": 5},
+                }
+            ],
+        )
+        assert len(missing) == 1
+        assert missing.iloc[0]["model_path"] == "/models/pythia-160m-deduped"
+
+    def test_basename_result_completes_full_path_job(self, tmp_path):
+        """Result JSONs often record only a suffix of the scheduled path."""
+        missing = self._run_check(
+            tmp_path,
+            ["/abs/checkpoints/pythia-160m,mmlu,5,lm_eval\n"],
+            [
+                {
+                    "model_name": "pythia-160m",
+                    "results": {"mmlu": {"acc,none": 0.75}},
+                    "n-shot": {"mmlu": 5},
+                }
+            ],
+        )
+        assert len(missing) == 0
+
+    def test_missing_csv_name_without_suffix(self, tmp_path):
+        """An output name without .csv must not be overwritten by the missing list."""
+        (tmp_path / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\n/models/pythia-160m,mmlu,5,lm_eval\n"
+        )
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+
+        output_csv = str(tmp_path / "outfile")
+        collect_results(str(tmp_path), output_csv=output_csv, check=True)
+
+        assert (tmp_path / "outfile_missing.csv").exists()
+        assert not (tmp_path / "outfile").exists() or (
+            (tmp_path / "outfile").read_text()
+            != (tmp_path / "outfile_missing.csv").read_text()
+        )

@@ -65,9 +65,12 @@ fi
 
 # Use `tail` and `head` to slice the CSV file for the tasks assigned to this job.
 # The +1 on START_INDEX accounts for the header row.
-tail -n +$((START_INDEX + 1)) "$CSV_PATH" | head -n $((END_INDEX - START_INDEX + 1)) | \
+# Process substitution (not a pipe) keeps the loop in the current shell so
+# FAILED_ROWS survives past `done` and the job can exit non-zero on failures.
+FAILED_ROWS=0
 while IFS=, read -r model_path task_path n_shot eval_suite
 do
+    rc=0
     # Strip CR (Windows line endings) from every field.
     model_path=${{model_path%$'\r'}}
     task_path=${{task_path%$'\r'}}
@@ -153,6 +156,7 @@ do
                 --trust_remote_code \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $LM_EVAL_INCLUDE_PATH}} \
                 ${{LIMIT:+--limit $LIMIT}}
+            rc=$?
             echo "----------------------------------------------------"
             ;;
         lighteval|light-eval)
@@ -198,6 +202,7 @@ do
                         --output-dir "$RESULTS_SUBDIR" \
                         ${{LIMIT:+--max-samples $LIMIT}}
             fi
+            rc=$?
             ;;
         lmms_eval|lmms-eval)
             # lmms-eval is used for image/video/audio benchmarks.
@@ -226,24 +231,29 @@ do
                 --num_fewshot "$n_shot" \
                 --output_path "$OUTPUT_JSON" \
                 ${{LIMIT:+--limit $LIMIT}}
+            rc=$?
             ;;
         evalchemy)
             EVALCHEMY_WORK_DIR="{evalchemy_dir}"
             RESULTS_SUBDIR="{evals_dir}/$(openssl rand -hex 5)"
             if [ -n "$VENV_PATH" ]; then
-                source "$VENV_PATH/bin/activate"
-                cd "$EVALCHEMY_WORK_DIR"
-                accelerate launch --num-processes "$GPUS_PER_NODE" --num-machines 1 \
-                    $MULTI_GPU_FLAG -m eval.eval \
-                    --model hf \
-                    --tasks "$task_path" \
-                    --model_args "trust_remote_code=True,pretrained=$model_path" \
-                    --batch_size auto \
-                    --output_path "$RESULTS_SUBDIR" \
-                    ${{LIMIT:+--limit $LIMIT}}
+                # Subshell: contain the cd so later rows keep the original cwd.
+                (
+                    source "$VENV_PATH/bin/activate"
+                    cd "$EVALCHEMY_WORK_DIR" || exit 1
+                    accelerate launch --num-processes "$GPUS_PER_NODE" --num-machines 1 \
+                        $MULTI_GPU_FLAG -m eval.eval \
+                        --model hf \
+                        --tasks "$task_path" \
+                        --model_args "trust_remote_code=True,pretrained=$model_path" \
+                        --batch_size auto \
+                        --output_path "$RESULTS_SUBDIR" \
+                        ${{LIMIT:+--limit $LIMIT}}
+                )
+                rc=$?
             else
                 echo "[error] evalchemy suite requires --venv-path (not supported in container mode)."
-                exit 1
+                rc=1
             fi
             ;;
         *)
@@ -255,12 +265,23 @@ do
                 --task       "$task_path" \
                 --n_shot     "$n_shot" \
                 --output_path "$_CONTRIB_OUTPUT"
+            rc=$?
             ;;
     esac
 
     echo "----------------------------------------------------"
-    echo "Evaluation finished for model: $model_path"
+    if [ "$rc" -ne 0 ]; then
+        FAILED_ROWS=$((FAILED_ROWS + 1))
+        echo "[ERROR] Evaluation FAILED (exit=$rc) for model=$model_path task=$task_path n_shot=$n_shot suite=$eval_suite"
+    else
+        echo "Evaluation finished for model: $model_path"
+    fi
 
-done
+done < <(tail -n +$((START_INDEX + 1)) "$CSV_PATH" | head -n $((END_INDEX - START_INDEX + 1)))
+
+if [ "$FAILED_ROWS" -gt 0 ]; then
+    echo "Job $SLURM_ARRAY_TASK_ID finished with $FAILED_ROWS failed evaluation(s)."
+    exit 1
+fi
 
 echo "Job $SLURM_ARRAY_TASK_ID finished."

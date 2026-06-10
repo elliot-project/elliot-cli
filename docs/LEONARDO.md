@@ -29,10 +29,19 @@ step ca bootstrap \
 ```
 
 ### Generate an SSH Certificate
-Replace `your.name@email.com` with the email you used when registering on UserDB:
+Replace `your.name@email.com` with the email you used when registering on UserDB.
+
+> ⚠️ Generate the key **into `~/.ssh/`**, never into a project directory — a
+> private key inside a git repository is one `git add -A` away from being
+> committed and leaked.
+
 ```zsh
-step ssh certificate your.name@email.com --provisioner cineca-hpc key_filename
+step ssh certificate your.name@email.com --provisioner cineca-hpc ~/.ssh/cineca_hpc
 ```
+
+This writes the private key `~/.ssh/cineca_hpc` plus `cineca_hpc.pub` and
+`cineca_hpc-cert.pub`. The certificate is short-lived (~12 h) — rerun the
+command when it expires.
 
 ### Configure SSH
 Add the following to `~/.ssh/config` (create it if it doesn't exist via `nano ~/.ssh/config`):
@@ -40,7 +49,7 @@ Add the following to `~/.ssh/config` (create it if it doesn't exist via `nano ~/
 Host leonardo
     HostName login07-ext.leonardo.cineca.it
     User your_cineca_username
-    IdentityFile /Users/your_mac_username/.ssh/key_filename
+    IdentityFile ~/.ssh/cineca_hpc
 ```
 
 Set correct permissions:
@@ -145,7 +154,21 @@ export HF_HOME="$SCRATCH/hf_cache"
 
 ---
 
-## 6. Running Evaluations
+## 6. Verify the Setup
+
+Before scheduling anything, run the built-in diagnostic — it checks cluster
+detection, required environment variables, your HF cache, SLURM binaries, and
+(with `--venv-path`) which eval engines your venv actually provides:
+
+```zsh
+oellm-eval doctor
+# with a custom venv and the groups you plan to run:
+oellm-eval doctor --venv-path /path/to/.venv --task-groups "open-sci-0.01"
+```
+
+---
+
+## 7. Running Evaluations
 
 ```zsh
 # Run evaluations using a task group (recommended)

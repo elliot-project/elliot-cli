@@ -201,6 +201,22 @@ def _resolve_n_shot(
     return n_shot
 
 
+def _model_paths_match(scheduled: str, completed: str) -> bool:
+    """Match a scheduled model_path against a model id found in a result JSON.
+
+    Result JSONs often record a suffix of the scheduled path (a basename or an
+    HF id), so path-component-suffix matches are accepted in both directions.
+    Bare substring containment is NOT: it marks ``…/pythia-160m-deduped`` as
+    completed by a ``pythia-160m`` result and silently drops the job from the
+    missing list.
+    """
+    if scheduled == completed:
+        return True
+    if scheduled.endswith("/" + completed) or completed.endswith("/" + scheduled):
+        return True
+    return False
+
+
 def _load_task_metrics() -> dict:
     """Load task_metrics from core YAML and all contrib suites."""
     task_groups_yaml = files("oellm.resources") / "task-groups.yaml"
@@ -288,8 +304,16 @@ def collect_results(
     completed_jobs = set()
 
     for json_file in json_files:
-        with open(json_file) as f:
-            data = json.load(f)
+        # A truncated file (OOM-killed / timed-out SLURM task) must not abort
+        # the whole collection; skip it and let --check report the job missing.
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            logging.warning(
+                f"Skipping unreadable result file {json_file}: {type(e).__name__}: {e}"
+            )
+            continue
 
         # Model name lives in different keys depending on the harness:
         # - lmms-eval: model_name_or_path is the checkpoint, model_name is the
@@ -515,9 +539,8 @@ def collect_results(
                     if (
                         job["n_shot"] == completed_n_shot
                         and job["task_path"] == completed_task
-                        and (
-                            str(job["model_path"]).endswith(completed_model)
-                            or completed_model in str(job["model_path"])
+                        and _model_paths_match(
+                            str(job["model_path"]), str(completed_model)
                         )
                     ):
                         is_completed = True
@@ -534,7 +557,10 @@ def collect_results(
 
         if len(missing_jobs) > 0:
             missing_df = pd.DataFrame(missing_jobs)
-            missing_csv = output_csv.replace(".csv", "_missing.csv")
+            _out = Path(output_csv)
+            missing_csv = str(
+                _out.with_name(f"{_out.stem}_missing{_out.suffix or '.csv'}")
+            )
             missing_df.to_csv(missing_csv, index=False)
             logging.info(f"Missing jobs saved to: {missing_csv}")
             logging.info(
