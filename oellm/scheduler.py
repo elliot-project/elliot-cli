@@ -20,6 +20,7 @@ from oellm.task_groups import (
     _collect_hf_model_repos,
     _expand_task_groups,
     _lookup_dataset_specs_for_tasks,
+    split_group_tokens,
 )
 from oellm.utils import (
     _ensure_runtime_environment,
@@ -202,7 +203,7 @@ def schedule_evals(
 
     group_names: list[str] | None = None
     if task_groups:
-        group_names = [g.strip() for g in task_groups.split(",")]
+        group_names = split_group_tokens(task_groups)
 
     eval_jobs: list[EvaluationJob] = []
     if eval_csv_path:
