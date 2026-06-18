@@ -48,6 +48,7 @@ def schedule_evals(
     local: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
+    nodelist: str | None = None,
 ) -> None:
     """Schedule evaluation jobs for a given set of models, tasks, and number of shots.
 
@@ -103,6 +104,9 @@ def schedule_evals(
             (e.g. activitynetqa, AudioBench chat-style tasks) when ``OPENAI_API_KEY``
             is not set. Those tasks will emit null performance values. Default False —
             strict pre-flight refuses to schedule without the key.
+        nodelist: Optional SLURM nodelist to constrain the job to specific node(s),
+            e.g. "tdll-3gpu4". Passed through as #SBATCH --nodelist. If unset, no
+            node constraint is added.
     """
     from oellm.scheduler import schedule_evals as _sched
 
@@ -157,6 +161,7 @@ def schedule_evals(
         local=cfg.local,
         slurm_template_var=cfg.slurm_template_var_json,
         allow_missing_judge=allow_missing_judge,
+        nodelist=nodelist,
     )
 
 
@@ -354,6 +359,7 @@ def eval_command(
     local: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
+    nodelist: str | None = None,
 ) -> None:
     """Run evaluations from a YAML config file.
 
@@ -376,6 +382,7 @@ def eval_command(
         lm_eval_include_path: Path to custom lm_eval task YAML definitions directory.
         local: Run evaluations locally instead of submitting to SLURM.
         slurm_template_var: JSON object of SLURM overrides.
+        nodelist: Optional SLURM nodelist to constrain the job to specific node(s).
         verbose: Enable verbose logging.
     """
     schedule_evals(
@@ -397,6 +404,7 @@ def eval_command(
         local=local,
         slurm_template_var=slurm_template_var,
         allow_missing_judge=allow_missing_judge,
+        nodelist=nodelist,
     )
 
 

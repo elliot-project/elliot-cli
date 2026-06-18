@@ -350,9 +350,24 @@ export UV_PYTHON_INSTALL_DIR="/p/project1/<project>/$USER/.local/share/uv/python
 export UV_TOOL_DIR="/p/project1/<project>/$USER/.cache/uv-tool-cache"
 ```
 
+### UFAL Specifics
+
+Due to limited space in `$HOME` on UFAL cluster, set these environment variables for your personal copies of tools and models:
+
+```bash
+basedir="/lnet/troja/tmp/$USER"
+export UV_CACHE_DIR="$basedir/cache/uv-cache"
+export UV_INSTALL_DIR="$basedir/local"
+export UV_PYTHON_INSTALL_DIR="$basedir/local/share/uv/python"
+export UV_TOOL_DIR="$basedir/cache/uv-tool-cache"
+export HF_HOME="$basedir/cache/huggingface"
+```
+
+Later, we will add recommendation for a project-wide setting to share tools and models.
+
 ## Supported Clusters
 
-Leonardo, LUMI, JURECA, Jupiter, and Snellius — detected automatically from the login node's hostname (see [`oellm/resources/clusters.yaml`](oellm/resources/clusters.yaml)). Any value there can be overridden by exporting the environment variable before scheduling.
+Leonardo, LUMI, JURECA, Jupiter, Snellius, and UFAL — detected automatically from the login node's hostname (see [`oellm/resources/clusters.yaml`](oellm/resources/clusters.yaml)). Any value there can be overridden by exporting the environment variable before scheduling.
 
 ## Environment Diagnostics
 

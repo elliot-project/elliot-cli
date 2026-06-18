@@ -119,6 +119,7 @@ def schedule_evals(
     local: bool = False,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
+    nodelist: str | None = None,
 ) -> None:
     """
     Schedule evaluation jobs for a given set of models, tasks, and number of shots.
@@ -455,6 +456,10 @@ def schedule_evals(
                 os.environ[key] = str(value)
                 logging.info(f"Using slurm_template_var override: {key}={value}")
 
+    if nodelist:
+        os.environ["NODELIST"] = nodelist
+        logging.info(f"Constraining job to nodelist: {nodelist}")
+
     slurm_mem = _resolve_slurm_mem()
     additional_model_args = _resolve_additional_model_args(local)
 
@@ -485,6 +490,14 @@ def schedule_evals(
         additional_model_args=additional_model_args,
         evalchemy_dir=os.environ.get("EVALCHEMY_DIR", "/opt/evalchemy"),
     )
+
+    # Drop optional #SBATCH directives whose env var is unset, so safe_substitute
+    # doesn't leave a literal $ACCOUNT/$NODELIST that SLURM rejects (e.g. clusters
+    # like ufal define no ACCOUNT; --nodelist is only set when --nodelist is passed).
+    if not os.environ.get("ACCOUNT"):
+        sbatch_script = sbatch_script.replace("#SBATCH --account=$ACCOUNT\n", "")
+    if not os.environ.get("NODELIST"):
+        sbatch_script = sbatch_script.replace("#SBATCH --nodelist=$NODELIST\n", "")
 
     # substitute any $ENV_VAR occurrences
     sbatch_script = Template(sbatch_script).safe_substitute(os.environ)
