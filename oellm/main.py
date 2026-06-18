@@ -66,6 +66,11 @@ def schedule_evals(
             Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
         task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
             Each group expands into concrete (task, n_shots, suite) entries; `n_shot` is ignored for groups.
+            A group (or super_group) may be scoped to one or more languages with a bracket, e.g.
+            `--task-groups "oellm-multilingual[deu_Latn]"` or
+            `--task-groups "sib200-eu[fra_Latn|deu_Latn],flores-200-eu-to-eng[deu_Latn]"`. Bracketed
+            codes are separated by `,` or `|`; unknown codes raise, and a bracket that matches no
+            task in its group raises.
         n_shot: An integer or list of integers specifying the number of shots applied to `tasks`.
         eval_csv_path: A path to a CSV file containing evaluation data.
             Warning: exclusive argument. Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided.
