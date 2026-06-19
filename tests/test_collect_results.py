@@ -508,6 +508,34 @@ class TestCorruptResultFiles:
         assert len(df) == 1
         assert df.iloc[0]["performance"] == pytest.approx(0.75)
 
+    def test_top_level_list_json_is_skipped(self, tmp_path):
+        # lmms-eval writes per-sample logs as a bare JSON array; the recursive
+        # *.json scan picks them up. They must be skipped, not crash collect
+        # with "'list' object has no attribute 'get'".
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        write_result(
+            results_dir,
+            {
+                "model_name": "/path/to/model",
+                "results": {"textvqa_val": {"exact_match,none": 0.6}},
+                "n-shot": {"textvqa_val": 0},
+            },
+            filename="good.json",
+        )
+        # A bare JSON array, as lmms-eval emits for per-sample logs.
+        (results_dir / "samples.json").write_text(
+            json.dumps([{"doc_id": 0, "pred": "a"}, {"doc_id": 1, "pred": "b"}])
+        )
+
+        output_csv = str(tmp_path / "out.csv")
+        collect_results(str(results_dir), output_csv=output_csv)
+
+        df = pd.read_csv(output_csv)
+        assert len(df) == 1
+        assert df.iloc[0]["task"] == "textvqa_val"
+        assert df.iloc[0]["performance"] == pytest.approx(0.6)
+
     def test_corrupt_json_counts_as_missing_in_check(self, tmp_path):
         (tmp_path / "jobs.csv").write_text(
             "model_path,task_path,n_shot,eval_suite\n/models/pythia-160m,mmlu,5,lm_eval\n"
