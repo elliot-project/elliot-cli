@@ -178,12 +178,18 @@ def _load_cluster_env() -> None:
     # would resolve caches to "/datasets" and fail far from the real cause.
     _required_vars = [
         "PARTITION",
-        "ACCOUNT",
         "EVAL_BASE_DIR",
         "EVAL_OUTPUT_DIR",
         "GPUS_PER_NODE",
         "HF_HOME",
     ]
+    # ACCOUNT is required only for clusters that declare it. Some clusters
+    # (e.g. ufal) intentionally omit it and rely on the submitting user's
+    # default SLURM account; for those the sbatch's `#SBATCH --account=$ACCOUNT`
+    # directive is stripped entirely in schedule_evals(). If a cluster does
+    # declare ACCOUNT, it is still validated (including unresolved "{...}").
+    if "ACCOUNT" in final_env:
+        _required_vars.append("ACCOUNT")
     missing = [
         v for v in _required_vars if not os.environ.get(v) or "{" in os.environ.get(v, "")
     ]
@@ -395,7 +401,7 @@ def _pre_download_hf_dataset_files(dataset_files: list[dict]) -> None:
 def _materialize_external_urls(ds, *, max_workers: int = 16) -> None:
     """Iterate every row to force HF ``dl_manager`` to fetch external URLs.
 
-    Datasets like ``facebook/textvqa`` store image URLs (not bytes) in
+    Some datasets store media as external URLs (not bytes) in
     parquet rows; only per-row access triggers the HTTP fetch into the
     cache. Strict: exceptions propagate so ``_pre_download_datasets_…``
     aborts the schedule before SLURM submission.

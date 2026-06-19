@@ -459,7 +459,7 @@ task_groups:
         dataset: lmms-lab/DocVQA
         subset: DocVQA
       - task: textvqa_val
-        dataset: facebook/textvqa
+        dataset: lmms-lab/textvqa
       - task: ocrbench
         dataset: echo840/OCRBench
       - task: mathvista_testmini_cot
@@ -517,7 +517,7 @@ task_groups:
     n_shots: [0]
     tasks:
       - task: textvqa_val
-        dataset: facebook/textvqa
+        dataset: lmms-lab/textvqa
 
   image-ocrbench:
     description: "OCRBench optical character recognition benchmark via lmms-eval"

@@ -11,7 +11,10 @@ import yaml
 # snapshot_download only fetches the URLs, not the media — they MUST go through
 # load_dataset()+_materialize_external_urls() so the per-row HTTP fetch runs on
 # the (online) login node. Excluded from the snapshot-only fast path below.
-_URL_BASED_DATASETS = {"facebook/textvqa"}
+# Currently empty: every in-tree dataset embeds its media (e.g. lmms-lab/textvqa
+# ships image bytes in its parquet). Add a repo id here only if it genuinely
+# stores external media URLs.
+_URL_BASED_DATASETS: set[str] = set()
 
 # Eval suites whose datasets are large media (image/audio/video). Their specs
 # are staged with snapshot_download (raw files; the compute node builds the

@@ -315,6 +315,16 @@ def collect_results(
             )
             continue
 
+        # Some files the recursive *.json scan finds are not result objects at
+        # all — e.g. lmms-eval per-sample logs (a bare JSON array) or other
+        # non-eval JSON. Skip anything that isn't a dict before calling .get().
+        if not isinstance(data, dict):
+            logging.debug(
+                f"Skipping '{json_file}': top-level JSON is a "
+                f"{type(data).__name__}, not a dict"
+            )
+            continue
+
         # Model name lives in different keys depending on the harness:
         # - lmms-eval: model_name_or_path is the checkpoint, model_name is the
         #   adapter class (e.g. "llava_hf")

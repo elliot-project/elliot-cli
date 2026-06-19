@@ -34,7 +34,7 @@ EXPECTED_DATASETS = {
     "MMMU/MMMU",
     "lmms-lab/ChartQA",
     "lmms-lab/DocVQA",
-    "facebook/textvqa",
+    "lmms-lab/textvqa",
     "echo840/OCRBench",
     "AI4Math/MathVista",
 }

@@ -1,9 +1,12 @@
+import os
 from dataclasses import dataclass, field
+from unittest.mock import patch
 
 import pytest
 
 from oellm.utils import (
     _expand_local_model_paths,
+    _load_cluster_env,
     _materialize_external_urls,
     _num_jobs_in_queue,
     _pre_download_datasets_from_specs,
@@ -257,7 +260,7 @@ class TestMaterializeExternalUrls:
     """`_materialize_external_urls` forces HF datasets' lazy URL fetches by
     accessing EVERY row of EVERY split.
 
-    Datasets like `facebook/textvqa` store image URLs as row fields rather
+    Some datasets store image URLs as row fields rather
     than embedded image bytes; the actual HTTP fetch is deferred until each
     row is read. We must trigger it here on the login node so the cache is
     complete before SLURM submission. Touching only the first row leaves
@@ -470,3 +473,70 @@ class _NoopStatus:
 
     def update(self, *args, **kwargs):
         pass
+
+
+class TestLoadClusterEnv:
+    """_load_cluster_env required-var validation, incl. the no-ACCOUNT cluster case.
+
+    Uses a SYNTHETIC cluster config (not the real, user-customizable
+    clusters.yaml) so assertions exercise behavior rather than a specific
+    deployment's account/partition strings.
+    """
+
+    @staticmethod
+    def _clusters():
+        # "noacct" mirrors ufal: a SLURM cluster that declares no ACCOUNT.
+        # "withacct" mirrors a standard cluster that declares one.
+        return {
+            "shared": {
+                "EVAL_OUTPUT_DIR": "{EVAL_BASE_DIR}/{USER}",
+                "GPUS_PER_NODE": 1,
+            },
+            "withacct": {
+                "hostname_pattern": "*.withacct.test",
+                "EVAL_BASE_DIR": "/data/evals",
+                "PARTITION": "gpu",
+                "ACCOUNT": "proj-123",
+            },
+            "noacct": {
+                "hostname_pattern": "*.noacct.test",
+                "EVAL_BASE_DIR": "/data/evals",
+                "PARTITION": "gpu-a,gpu-b",
+            },
+        }
+
+    def _run(self, monkeypatch, hostname, env):
+        # Pin the hostname AND the cluster config so the test is independent of
+        # the real clusters.yaml and the ambient shell env (restored afterwards).
+        monkeypatch.setattr("oellm.utils.socket.gethostname", lambda: hostname)
+        monkeypatch.setattr("oellm.utils.socket.getfqdn", lambda: hostname)
+        monkeypatch.setattr(
+            "oellm.utils.yaml.safe_load", lambda *_a, **_k: self._clusters()
+        )
+        with patch.dict(os.environ, env, clear=True):
+            _load_cluster_env()
+            return dict(os.environ)
+
+    def test_no_account_cluster_does_not_raise(self, monkeypatch, tmp_path):
+        # A cluster that declares no ACCOUNT (ufal-style) must NOT raise; the
+        # sbatch --account directive is stripped later when ACCOUNT is unset.
+        result = self._run(
+            monkeypatch, "node.noacct.test", {"USER": "tester", "HF_HOME": str(tmp_path)}
+        )
+        assert result["PARTITION"] == "gpu-a,gpu-b"
+        assert "ACCOUNT" not in result
+
+    def test_account_cluster_still_sets_account(self, monkeypatch, tmp_path):
+        # A cluster that declares ACCOUNT must still resolve and keep it.
+        result = self._run(
+            monkeypatch,
+            "node.withacct.test",
+            {"USER": "tester", "HF_HOME": str(tmp_path)},
+        )
+        assert result["ACCOUNT"] == "proj-123"
+
+    def test_other_required_vars_still_enforced(self, monkeypatch):
+        # The fix must be surgical: a genuinely missing required var (HF_HOME)
+        # still raises, even on a no-ACCOUNT cluster.
+        with pytest.raises(RuntimeError, match="HF_HOME"):
+            self._run(monkeypatch, "node.noacct.test", {"USER": "tester"})
