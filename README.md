@@ -363,6 +363,21 @@ export UV_TOOL_DIR="$basedir/cache/uv-tool-cache"
 export HF_HOME="$basedir/cache/huggingface"
 ```
 
+Then, please install the virtual environment that is compatible with UFAL cluster as follows:
+```bash
+uv venv --python 3.11
+uv pip install -r requirements-venv-ufal.txt --no-deps
+```
+
+To run an evaluation, you **MUST** include the `--venv-path <installed_venv_path>`, as the UFAL cluster does not support containers (for now, Jun 23 2026), for example:
+```bash
+oellm-eval schedule \
+    --models "EleutherAI/pythia-160m" \
+    --tasks "gsm8k" \
+    --n-shot 0 \
+    --venv-path .venv
+```
+
 Later, we will add recommendation for a project-wide setting to share tools and models.
 
 ## Supported Clusters
