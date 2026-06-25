@@ -38,17 +38,28 @@ image = [
     "transformers>=4.45,<4.50",
     # Phi-4-multimodal trust_remote_code modeling imports backoff.
     "backoff",
+    # lmms-eval's qwen2_vl / qwen2_5_vl adapters do a top-level `import decord`
+    # (it lives only in lmms-eval's optional `video-legacy` extra), so it must be
+    # present for ANY Qwen-VL run — image tasks included. Mirrors lmms-eval's own
+    # platform markers; no usable macOS wheel on Python >= 3.12.
+    "decord; platform_system != 'Darwin'",
+    "eva-decord; platform_system == 'Darwin' and python_version < '3.12'",
 ]
 video = [
     "transformers>=4.45,<4.50",
     "backoff",
     # PyAV 14 renamed AVError to OSError; torchvision still uses the old name.
     "av<14",
+    # lmms-eval video adapters (qwen2_vl etc.) import decord at module load.
+    "decord; platform_system != 'Darwin'",
+    "eva-decord; platform_system == 'Darwin' and python_version < '3.12'",
 ]
 # HPC Singularity image must also include ffmpeg for non-WAV decode.
 audio = [
     "soundfile",
     "librosa",
+    "numba>=0.61",
+    "llvmlite>=0.44",
     "jiwer",
 ]
 # AudioBench contrib plugin.  AudioBench itself is not pip-installable
