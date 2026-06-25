@@ -9,7 +9,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Diagnose your environment** (cluster vars, HF cache, venv engines): `oellm-eval doctor`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius)
-- **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, MathVista)
+- **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, OCRBench v2, MathVista, MathVision, MMStar, AI2D, RealWorldQA, MME, MME-RealWorld, SEED-Bench)
 - **Video evaluation** via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
 - **Plugin system** for contributing custom benchmarks without touching core code
@@ -87,7 +87,15 @@ Super groups: `oellm-multilingual` (all multilingual benchmarks combined)
 | `image-docvqa` | DocVQA | lmms-eval |
 | `image-textvqa` | TextVQA | lmms-eval |
 | `image-ocrbench` | OCRBench | lmms-eval |
+| `image-ocrbench-v2` | OCRBench v2 | lmms-eval |
 | `image-mathvista` | MathVista (CoT / format / solution leaves — needs GPT judge) | lmms-eval |
+| `image-mathvision` | MathVision (test split) | lmms-eval |
+| `image-mme` | MME (perception + cognition) | lmms-eval |
+| `image-mme-realworld` | MME-RealWorld (EN) | lmms-eval |
+| `image-mmstar` | MMStar | lmms-eval |
+| `image-ai2d` | AI2D (diagram QA) | lmms-eval |
+| `image-realworldqa` | RealWorldQA | lmms-eval |
+| `image-seedbench` | SEED-Bench (image split) | lmms-eval |
 
 ### Video
 

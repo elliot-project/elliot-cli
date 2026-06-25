@@ -37,6 +37,11 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     "mer": 1.0,
     "f1": 1.0,
     "semantic_match": 1.0,
+    # added image benchmarks (0–1)
+    "ocrbench_v2_accuracy": 1.0,
+    "mme_realworld_score": 1.0,
+    "average": 1.0,  # MMStar headline = mean of per-category accuracies
+    "seed_image": 1.0,  # SEED-Bench image submetric
     # ── 0–100 scale (no scaling needed) ──
     "gpt_eval_score": 100.0,
     "llm_as_judge_eval": 100.0,
@@ -46,6 +51,7 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     "submission": 100.0,
     "bleu": 100.0,
     "chrf++": 100.0,
+    "mathvision_standard_eval": 100.0,
     # ── 0–5 Likert scale (GPT-judge style) ──
     "gpt_eval": 5.0,
     # ── Unbounded / non-standard ──
