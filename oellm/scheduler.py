@@ -492,10 +492,14 @@ def schedule_evals(
     )
 
     # Drop optional #SBATCH directives whose env var is unset, so safe_substitute
-    # doesn't leave a literal $ACCOUNT/$NODELIST that SLURM rejects (e.g. clusters
-    # like ufal define no ACCOUNT; --nodelist is only set when --nodelist is passed).
+    # doesn't leave a literal $ACCOUNT/$NODES/$NODELIST that SLURM rejects (e.g.
+    # clusters like ufal define no ACCOUNT; --nodes/--nodelist are only present when
+    # the cluster (clusters.yaml) or --nodelist / a slurm_template_var override sets
+    # them).
     if not os.environ.get("ACCOUNT"):
         sbatch_script = sbatch_script.replace("#SBATCH --account=$ACCOUNT\n", "")
+    if not os.environ.get("NODES"):
+        sbatch_script = sbatch_script.replace("#SBATCH --nodes=$NODES\n", "")
     if not os.environ.get("NODELIST"):
         sbatch_script = sbatch_script.replace("#SBATCH --nodelist=$NODELIST\n", "")
 

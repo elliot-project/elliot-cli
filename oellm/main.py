@@ -98,8 +98,8 @@ def schedule_evals(
             submitting to SLURM. Requires --venv-path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
-            (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM). "TIME" overrides the time limit.
-            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
+            (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM, NODES). "TIME" overrides the time limit.
+            Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G","NODES":"1"}'
         allow_missing_judge: If True, allow scheduling tasks that need an LLM judge
             (e.g. activitynetqa, AudioBench chat-style tasks) when ``OPENAI_API_KEY``
             is not set. Those tasks will emit null performance values. Default False —

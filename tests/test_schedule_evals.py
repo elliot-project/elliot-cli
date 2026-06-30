@@ -119,6 +119,63 @@ def test_schedule_evals_no_nodelist(tmp_path):
     assert "--nodelist" not in sbatch_content
 
 
+def test_schedule_evals_nodes(tmp_path):
+    """When NODES is set (e.g. via clusters.yaml), the #SBATCH --nodes directive is
+    kept and substituted."""
+    env = {k: v for k, v in os.environ.items() if k != "NODELIST"}
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch.dict(
+            os.environ,
+            {**env, "EVAL_OUTPUT_DIR": str(tmp_path), "NODES": "1"},
+            clear=True,
+        ),
+    ):
+        schedule_evals(
+            models="EleutherAI/pythia-70m",
+            tasks="hellaswag",
+            n_shot=0,
+            skip_checks=True,
+            venv_path=str(Path(sys.prefix)),
+            dry_run=True,
+        )
+
+    sbatch_files = list(tmp_path.glob("**/submit_evals.sbatch"))
+    assert len(sbatch_files) == 1
+    sbatch_content = sbatch_files[0].read_text()
+    assert "#SBATCH --nodes=1" in sbatch_content
+
+
+def test_schedule_evals_no_nodes(tmp_path):
+    """Without NODES set the #SBATCH --nodes directive is stripped.
+
+    Regression: template.sbatch ships ``#SBATCH --nodes=$NODES``; on clusters that
+    don't define NODES (e.g. leonardo) it must not leak an unresolved ``$NODES``,
+    which SLURM rejects.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ("NODES", "NODELIST")}
+    with (
+        patch("oellm.scheduler._load_cluster_env"),
+        patch("oellm.scheduler._num_jobs_in_queue", return_value=0),
+        patch.dict(os.environ, {**env, "EVAL_OUTPUT_DIR": str(tmp_path)}, clear=True),
+    ):
+        schedule_evals(
+            models="EleutherAI/pythia-70m",
+            tasks="hellaswag",
+            n_shot=0,
+            skip_checks=True,
+            venv_path=str(Path(sys.prefix)),
+            dry_run=True,
+        )
+
+    sbatch_files = list(tmp_path.glob("**/submit_evals.sbatch"))
+    assert len(sbatch_files) == 1
+    sbatch_content = sbatch_files[0].read_text()
+    assert "--nodes=" not in sbatch_content
+    assert "$NODES" not in sbatch_content
+
+
 def test_schedule_evals_slurm_template_var_invalid_json(tmp_path):
     """Verify invalid slurm_template_var raises ValueError."""
     with (
