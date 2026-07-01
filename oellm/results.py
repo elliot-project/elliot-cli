@@ -51,6 +51,7 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     "submission": 100.0,
     "bleu": 100.0,
     "chrf++": 100.0,
+    "chrf": 100.0,
     "mathvision_standard_eval": 100.0,
     # ── 0–5 Likert scale (GPT-judge style) ──
     "gpt_eval": 5.0,
