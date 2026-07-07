@@ -46,6 +46,8 @@ def schedule_evals(
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
     local: bool | None = None,
+    load_in_4bit: bool | None = None,
+    load_in_8bit: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
     nodelist: str | None = None,
@@ -97,6 +99,13 @@ def schedule_evals(
         local: If True, run evaluations directly on the local machine using bash instead of
             submitting to SLURM. Requires --venv-path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
+        load_in_4bit: Load models 4-bit quantized (bitsandbytes) — applies to the
+            lm_eval / lmms_eval / evalchemy engines via --model_args; lighteval rows
+            are unaffected and contrib suites only opt in via the OELLM_QUANTIZATION
+            env var (a warning lists any full-precision rows). Recorded in the run's
+            provenance.json. NVIDIA-first; ROCm (LUMI) support depends on
+            bitsandbytes' ROCm build. Mutually exclusive with load_in_8bit.
+        load_in_8bit: Same as load_in_4bit but 8-bit quantization.
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
             (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM, NODES). "TIME" overrides the time limit.
             Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G","NODES":"1"}'
@@ -126,6 +135,8 @@ def schedule_evals(
         venv_path=venv_path,
         lm_eval_include_path=lm_eval_include_path,
         local=local,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
         slurm_template_var=slurm_template_var,
     )
 
@@ -162,6 +173,8 @@ def schedule_evals(
         slurm_template_var=cfg.slurm_template_var_json,
         allow_missing_judge=allow_missing_judge,
         nodelist=nodelist,
+        load_in_4bit=cfg.load_in_4bit,
+        load_in_8bit=cfg.load_in_8bit,
     )
 
 
@@ -244,7 +257,10 @@ def compare(
     def _load_results(path_str: str) -> list[dict]:
         p = Path(path_str)
         if p.is_dir():
-            p = p / "results.json"
+            # collect_results writes eval_results.json; accept the legacy
+            # results.json name as a fallback.
+            candidate = p / "eval_results.json"
+            p = candidate if candidate.exists() else p / "results.json"
         if not p.exists():
             raise FileNotFoundError(f"Results file not found: {p}")
         data = json.loads(p.read_text())
@@ -253,20 +269,33 @@ def compare(
     results_a = _load_results(result_a)
     results_b = _load_results(result_b)
 
-    # Index by (task, n_shot, metric)
-    def _index(results: list[dict]) -> dict[tuple, float]:
+    # Index by (model, task, n_shot, metric) — model identity matters:
+    # collected files routinely contain several models, and a model-less
+    # key would silently overwrite rows across models.
+    def _index(results: list[dict]) -> dict[tuple, float | None]:
         idx = {}
         for r in results:
-            key = (r.get("task", ""), r.get("n_shot", 0), r.get("metric", ""))
-            idx[key] = r.get("performance", 0.0)
+            key = (
+                r.get("model", ""),
+                r.get("task", ""),
+                r.get("n_shot", 0),
+                r.get("metric", ""),
+            )
+            idx[key] = r.get("performance")
         return idx
 
     idx_a = _index(results_a)
     idx_b = _index(results_b)
-    all_keys = sorted(set(idx_a.keys()) | set(idx_b.keys()))
+    # n_shot legitimately mixes ints and strings ("unknown") — sort on a
+    # stringified key to avoid TypeError.
+    all_keys = sorted(
+        set(idx_a.keys()) | set(idx_b.keys()),
+        key=lambda k: tuple(str(x) for x in k),
+    )
 
     console = get_console()
     table = Table(title="Comparison")
+    table.add_column("Model", style="bold")
     table.add_column("Task", style="bold")
     table.add_column("N-shot", justify="right")
     table.add_column("Metric")
@@ -274,9 +303,9 @@ def compare(
     table.add_column("B", justify="right")
     table.add_column("\u0394", justify="right")  # Delta
 
-    for task, n_shot, metric in all_keys:
-        val_a = idx_a.get((task, n_shot, metric))
-        val_b = idx_b.get((task, n_shot, metric))
+    for model, task, n_shot, metric in all_keys:
+        val_a = idx_a.get((model, task, n_shot, metric))
+        val_b = idx_b.get((model, task, n_shot, metric))
         str_a = f"{val_a:.4f}" if val_a is not None else "\u2014"
         str_b = f"{val_b:.4f}" if val_b is not None else "\u2014"
         if val_a is not None and val_b is not None:
@@ -284,7 +313,7 @@ def compare(
             str_delta = f"{delta:+.4f}"
         else:
             str_delta = "\u2014"
-        table.add_row(task, str(n_shot), metric, str_a, str_b, str_delta)
+        table.add_row(model, task, str(n_shot), metric, str_a, str_b, str_delta)
 
     console.print(table)
 
@@ -357,6 +386,8 @@ def eval_command(
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
     local: bool | None = None,
+    load_in_4bit: bool | None = None,
+    load_in_8bit: bool | None = None,
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
     nodelist: str | None = None,
@@ -402,6 +433,8 @@ def eval_command(
         venv_path=venv_path,
         lm_eval_include_path=lm_eval_include_path,
         local=local,
+        load_in_4bit=load_in_4bit,
+        load_in_8bit=load_in_8bit,
         slurm_template_var=slurm_template_var,
         allow_missing_judge=allow_missing_judge,
         nodelist=nodelist,

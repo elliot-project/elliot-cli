@@ -151,10 +151,10 @@ class TestPreDownloadFailsLoudly:
         _pre_download_datasets_from_specs(specs)
         assert calls == ["org/dataset-a", "org/dataset-b"]
 
-    def test_snapshot_failure_alone_does_not_raise_if_load_dataset_works(
-        self, monkeypatch
-    ):
-        """snapshot_download is best-effort; load_dataset success is enough."""
+    def test_snapshot_failure_raises_even_if_load_dataset_works(self, monkeypatch):
+        """Media snapshot failures are STRICT: load_dataset alone does not
+        stage the separate media files (video/audio assets), so proceeding
+        would schedule rows that fail hours later on the air-gapped node."""
 
         def boom_snapshot(*args, **kwargs):
             raise OSError("simulated snapshot HTTP 429")
@@ -168,8 +168,8 @@ class TestPreDownloadFailsLoudly:
 
         specs = [_FakeSpec(repo_id="org/dataset-a", needs_snapshot_download=True)]
 
-        # snapshot_download fails but load_dataset succeeds → no raise.
-        _pre_download_datasets_from_specs(specs)
+        with pytest.raises(RuntimeError, match="Pre-download failed"):
+            _pre_download_datasets_from_specs(specs)
 
 
 class TestPreDownloadRevisions:

@@ -151,11 +151,18 @@ def _load_cluster_env() -> None:
         def __missing__(self, key):
             return "{" + key + "}"
 
-    base_ctx = _Default({**os.environ, **{k: str(v) for k, v in cluster_cfg_raw.items()}})
+    # Template-resolution precedence: user environment > cluster values >
+    # shared values. The user env must win INSIDE templated values too —
+    # ``export EVAL_BASE_DIR=/custom`` has to propagate into
+    # ``EVAL_OUTPUT_DIR: "{EVAL_BASE_DIR}/{USER}"``, not just override the
+    # variable itself (the export below is setdefault, so exported vars also
+    # win at that level).
+    cluster_str = {k: str(v) for k, v in cluster_cfg_raw.items()}
+    base_ctx = _Default({**cluster_str, **os.environ})
 
     resolved_shared = {k: str(v).format_map(base_ctx) for k, v in shared_cfg.items()}
 
-    ctx = _Default({**base_ctx, **resolved_shared})
+    ctx = _Default({**resolved_shared, **cluster_str, **os.environ})
 
     resolved_cluster = {k: str(v).format_map(ctx) for k, v in cluster_cfg_raw.items()}
 
@@ -268,15 +275,20 @@ def _expand_local_model_paths(model: str | Path) -> list[Path]:
     return model_paths
 
 
-def _process_model_paths(models: Iterable[str]):
-    """
-    Processes model strings into a dict of model paths.
+def _process_model_paths(models: Iterable[str]) -> dict[str, str | None]:
+    """Pre-download hub models and return their resolved revisions.
 
     Each model string can be a local path or a huggingface model identifier.
-    This function expands directory paths that contain multiple checkpoints.
+    Local directory paths that contain multiple checkpoints are expanded.
+    Returns ``{model: resolved_commit_or_None}`` for hub models — the commit
+    actually present in the shared cache, recorded into the run's
+    ``provenance.json``. Models are otherwise unpinned: whatever revision is
+    cached is what the offline compute node evaluates, so recording it is the
+    only way a collected number stays traceable.
     """
     from huggingface_hub import snapshot_download
 
+    revisions: dict[str, str | None] = {}
     console = get_console()
     models_list = list(models)
 
@@ -312,12 +324,17 @@ def _process_model_paths(models: Iterable[str]):
 
                     status.update(f"Downloading '{repo_id}' ({idx}/{len(models_list)})")
                     try:
-                        snapshot_download(
+                        _local = snapshot_download(
                             repo_id=repo_id,
                             cache_dir=Path(os.getenv("HF_HOME")) / "hub"
                             if "HF_HOME" in os.environ
                             else None,
                             **snapshot_kwargs,
+                        )
+                        revisions[str(model)] = (
+                            Path(_local).name
+                            if Path(_local).parent.name == "snapshots"
+                            else None
                         )
                         per_model_paths.append(model)
                     except Exception as e:
@@ -336,9 +353,14 @@ def _process_model_paths(models: Iterable[str]):
                     status.update(f"Downloading '{model}' ({idx}/{len(models_list)})")
                     # snapshot_download is idempotent — it skips files that
                     # are already cached and only fetches missing ones.
-                    snapshot_download(
+                    _local = snapshot_download(
                         repo_id=model,
                         cache_dir=cache_dir,
+                    )
+                    revisions[str(model)] = (
+                        Path(_local).name
+                        if Path(_local).parent.name == "snapshots"
+                        else None
                     )
                     per_model_paths.append(model)
 
@@ -346,6 +368,8 @@ def _process_model_paths(models: Iterable[str]):
                 logging.warning(
                     f"Could not find any valid model for '{model}'. It will be skipped."
                 )
+
+    return revisions
 
 
 def _pre_download_hf_model_repos(repo_ids: list[str]) -> None:
@@ -477,9 +501,13 @@ def _pre_download_datasets_from_specs(
                             max_workers=2,
                         )
                     except Exception as e:
-                        logging.warning(
-                            f"snapshot_download failed for '{rev_label}': {e}"
-                        )
+                        # Media files are NOT fetched by load_dataset() below,
+                        # so a failed snapshot means every row of this task
+                        # fails hours later on the air-gapped compute node.
+                        # Strict contract: aggregate and abort before SLURM
+                        # submission (bypass with --skip-checks if the cache
+                        # is already populated out-of-band).
+                        failures.append((rev_label, e))
 
             # Build the Arrow cache — this is what makes the dataset loadable on the
             # OFFLINE compute nodes. load_dataset() needs the BUILT dataset under

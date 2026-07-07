@@ -64,10 +64,21 @@ class EvalRunner:
         appended as ``lmms_eval:<adapter>``.  For contrib suites the
         registry's ``detect_model_flags()`` provides the same service.
         """
-        suite = job.eval_suite
-        canonical = _ALIAS_MAP.get(suite, suite)
+        raw = str(job.eval_suite)
+        suite = raw.strip()
+        # Normalise the engine head for the alias lookup: CSV-sourced suites
+        # may arrive mixed-case or whitespace-padded (``LMMS_EVAL``,
+        # `` lmms_eval``). envcheck normalises before validating, so without
+        # this the row would pass pre-flight and crash on the compute node
+        # after queue wait and model load.
+        head, _sep, tail = suite.partition(":")
+        canonical = _ALIAS_MAP.get(head.strip().lower(), suite)
 
         if canonical == "lmms_eval":
+            if tail:
+                # Already resolved (e.g. a --check re-schedule CSV round
+                # trip) — keep the adapter, normalise the head.
+                return f"lmms_eval:{tail}"
             adapter = detect_lmms_model_type(str(job.model_path))
             resolved = f"lmms_eval:{adapter}"
             logging.debug("lmms-eval adapter for %s: %s", job.model_path, adapter)

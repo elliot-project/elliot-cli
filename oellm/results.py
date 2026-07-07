@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
@@ -61,19 +62,43 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     # lmms_eval/tasks/mme/utils.py::mme_aggregate_results.
     "mme_cognition_score": 800.0,
     "mme_perception_score": 2000.0,
+    # ── Contrib / additional 0–1 metrics ──
+    "gIoU": 1.0,
+    "meteor": 1.0,
+    "string_match": 1.0,
+}
+
+# Per-task overrides for metric keys whose scale differs from the name-level
+# default above. METRIC_NATIVE_SCALE is keyed by metric name only, but the
+# same key is emitted on different scales by different benchmarks:
+# lm-eval's squadv2 wraps the official squad_v2 metric (0–100 percentages)
+# while coqa's token-F1 is 0–1, and lmms-eval's voicebench judge returns a
+# raw 1–5 average while mathvista's llm_as_judge_eval is 0–100. Keyed by
+# (task_name, metric_name_without_filter).
+TASK_METRIC_SCALE_OVERRIDES: dict[tuple[str, str], float] = {
+    ("squadv2", "f1"): 100.0,
+    ("voicebench_commoneval", "llm_as_judge_eval"): 5.0,
 }
 
 
-def _normalize_to_100(value: float | None, metric_name: str | None) -> float | None:
+def _normalize_to_100(
+    value: float | None, metric_name: str | None, task_name: str | None = None
+) -> float | None:
     """Normalize a metric value to a 0–100 scale for cross-benchmark display.
 
-    Returns ``None`` when the metric's native scale is unknown — caller
-    should fall back to the raw value rather than guess.
+    Per-task scale overrides (``TASK_METRIC_SCALE_OVERRIDES``) take precedence
+    over the name-level ``METRIC_NATIVE_SCALE`` default. Returns ``None`` when
+    the metric's native scale is unknown — caller should fall back to the raw
+    value rather than guess.
     """
     if value is None or metric_name is None:
         return None
     clean = metric_name.split(",")[0]
-    scale = METRIC_NATIVE_SCALE.get(clean)
+    scale = None
+    if task_name is not None:
+        scale = TASK_METRIC_SCALE_OVERRIDES.get((task_name, clean))
+    if scale is None:
+        scale = METRIC_NATIVE_SCALE.get(clean)
     if scale is None:
         return None
     return value * (100.0 / scale)
@@ -272,6 +297,26 @@ def collect_results(
         else results_path
     )
     json_files = [p for p in search_root.rglob("*.json") if p.is_file()]
+    # Sort oldest-first by mtime (path as tiebreak) so the last-wins dedup
+    # below deterministically keeps the NEWEST result when the same
+    # (model, task, n_shot, metric) key appears in multiple files. Re-runs
+    # write fresh random-hex filenames, so without this the survivor depended
+    # on filesystem enumeration order.
+    json_files.sort(key=lambda p: (p.stat().st_mtime, str(p)))
+
+    # Run-provenance sidecars written by the scheduler (schedule-time config,
+    # resolved model revisions, template knobs). Embedded verbatim in the
+    # results JSON envelope so a collected number can be traced to its run.
+    run_provenance: list[dict] = []
+    for _prov in sorted(results_path.rglob("provenance.json")):
+        try:
+            _pdata = json.loads(_prov.read_text())
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+            logging.warning(f"Unreadable provenance sidecar {_prov}: {e}")
+            continue
+        if isinstance(_pdata, dict):
+            _pdata["_path"] = str(_prov)
+            run_provenance.append(_pdata)
 
     if not json_files:
         logging.warning(f"No JSON files found in {results_dir}")
@@ -311,6 +356,9 @@ def collect_results(
     completed_jobs = set()
 
     for json_file in json_files:
+        # Provenance sidecars are consumed separately above, not result files.
+        if json_file.name == "provenance.json":
+            continue
         # A truncated file (OOM-killed / timed-out SLURM task) must not abort
         # the whole collection; skip it and let --check report the job missing.
         try:
@@ -372,7 +420,14 @@ def collect_results(
 
         global_n_shot = _infer_global_n_shot(n_shot_data)
 
-        # Aggregate groups (lm-eval harness)
+        # Aggregate groups (lm-eval harness). Collect every TOP-LEVEL group —
+        # one that is not itself a subtask of another group. A file can
+        # legitimately contain several independent groups; the previous
+        # first-entry-only logic silently dropped all but the first, plus any
+        # standalone tasks sharing the file. When a top-level group has no
+        # numeric metric (benchmark-style non-aggregating parents, e.g.
+        # lm-eval's `leaderboard`), descend into its child groups so the file
+        # still contributes rows instead of silently vanishing.
         groups_map = data.get("groups", {})
         group_subtasks_map = data.get("group_subtasks", {})
         group_aggregate_names = set(groups_map.keys()) | set(group_subtasks_map.keys())
@@ -381,61 +436,88 @@ def collect_results(
             for _s in _subs:
                 group_subtask_names.add(_s)
 
-        # Prefer only the first aggregate metric from groups (simplified)
+        rows_before_file = len(rows)
+
         if groups_map:
-            group_name, group_results = next(iter(groups_map.items()))
-            orig_group_name = group_name
-            n_shot = n_shot_data.get(orig_group_name, "unknown")
-            if n_shot == "unknown":
-                for subtask_name in group_subtasks_map.get(orig_group_name, []):
-                    if subtask_name in n_shot_data:
-                        n_shot = n_shot_data[subtask_name]
-                        break
-            if n_shot == "unknown" and global_n_shot is not None:
-                n_shot = global_n_shot
-            # Strip ``'|N'`` n-shot suffix from the group name, falling back
-            # to the parsed N when n_shot is still unknown.
-            group_name, parsed_n = _split_task_and_nshot(orig_group_name)
-            if n_shot == "unknown" and parsed_n is not None:
-                n_shot = parsed_n
-            performance, metric_name = _resolve_metric(
-                group_name, group_results, task_metrics
-            )
-            if performance is not None:
-                if check:
-                    completed_jobs.add((model_name, group_name, n_shot))
-                rows.append(
-                    {
-                        "model_name": model_name,
-                        "task": group_name,
-                        "n_shot": n_shot,
-                        "performance": performance,
-                        "performance_normalized": _normalize_to_100(
-                            performance, metric_name
-                        ),
-                        "metric_name": metric_name if metric_name is not None else "",
-                    }
+            _queue = [g for g in groups_map if g not in group_subtask_names]
+            if not _queue:
+                # Defensive: odd/cyclic group metadata — consider every group.
+                _queue = list(groups_map)
+            _visited: set[str] = set()
+            while _queue:
+                orig_group_name = _queue.pop(0)
+                if orig_group_name in _visited:
+                    continue
+                _visited.add(orig_group_name)
+                group_results = groups_map.get(orig_group_name, {})
+                n_shot = n_shot_data.get(orig_group_name, "unknown")
+                if n_shot == "unknown":
+                    for subtask_name in group_subtasks_map.get(orig_group_name, []):
+                        if subtask_name in n_shot_data:
+                            n_shot = n_shot_data[subtask_name]
+                            break
+                if n_shot == "unknown" and global_n_shot is not None:
+                    n_shot = global_n_shot
+                # Strip ``'|N'`` n-shot suffix from the group name, falling
+                # back to the parsed N when n_shot is still unknown.
+                group_name, parsed_n = _split_task_and_nshot(orig_group_name)
+                if n_shot == "unknown" and parsed_n is not None:
+                    n_shot = parsed_n
+                performance, metric_name = _resolve_metric(
+                    group_name, group_results, task_metrics
                 )
-                # Skip per-task iteration when groups are present
-                continue
+                if performance is not None:
+                    if check:
+                        completed_jobs.add((model_name, group_name, n_shot))
+                    rows.append(
+                        {
+                            "model_name": model_name,
+                            "task": group_name,
+                            "n_shot": n_shot,
+                            "performance": performance,
+                            "performance_normalized": _normalize_to_100(
+                                performance, metric_name, group_name
+                            ),
+                            "metric_name": metric_name if metric_name is not None else "",
+                        }
+                    )
+                else:
+                    # Metric-less aggregate: descend into child groups so
+                    # aggregating children are still collected.
+                    for _child in group_subtasks_map.get(orig_group_name, []):
+                        if _child in groups_map:
+                            _queue.append(_child)
 
         for task_name, task_results in results.items():
             # Skip the lighteval 'all' aggregate pseudo-task
             if task_name == "all":
                 continue
-            # Skip entries already added from groups
+            # Skip entries already handled by the groups pass above
             if groups_map and task_name in group_aggregate_names:
                 continue
             # Skip any lm-eval group subtasks; keep only aggregates
             if task_name in group_subtask_names:
                 continue
 
-            # Skip MMLU subtasks - only keep the aggregate score
-            if task_name.startswith("mmlu_") and task_name != "mmlu":
+            # Skip MMLU subtasks — but only when this file actually contains
+            # the MMLU aggregate. A lone `mmlu_pro`-style task (a different
+            # benchmark that merely shares the prefix) must NOT be dropped.
+            if (
+                task_name.startswith("mmlu_")
+                and task_name != "mmlu"
+                and ("mmlu" in results or "mmlu" in groups_map)
+            ):
                 continue
 
-            # Skip Global MMLU subtasks - keep only aggregates like global_mmlu_full_pt
-            if task_name.startswith("global_mmlu_") and task_name.count("_") >= 4:
+            # Skip Global MMLU subtasks — a task is a subtask iff a shorter
+            # global_mmlu_* aggregate in this file prefixes it. (The previous
+            # underscore-count heuristic also ate legitimate aggregates for
+            # languages containing underscores, e.g. global_mmlu_full_zh_hans.)
+            if task_name.startswith("global_mmlu_") and any(
+                _other != task_name and task_name.startswith(_other + "_")
+                for _other in results
+                if isinstance(_other, str) and _other.startswith("global_mmlu_")
+            ):
                 continue
 
             # Strip ``'|N'`` n-shot suffix from the task name; use parsed N
@@ -471,6 +553,12 @@ def collect_results(
                             child_metric_name = sub_metric
                 if not child_values:
                     continue
+                if len(child_values) < len(subtasks):
+                    logging.warning(
+                        f"Aggregate '{task_name_clean}' in {json_file.name}: only "
+                        f"{len(child_values)}/{len(subtasks)} subtasks present — "
+                        f"missing children are excluded from the mean"
+                    )
                 performance = sum(child_values) / len(child_values)
                 metric_name = child_metric_name
             else:
@@ -489,7 +577,7 @@ def collect_results(
                         "n_shot": n_shot,
                         "performance": performance,
                         "performance_normalized": _normalize_to_100(
-                            performance, metric_name
+                            performance, metric_name, task_name_clean
                         ),
                         "metric_name": metric_name if metric_name is not None else "",
                     }
@@ -503,6 +591,13 @@ def collect_results(
                     f"— value may be null (LLM judge not configured?) or metric key missing from task_metrics"
                 )
 
+        if len(rows) == rows_before_file:
+            logging.warning(
+                f"Result file '{json_file}' contributed zero rows — every "
+                f"task/aggregate was skipped or lacked a numeric metric. "
+                f"--check will keep reporting its jobs as missing."
+            )
+
     if not rows and not check:
         logging.warning("No results extracted from JSON files")
         return
@@ -515,14 +610,22 @@ def collect_results(
         # them to NaN and break the JSON envelope).
         _deduped: dict[tuple, dict] = {}
         for _row in rows:
-            _deduped[
-                (
-                    _row.get("model_name"),
-                    _row.get("task"),
-                    _row.get("n_shot"),
-                    _row.get("metric_name"),
+            _key = (
+                _row.get("model_name"),
+                _row.get("task"),
+                _row.get("n_shot"),
+                _row.get("metric_name"),
+            )
+            if _key in _deduped and _deduped[_key].get("performance") != _row.get(
+                "performance"
+            ):
+                logging.warning(
+                    f"Duplicate results for model={_key[0]!r} task={_key[1]!r} "
+                    f"n_shot={_key[2]!r} metric={_key[3]!r}: "
+                    f"{_deduped[_key].get('performance')} superseded by "
+                    f"{_row.get('performance')} (newest result file wins)"
                 )
-            ] = _row
+            _deduped[_key] = _row
         rows = list(_deduped.values())
 
         df = pd.DataFrame(rows)
@@ -533,7 +636,7 @@ def collect_results(
         output_stem = Path(output_csv).with_suffix("")
         json_path = Path(f"{output_stem}.json")
         md_path = Path(f"{output_stem}.md")
-        write_results_json(rows, json_path)
+        write_results_json(rows, json_path, run_provenance=run_provenance)
         write_results_markdown(rows, md_path)
         logging.info(f"Results JSON: {json_path}")
         logging.info(f"Results Markdown: {md_path}")
@@ -609,17 +712,41 @@ def collect_results(
 # Structured output: versioned JSON and Markdown report
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
+
+
+def _collector_git_commit() -> str | None:
+    """Best-effort git commit of the oellm checkout running collect.
+
+    Returns ``None`` when installed as a wheel or git is unavailable.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
 
 
 def write_results_json(
     rows: list[dict],
     output_path: str | Path,
+    run_provenance: list[dict] | None = None,
 ) -> None:
-    """Write versioned JSON: {version, generated_at, results: [...]}.
+    """Write versioned JSON: {version, generated_at, provenance, results}.
 
     Each result row has `performance` (raw engine value) and
-    `performance_normalized` (0-100 via METRIC_NATIVE_SCALE, or null).
+    `performance_normalized` (0-100 via METRIC_NATIVE_SCALE plus per-task
+    overrides, or null). Schema v1.2 adds `oellm_version`,
+    `collector_git_commit`, per-run provenance under `runs`, and a reserved
+    extensible `metadata` namespace (future additive fields — e.g. safety /
+    compliance metadata — land there without a schema migration).
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -637,9 +764,15 @@ def write_results_json(
             }
         )
 
+    from oellm import __version__
+
     envelope = {
         "version": SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
+        "oellm_version": __version__,
+        "collector_git_commit": _collector_git_commit(),
+        "metadata": {},
+        "runs": run_provenance or [],
         "results": results,
     }
 

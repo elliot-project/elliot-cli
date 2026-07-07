@@ -39,7 +39,7 @@ uv venv --python 3.12 /path/to/.venv
 #    Pin a known-good commit (`...lmms-eval.git@<commit>#egg=...`) so two venvs
 #    created on different days run the same engine — unpinned `main` drifts.
 uv pip install --python /path/to/.venv/bin/python \
-    -e "git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git#egg=lmms-eval"
+    -e "git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@45c766f60b6f8c153e4c72d06ca636e2db0ebcdb#egg=lmms-eval"
 
 # 3. Install oellm-cli with engine extras
 uv pip install --python /path/to/.venv/bin/python -e '.[text,image,audio]'
@@ -48,7 +48,7 @@ uv pip install --python /path/to/.venv/bin/python -e '.[text,image,audio]'
 UV_TOOL_DIR=/path/to/.uv-tools UV_TOOL_BIN_DIR=/path/to/.venv/bin \
   uv tool install --python 3.12 \
     --with "langcodes[data]" --with "pillow" \
-    "lighteval[multilingual] @ git+https://github.com/huggingface/lighteval.git"
+    "lighteval[multilingual] @ git+https://github.com/huggingface/lighteval.git@64f4f5ae173626509fad6e477ca4ee56ebb26129"
 ```
 
 Verify with:

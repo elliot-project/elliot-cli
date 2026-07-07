@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import re
+import socket
 import subprocess
 from datetime import datetime
 from importlib.resources import files
@@ -11,7 +12,9 @@ from string import Template
 
 import pandas as pd
 
+from oellm import __version__
 from oellm.constants import EvaluationJob
+from oellm.results import _collector_git_commit, _load_task_metrics
 from oellm.runner import EvalRunner
 from oellm.task_groups import (
     _build_task_suite_map,
@@ -20,6 +23,8 @@ from oellm.task_groups import (
     _collect_hf_model_repos,
     _expand_task_groups,
     _lookup_dataset_specs_for_tasks,
+    _lookup_hf_dataset_files_for_tasks,
+    _lookup_hf_model_repos_for_tasks,
     split_group_tokens,
 )
 from oellm.utils import (
@@ -99,6 +104,28 @@ def _resolve_additional_model_args(local: bool = False) -> str:
     return f"batch_size={batch_size_value}"
 
 
+def _probe_engine_versions(venv_path: str | None) -> dict[str, str]:
+    """Best-effort versions of the score-relevant packages in the venv that
+    will run the jobs, recorded into provenance.json. Venvs are per-user,
+    per-cluster state that nothing else records — this is what makes a
+    collected number traceable to the engine that produced it. Container
+    mode returns {} (versions live in the image; its name is recorded
+    separately)."""
+    if not venv_path:
+        return {}
+    python_bin = Path(venv_path).expanduser() / "bin" / "python"
+    if not python_bin.exists():
+        return {}
+    from oellm.envcheck import probe_import
+
+    versions: dict[str, str] = {}
+    for module in ("lm_eval", "lighteval", "lmms_eval", "transformers", "torch"):
+        ok, ver = probe_import(python_bin, module)
+        if ok:
+            versions[module] = ver
+    return versions
+
+
 @capture_third_party_output_from_kwarg("verbose")
 def schedule_evals(
     models: str | None = None,
@@ -120,6 +147,8 @@ def schedule_evals(
     slurm_template_var: str | None = None,
     allow_missing_judge: bool = False,
     nodelist: str | None = None,
+    load_in_4bit: bool = False,
+    load_in_8bit: bool = False,
 ) -> None:
     """
     Schedule evaluation jobs for a given set of models, tasks, and number of shots.
@@ -162,6 +191,9 @@ def schedule_evals(
             Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G"}'
     """
     _setup_logging(verbose)
+
+    if load_in_4bit and load_in_8bit:
+        raise ValueError("load_in_4bit and load_in_8bit are mutually exclusive.")
 
     if local:
         if not venv_path:
@@ -302,6 +334,52 @@ def schedule_evals(
     runner = EvalRunner()
     runner.prepare_jobs(expanded_eval_jobs)
 
+    # Warn when a scheduled task has no explicit task_metrics entry —
+    # collect_results then relies on METRIC_FALLBACK_KEYS, whose choice is
+    # insertion-order-dependent for multi-filter engine outputs.
+    _tm = _load_task_metrics()
+    _unmapped_tasks = sorted(
+        {str(j.task_path) for j in expanded_eval_jobs if str(j.task_path) not in _tm}
+    )
+    if _unmapped_tasks:
+        _shown = ", ".join(_unmapped_tasks[:10])
+        if len(_unmapped_tasks) > 10:
+            _shown += f" (+{len(_unmapped_tasks) - 10} more)"
+        logging.warning(
+            f"No task_metrics entry for: {_shown} — collect will use fallback "
+            f"metric keys; add entries to task-groups.yaml for a stable metric policy."
+        )
+
+    # Quantized loading (G3): applied via --model_args for the HF-style
+    # engines only. Never silent for the rest — a table mixing 4-bit and
+    # full-precision rows is a comparability trap, so unsupported suites are
+    # announced here and the choice is recorded in provenance.json.
+    quantization = "4bit" if load_in_4bit else "8bit" if load_in_8bit else ""
+    quantization_model_args = f",load_in_{quantization}=True" if quantization else ""
+    if quantization:
+        _quant_ok = {
+            "lm_eval",
+            "lm-eval",
+            "lm-eval-harness",
+            "lmms_eval",
+            "lmms-eval",
+            "evalchemy",
+        }
+        _unsupported = sorted(
+            {
+                str(j.eval_suite).split(":", 1)[0].strip().lower()
+                for j in expanded_eval_jobs
+            }
+            - _quant_ok
+        )
+        if _unsupported:
+            logging.warning(
+                f"load_in_{quantization} applies to lm_eval/lmms_eval/evalchemy "
+                f"only; rows for suite(s) {', '.join(_unsupported)} run at FULL "
+                f"precision (contrib suites may opt in via the "
+                f"OELLM_QUANTIZATION env var exported to the job)."
+            )
+
     if not skip_checks:
         # Verify the runtime can actually execute the scheduled suites before
         # any network work: missing engines otherwise fail row-by-row on the
@@ -320,8 +398,11 @@ def schedule_evals(
             for job in expanded_eval_jobs
             if not Path(job.model_path).exists()
         }
-        _process_model_paths(hub_models)
+        _revs = _process_model_paths(hub_models)
+        # Defensive: tests/legacy callers may stub this with a non-dict.
+        model_revisions = _revs if isinstance(_revs, dict) else {}
     else:
+        model_revisions = {}
         logging.info(
             "Skipping model path processing and validation (--skip-checks enabled)"
         )
@@ -375,15 +456,20 @@ def schedule_evals(
                 dataset_specs, trust_remote_code=trust_remote_code
             )
 
-        hf_model_repos = []
+        # Auxiliary model repos / dataset files declared by tasks must be
+        # staged regardless of HOW the tasks were scheduled — task groups,
+        # bare --tasks, or a --check re-schedule CSV (the recovery path
+        # previously skipped this entirely and contrib rows then failed on
+        # the air-gapped compute node).
         if group_names:
             hf_model_repos = _collect_hf_model_repos(group_names)
+            hf_dataset_files = _collect_hf_dataset_files(group_names)
+        else:
+            _all_task_names = df["task_path"].unique().tolist()
+            hf_model_repos = _lookup_hf_model_repos_for_tasks(_all_task_names)
+            hf_dataset_files = _lookup_hf_dataset_files_for_tasks(_all_task_names)
         if hf_model_repos:
             _pre_download_hf_model_repos(hf_model_repos)
-
-        hf_dataset_files = []
-        if group_names:
-            hf_dataset_files = _collect_hf_dataset_files(group_names)
         if hf_dataset_files:
             _pre_download_hf_dataset_files(hf_dataset_files)
     else:
@@ -435,6 +521,17 @@ def schedule_evals(
 
     time_limit = os.environ.get("TIME_LIMIT", "12:00:00")
 
+    # M8 guard: on low-QUEUE_LIMIT clusters many rows run serially inside one
+    # wall-clock budget; without a per-row bound a single hung engine consumes
+    # the rest of the slice invisibly.
+    if evals_per_job > 1 and not os.environ.get("ROW_TIMEOUT"):
+        logging.warning(
+            f"{evals_per_job} evaluations run serially per array task under one "
+            f"TIME_LIMIT={time_limit} with no per-row timeout — one hung row "
+            f"consumes the rest of its slice. Set ROW_TIMEOUT (GNU timeout "
+            f"duration, e.g. '7200' or '2h') to bound each row."
+        )
+
     # Apply slurm_template_var overrides (JSON object)
     if slurm_template_var:
         try:
@@ -472,6 +569,35 @@ def schedule_evals(
     logging.info(f"   Time limit: {time_limit}")
     logging.info(f"   Requested host memory: {slurm_mem}")
 
+    # Run-provenance sidecar: schedule-time config, resolved model revisions,
+    # and every knob that changes effective eval conditions. Picked up by
+    # collect_results and embedded in the results JSON envelope (v1.2) so a
+    # collected number can be traced back to its run.
+    provenance = {
+        "schema": 1,
+        "created_at": timestamp,
+        "hostname": socket.gethostname(),
+        "oellm_version": __version__,
+        "scheduler_git_commit": _collector_git_commit(),
+        "eval_suites": sorted({str(j.eval_suite) for j in expanded_eval_jobs}),
+        "total_evals": total_evals,
+        "array_size": actual_array_size,
+        "time_limit": time_limit,
+        "slurm_mem": slurm_mem,
+        "lighteval_model_args": additional_model_args,
+        "max_num_frames": os.environ.get("MAX_NUM_FRAMES"),
+        "limit": limit,
+        "venv_path": venv_path,
+        "hf_hub_offline": _resolve_hf_hub_offline(local),
+        "quantization": quantization or None,
+        "row_timeout": os.environ.get("ROW_TIMEOUT"),
+        "model_revisions": model_revisions,
+        "engine_versions": {} if skip_checks else _probe_engine_versions(venv_path),
+        "container_image": None if venv_path else os.environ.get("EVAL_CONTAINER_IMAGE"),
+    }
+    (evals_dir / "provenance.json").write_text(json.dumps(provenance, indent=2))
+    logging.info(f"Run provenance: {evals_dir / 'provenance.json'}")
+
     sbatch_script = sbatch_template.format(
         csv_path=csv_path,
         max_array_len=max_array_len,
@@ -489,6 +615,8 @@ def schedule_evals(
         hf_hub_offline=_resolve_hf_hub_offline(local),
         additional_model_args=additional_model_args,
         evalchemy_dir=os.environ.get("EVALCHEMY_DIR", "/opt/evalchemy"),
+        quantization=quantization,
+        quantization_model_args=quantization_model_args,
     )
 
     # Drop optional #SBATCH directives whose env var is unset, so safe_substitute
@@ -503,8 +631,13 @@ def schedule_evals(
     if not os.environ.get("NODELIST"):
         sbatch_script = sbatch_script.replace("#SBATCH --nodelist=$NODELIST\n", "")
 
-    # substitute any $ENV_VAR occurrences
-    sbatch_script = Template(sbatch_script).safe_substitute(os.environ)
+    # Substitute $ENV_VAR occurrences from the environment — EXCLUDING SLURM_*
+    # runtime variables: when scheduling from inside an allocation
+    # (salloc/srun) those are set at render time and would be baked into the
+    # script (e.g. JOB_HOME losing its per-job uniqueness) instead of
+    # expanding on the compute node.
+    _template_env = {k: v for k, v in os.environ.items() if not k.startswith("SLURM_")}
+    sbatch_script = Template(sbatch_script).safe_substitute(_template_env)
 
     sbatch_script_path = evals_dir / "submit_evals.sbatch"
 
