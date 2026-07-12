@@ -1,11 +1,8 @@
-"""Regression tests for the Part-1 audit fixes (recovery loop, collection
-correctness, provenance, comparability).
-
-Each test pins one finding from the July 2026 internal audit:
-C1 (duplicate resolution), M14 (silent group/prefix omissions), M6 residue
-(lighteval round-trip), M18 (per-task scale overrides), M2 (compare), M3
-(cluster-env precedence), M4 (suite normalisation), M13 (task-scope aux
-staging), and the v1.2 provenance envelope.
+"""Regression tests for collection correctness, provenance, and scheduling
+recovery: duplicate-result resolution, silent group/prefix omissions, the
+lighteval round-trip, per-task scale overrides, model-aware compare,
+cluster-env precedence, eval_suite normalisation, task-scope aux staging,
+and the v1.2 provenance envelope.
 """
 
 import csv
@@ -36,7 +33,7 @@ def _rows(output_csv: str) -> list[dict]:
 M = {"model_name_or_path": "m"}
 
 
-# ── C1: duplicate results resolve to the newest file, loudly ────────────────
+# ── duplicate results resolve to the newest file, loudly ────────────────
 
 
 class TestDuplicateResolution:
@@ -66,7 +63,7 @@ class TestDuplicateResolution:
         assert "Duplicate results" in " ".join(capsys.readouterr().out.split())
 
 
-# ── M14: group/prefix omission mechanisms ────────────────────────────────────
+# ── group/prefix omission mechanisms ────────────────────────────────────
 
 
 class TestGroupCollection:
@@ -194,7 +191,7 @@ class TestGroupCollection:
         assert "contributed zero rows" in " ".join(capsys.readouterr().out.split())
 
 
-# ── M6 residue: lighteval-shaped round-trip through collect + --check ───────
+# ── lighteval-shaped round-trip through collect + --check ───────
 
 
 class TestLightevalRoundTrip:
@@ -228,7 +225,7 @@ class TestLightevalRoundTrip:
         assert not missing.exists(), "completed lighteval job was re-reported as missing"
 
 
-# ── M18: per-task scale overrides ────────────────────────────────────────────
+# ── per-task scale overrides ────────────────────────────────────────────
 
 
 class TestScaleOverrides:
@@ -268,7 +265,7 @@ class TestProvenanceEnvelope:
         assert envelope["runs"][0]["model_revisions"] == {"m": "abc123"}
 
 
-# ── M4: eval_suite normalisation in the runner ───────────────────────────────
+# ── eval_suite normalisation in the runner ───────────────────────────────
 
 
 class TestSuiteNormalisation:
@@ -296,7 +293,7 @@ class TestSuiteNormalisation:
         assert EvalRunner().resolve_suite(job) == "lmms_eval:qwen2_vl"
 
 
-# ── M3: user env overrides propagate into templated cluster vars ────────────
+# ── user env overrides propagate into templated cluster vars ────────────
 
 
 class TestClusterEnvPrecedence:
@@ -322,7 +319,7 @@ class TestClusterEnvPrecedence:
         assert os.environ["EVAL_OUTPUT_DIR"] == "/custom/base/testuser"
 
 
-# ── M13: aux staging resolvable from bare task names ─────────────────────────
+# ── aux staging resolvable from bare task names ─────────────────────────
 
 
 class TestTaskScopedAuxStaging:
@@ -352,7 +349,7 @@ class TestTaskScopedAuxStaging:
         assert _lookup_hf_dataset_files_for_tasks(["hellaswag"]) == []
 
 
-# ── M2: compare is model-aware and reads collect's own output ────────────────
+# ── compare is model-aware and reads collect's own output ────────────────
 
 
 class TestCompare:

@@ -282,7 +282,7 @@ See `tests/test_regiondial_bench.py` as a reference.
 ## Runtime environment variables available to `run()`
 
 The dispatcher passes the full job environment via the ``env`` parameter.
-Interim channels (a formal ``eval_args`` parameter arrives with the Phase-4
+Interim channels (a formal ``eval_args`` parameter is planned for a future
 plugin-protocol revision):
 
 - ``LIMIT`` — sample cap requested via ``--limit`` (empty = no cap).

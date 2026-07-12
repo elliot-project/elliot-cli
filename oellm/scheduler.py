@@ -350,7 +350,7 @@ def schedule_evals(
             f"metric keys; add entries to task-groups.yaml for a stable metric policy."
         )
 
-    # Quantized loading (G3): applied via --model_args for the HF-style
+    # Quantized loading: applied via --model_args for the HF-style
     # engines only. Never silent for the rest — a table mixing 4-bit and
     # full-precision rows is a comparability trap, so unsupported suites are
     # announced here and the choice is recorded in provenance.json.
@@ -457,10 +457,9 @@ def schedule_evals(
             )
 
         # Auxiliary model repos / dataset files declared by tasks must be
-        # staged regardless of HOW the tasks were scheduled — task groups,
-        # bare --tasks, or a --check re-schedule CSV (the recovery path
-        # previously skipped this entirely and contrib rows then failed on
-        # the air-gapped compute node).
+        # staged regardless of how the tasks were scheduled — task groups,
+        # bare --tasks, or a --check re-schedule CSV — because compute
+        # nodes run air-gapped (HF_HUB_OFFLINE=1).
         if group_names:
             hf_model_repos = _collect_hf_model_repos(group_names)
             hf_dataset_files = _collect_hf_dataset_files(group_names)
@@ -521,7 +520,7 @@ def schedule_evals(
 
     time_limit = os.environ.get("TIME_LIMIT", "12:00:00")
 
-    # M8 guard: on low-QUEUE_LIMIT clusters many rows run serially inside one
+    # On low-QUEUE_LIMIT clusters many rows run serially inside one
     # wall-clock budget; without a per-row bound a single hung engine consumes
     # the rest of the slice invisibly.
     if evals_per_job > 1 and not os.environ.get("ROW_TIMEOUT"):

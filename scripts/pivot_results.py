@@ -52,7 +52,7 @@ def main() -> None:
     has_norm = "performance_normalized" in df.columns
 
     # Metric identity is part of the column label so rows that legitimately
-    # differ only in metric_name no longer collapse into one cell; the n_shot
+    # differ only in metric_name don't collapse into one cell; the n_shot
     # label is not int()-coerced because collect legitimately emits "unknown".
     def _label(r) -> str:
         metric = str(r["metric_name"]).split(",")[0] or "metric"

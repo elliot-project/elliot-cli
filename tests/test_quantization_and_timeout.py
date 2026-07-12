@@ -1,4 +1,4 @@
-"""Tests for the G3 quantization flags and the M8 per-row timeout guard."""
+"""Tests for the bitsandbytes quantization flags and the per-row timeout guard."""
 
 import json
 from unittest.mock import patch

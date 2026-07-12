@@ -421,13 +421,11 @@ def collect_results(
         global_n_shot = _infer_global_n_shot(n_shot_data)
 
         # Aggregate groups (lm-eval harness). Collect every TOP-LEVEL group —
-        # one that is not itself a subtask of another group. A file can
-        # legitimately contain several independent groups; the previous
-        # first-entry-only logic silently dropped all but the first, plus any
-        # standalone tasks sharing the file. When a top-level group has no
-        # numeric metric (benchmark-style non-aggregating parents, e.g.
-        # lm-eval's `leaderboard`), descend into its child groups so the file
-        # still contributes rows instead of silently vanishing.
+        # one that is not itself a subtask of another group — since a file can
+        # legitimately contain several independent groups plus standalone
+        # tasks. When a top-level group has no numeric metric (benchmark-style
+        # non-aggregating parents, e.g. lm-eval's `leaderboard`), descend into
+        # its child groups so the file still contributes rows.
         groups_map = data.get("groups", {})
         group_subtasks_map = data.get("group_subtasks", {})
         group_aggregate_names = set(groups_map.keys()) | set(group_subtasks_map.keys())
@@ -510,9 +508,9 @@ def collect_results(
                 continue
 
             # Skip Global MMLU subtasks — a task is a subtask iff a shorter
-            # global_mmlu_* aggregate in this file prefixes it. (The previous
-            # underscore-count heuristic also ate legitimate aggregates for
-            # languages containing underscores, e.g. global_mmlu_full_zh_hans.)
+            # global_mmlu_* aggregate in this file prefixes it. Language codes
+            # may themselves contain underscores (global_mmlu_full_zh_hans),
+            # so counting underscores cannot distinguish the two.
             if task_name.startswith("global_mmlu_") and any(
                 _other != task_name and task_name.startswith(_other + "_")
                 for _other in results

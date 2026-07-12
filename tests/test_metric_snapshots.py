@@ -186,7 +186,7 @@ def test_every_snapshot_has_a_task_metrics_entry(task_metrics: dict) -> None:
 
 # Every task of every image-* / video-* task group MUST have a snapshot —
 # derived from task-groups.yaml so the set cannot drift when benchmarks are
-# added (it previously stopped at the original 18 tasks).
+# added.
 def _image_video_tasks_from_yaml() -> set[str]:
     data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
     tasks: set[str] = set()
