@@ -90,6 +90,7 @@ evalchemy = [
     "torch",
     "langdetect",
     "immutabledict",
+    "fire",  # CLI dep of the HumanEval/AIME/AMC evalchemy benchmarks
 ]
 # DCLM-core-22 — pins ``lm-eval==0.4.9.2`` because v0.4.10+ breaks
 # ``agieval_lsat_ar`` few-shot.  Install in its own venv:
@@ -139,6 +140,9 @@ conflicts = [
 [tool.ruff]
 line-length = 90
 target-version = "py312"
+# Vendored verbatim from QwenLM/PolyMath (eval/scripts.py); keep it byte-for-byte
+# rather than reflowing/relinting upstream code.
+extend-exclude = ["oellm/resources/custom_lm_eval_tasks/polymath/polymath_eval.py"]
 
 [tool.ruff.lint]
 select = [
