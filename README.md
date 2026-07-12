@@ -69,7 +69,11 @@ Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/reso
 | `flores-200-eu-to-eng` | EU to English translation | lighteval |
 | `flores-200-eng-to-eu` | English to EU translation | lighteval |
 | `global-mmlu-eu` | Global MMLU in EU languages | lm-eval |
+| `mmlu-prox-eu` | MMLU-ProX EU subset (5-shot CoT) | lm-eval |
 | `mgsm-eu` | Multilingual GSM8K | lm-eval |
+| `global-mgsm-eu` | Global-MGSM grade-school math (EU languages) | lm-eval |
+| `polymath-eu-low` / `-medium` / `-high` / `-top` | PolyMath EU math reasoning, one group per difficulty tier | lm-eval |
+| `xcsqa-eu` | X-CSQA commonsense QA (8 EU languages) | lm-eval |
 | `generic-multilingual` | XWinograd, XCOPA, XStoryCloze | lm-eval |
 | `include` | INCLUDE benchmarks (44 languages) | lm-eval |
 
