@@ -428,6 +428,106 @@ task_metrics:
   polymath_pt_high: exact_match
   polymath_pt_top: exact_match
 
+  # Explicit headline-metric picks for groups that would otherwise ride the
+  # METRIC_FALLBACK_KEYS chain:
+  #  * belebele (plain): acc — the paper convention; the _cf variants stay
+  #    acc_norm.
+  #  * mgsm: exact_match under the flexible-extract filter — CoT output
+  #    formats vary across languages, and strict-match scores differ by
+  #    several points.
+  #  * gsm8k: exact_match under strict-match — the benchmark's original
+  #    strict answer extraction; English output is format-stable, unlike
+  #    multilingual mgsm above.
+  #  * ifeval: prompt_level_strict_acc — the usual single-number pick.
+  #  * The evalchemy-routed `reasoning` tasks (GPQADiamond, MATH500,
+  #    LiveCodeBench, HumanEval, AIME24/25, AMC23) stay unmapped: output
+  #    key shape unverified. The scheduler warns about unmapped tasks.
+  gsm8k: exact_match,strict-match
+  ifeval: prompt_level_strict_acc
+  mbpp: pass_at_1
+  jeopardy: exact_match
+  # belebele-eu-5-shot (24 tasks)
+  belebele_bul_Cyrl: acc
+  belebele_ces_Latn: acc
+  belebele_dan_Latn: acc
+  belebele_deu_Latn: acc
+  belebele_ell_Grek: acc
+  belebele_eng_Latn: acc
+  belebele_est_Latn: acc
+  belebele_fin_Latn: acc
+  belebele_fra_Latn: acc
+  belebele_hrv_Latn: acc
+  belebele_hun_Latn: acc
+  belebele_ita_Latn: acc
+  belebele_lit_Latn: acc
+  belebele_lvs_Latn: acc
+  belebele_mlt_Latn: acc
+  belebele_nld_Latn: acc
+  belebele_nob_Latn: acc
+  belebele_pol_Latn: acc
+  belebele_por_Latn: acc
+  belebele_ron_Latn: acc
+  belebele_slk_Latn: acc
+  belebele_slv_Latn: acc
+  belebele_spa_Latn: acc
+  belebele_swe_Latn: acc
+  # flores-200-eu-to-eng (23 tasks)
+  # flores-200-eng-to-eu (23 tasks)
+  # global-mmlu-eu (18 tasks)
+  global_mmlu_full_cs: acc
+  global_mmlu_full_de: acc
+  global_mmlu_full_el: acc
+  global_mmlu_full_en: acc
+  global_mmlu_full_es: acc
+  global_mmlu_full_fr: acc
+  global_mmlu_full_he: acc
+  global_mmlu_full_it: acc
+  global_mmlu_full_lt: acc
+  global_mmlu_full_nl: acc
+  global_mmlu_full_pl: acc
+  global_mmlu_full_pt: acc
+  global_mmlu_full_ro: acc
+  global_mmlu_full_ru: acc
+  global_mmlu_full_sr: acc
+  global_mmlu_full_sv: acc
+  global_mmlu_full_tr: acc
+  global_mmlu_full_uk: acc
+  # include (25 tasks)
+  include_base_44_albanian: acc
+  include_base_44_armenian: acc
+  include_base_44_azerbaijani: acc
+  include_base_44_basque: acc
+  include_base_44_belarusian: acc
+  include_base_44_bulgarian: acc
+  include_base_44_croatian: acc
+  include_base_44_dutch: acc
+  include_base_44_estonian: acc
+  include_base_44_finnish: acc
+  include_base_44_french: acc
+  include_base_44_georgian: acc
+  include_base_44_german: acc
+  include_base_44_greek: acc
+  include_base_44_hungarian: acc
+  include_base_44_italian: acc
+  include_base_44_lithuanian: acc
+  include_base_44_north macedonian: acc
+  include_base_44_polish: acc
+  include_base_44_portuguese: acc
+  include_base_44_russian: acc
+  include_base_44_serbian: acc
+  include_base_44_spanish: acc
+  include_base_44_turkish: acc
+  include_base_44_ukrainian: acc
+  # generic-multilingual (3 tasks)
+  xcopa: acc
+  xstorycloze: acc
+  xwinograd: acc
+  # mgsm-eu (4 tasks)
+  mgsm_native_cot_de: exact_match,flexible-extract
+  mgsm_native_cot_en: exact_match,flexible-extract
+  mgsm_native_cot_es: exact_match,flexible-extract
+  mgsm_native_cot_fr: exact_match,flexible-extract
+
 task_groups:
   sib200-eu:
     description: "SIB-200 European language topic classification tasks (0-shot)"

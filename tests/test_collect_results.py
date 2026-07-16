@@ -438,7 +438,7 @@ class TestCollectResultsStructuredOutput:
         json_path = tmp_path / "out.json"
         assert json_path.exists()
         envelope = json.loads(json_path.read_text())
-        assert envelope["version"] == "1.1"
+        assert envelope["version"] == "1.2"
         assert len(envelope["results"]) == 1
         record = envelope["results"][0]
         assert record["task"] == "copa"

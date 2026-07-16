@@ -1,6 +1,6 @@
 [project]
 name = "oellm-eval"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenEuroLLM CLI"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -80,7 +80,9 @@ audiobench = [
 # in its own venv: ``uv pip install '.[evalchemy]'``.  Pinned versions are
 # what evalchemy upstream requires; see docs/VENV.md.
 evalchemy = [
-    "lm-eval @ git+https://github.com/EtashGuha/lm-evaluation-harness@etashg/tokenize_fix",
+    # Pinned to the tip of the etashg/tokenize_fix branch as of 2026-07-03 —
+    # a mutable branch ref made evaluated engine code drift over time.
+    "lm-eval @ git+https://github.com/EtashGuha/lm-evaluation-harness@4071e1823bc1d05d1b394e03925b436a46de637e",
     "scipy==1.17.0",
     "datasets==3.6.0",
     "transformers==4.57.6",

@@ -84,6 +84,13 @@ class EvalConfig:
     venv_path: str | None = None
     lm_eval_include_path: str | None = None
     local: bool = False
+    # Quantized model loading (bitsandbytes) for the HF-style engines
+    # (lm_eval / lmms_eval / evalchemy). NVIDIA-first: ROCm (LUMI) support
+    # depends on bitsandbytes' ROCm build. lighteval rows are unaffected and
+    # contrib suites only opt in via the OELLM_QUANTIZATION env var — the
+    # scheduler warns when such rows are scheduled with a flag set.
+    load_in_4bit: bool = False
+    load_in_8bit: bool = False
 
     # ---- SLURM overrides ----
     slurm: SlurmOverrides = field(default_factory=SlurmOverrides)
@@ -145,6 +152,8 @@ class EvalConfig:
         venv_path: str | None = None,
         lm_eval_include_path: str | None = None,
         local: bool | None = None,
+        load_in_4bit: bool | None = None,
+        load_in_8bit: bool | None = None,
         slurm_template_var: str | None = None,
     ) -> EvalConfig:
         """Build an ``EvalConfig`` from the loose CLI parameters.
@@ -193,6 +202,8 @@ class EvalConfig:
             ("venv_path", venv_path),
             ("lm_eval_include_path", lm_eval_include_path),
             ("local", local),
+            ("load_in_4bit", load_in_4bit),
+            ("load_in_8bit", load_in_8bit),
         ):
             if value is not None:
                 provided.add(field_name)
@@ -245,6 +256,8 @@ class EvalConfig:
             venv_path=venv_path,
             lm_eval_include_path=lm_eval_include_path,
             local=bool(local) if local is not None else False,
+            load_in_4bit=bool(load_in_4bit) if load_in_4bit is not None else False,
+            load_in_8bit=bool(load_in_8bit) if load_in_8bit is not None else False,
             slurm=slurm,
         )
         cfg._cli_provided = provided
@@ -266,6 +279,8 @@ class EvalConfig:
             "venv_path",
             "lm_eval_include_path",
             "local",
+            "load_in_4bit",
+            "load_in_8bit",
             "slurm",
         }
     )
@@ -320,6 +335,8 @@ class EvalConfig:
             venv_path=raw.get("venv_path"),
             lm_eval_include_path=raw.get("lm_eval_include_path"),
             local=bool(raw.get("local", False)),
+            load_in_4bit=bool(raw.get("load_in_4bit", False)),
+            load_in_8bit=bool(raw.get("load_in_8bit", False)),
             slurm=slurm,
         )
 
@@ -359,6 +376,9 @@ class EvalConfig:
 
     def validate(self) -> None:
         """Raise ``ValueError`` on invalid or contradictory configuration."""
+        if self.load_in_4bit and self.load_in_8bit:
+            raise ValueError("load_in_4bit and load_in_8bit are mutually exclusive.")
+
         if self.eval_csv_path:
             if self.models or self.tasks or self.task_groups or self.n_shot:
                 raise ValueError(

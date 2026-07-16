@@ -719,6 +719,63 @@ def _lookup_dataset_specs_for_tasks(task_names: Iterable[str]) -> list[DatasetSp
     return specs
 
 
+def _build_task_aux_map() -> dict[str, tuple[list[str], list[dict]]]:
+    """Map task name → (hf_models, hf_dataset_files) from all task groups."""
+    data = _load_task_groups_data()
+    parsed = _parse_task_groups(list(data.get("task_groups", {}).keys()))
+    aux: dict[str, tuple[list[str], list[dict]]] = {}
+    for _, group in parsed.items():
+        if isinstance(group, TaskGroup):
+            for t in group.tasks:
+                if t.name not in aux and (t.hf_models or t.hf_dataset_files):
+                    aux[t.name] = (t.hf_models or [], t.hf_dataset_files or [])
+    return aux
+
+
+def _lookup_hf_model_repos_for_tasks(task_names: Iterable[str]) -> list[str]:
+    """``hf_models`` pre-download repos for individual task names.
+
+    Mirrors :func:`_collect_hf_model_repos` for tasks scheduled without a
+    task group (bare ``--tasks`` or a ``--check`` re-schedule CSV) — those
+    paths previously skipped auxiliary-model staging entirely, so contrib
+    rows failed on the air-gapped compute node.
+    """
+    aux = _build_task_aux_map()
+    repos: list[str] = []
+    seen: set[str] = set()
+    for name in task_names:
+        models, _files = aux.get(str(name).strip(), ([], []))
+        for repo_id in models:
+            if repo_id not in seen:
+                seen.add(repo_id)
+                repos.append(repo_id)
+    return repos
+
+
+def _lookup_hf_dataset_files_for_tasks(task_names: Iterable[str]) -> list[dict]:
+    """``hf_dataset_files`` specs for individual task names, merged per
+    (repo_id, revision) like :func:`_collect_hf_dataset_files`."""
+    aux = _build_task_aux_map()
+    merged: dict[tuple[str, str | None], list[str]] = {}
+    for name in task_names:
+        _models, file_specs = aux.get(str(name).strip(), ([], []))
+        for spec in file_specs:
+            repo_id = spec.get("repo_id", "")
+            if not repo_id:
+                continue
+            pats = merged.setdefault((repo_id, spec.get("revision")), [])
+            for p in spec.get("patterns") or []:
+                if p not in pats:
+                    pats.append(p)
+    result = []
+    for (rid, rev), pats in merged.items():
+        entry: dict = {"repo_id": rid, "patterns": pats}
+        if rev:
+            entry["revision"] = rev
+        result.append(entry)
+    return result
+
+
 def _build_task_suite_map() -> dict[str, str]:
     """Build a mapping from task names to their suite from all task groups."""
     data = _load_task_groups_data()

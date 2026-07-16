@@ -19,6 +19,9 @@ TOTAL_EVALS={total_evals}
 # via oellm.contrib.dispatch) can read it from os.environ.  Built-in suites
 # below still interpolate $LIMIT directly into their CLI flags.
 export LIMIT="{limit}"
+# Quantization request ("4bit" / "8bit" / empty). HF-style engines receive it
+# via --model_args below; contrib plugins may opt in by reading this variable.
+export OELLM_QUANTIZATION="{quantization}"
 VENV_PATH="{venv_path}"
 LM_EVAL_INCLUDE_PATH="{lm_eval_include_path}"
 
@@ -135,18 +138,31 @@ do
     suite_normalized=$(echo "${{eval_suite%%:*}}" | tr '[:upper:]' '[:lower:]')
 
     # Helper function to run Python commands in the appropriate environment
+    # Optional per-row wall-clock bound: set ROW_TIMEOUT (GNU timeout
+    # DURATION, e.g. "7200" or "2h") so a hung engine fails just its row
+    # (exit 124) instead of consuming the slice's whole TIME_LIMIT.
+    _maybe_timeout() {{
+        if [ -n "${{ROW_TIMEOUT:-}}" ]; then
+            timeout --kill-after=60 "$ROW_TIMEOUT" "$@"
+        else
+            "$@"
+        fi
+    }}
+
+    # stdin is redirected from /dev/null so no child can consume the CSV rows
+    # feeding the enclosing while-read loop.
     run_python() {{
         if [ -n "$VENV_PATH" ]; then
             source "$VENV_PATH/bin/activate"
-            python "$@"
+            _maybe_timeout python "$@" < /dev/null
         else
-            singularity exec $SINGULARITY_ARGS \
+            _maybe_timeout singularity exec $SINGULARITY_ARGS \
                 $SINGULARITY_ENV_ARGS \
                 $SINGULARITY_HOME_ARG \
                 --bind $BIND_PATHS \
                 $EVAL_SIF_PATH \
                 env CUDA_VISIBLE_DEVICES=$GPU_DEVICES \
-                python "$@"
+                python "$@" < /dev/null
         fi
     }}
 
@@ -156,7 +172,7 @@ do
             echo "----------------------------------------------------"
             echo "lm_eval Execution"
             run_python -m lm_eval --model hf \
-                --model_args pretrained="$model_path",trust_remote_code=True \
+                --model_args pretrained="$model_path",trust_remote_code=True{quantization_model_args} \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
                 --output_path "{evals_dir}/$(openssl rand -hex 5).json" \
@@ -190,14 +206,14 @@ do
 
             if [ -n "$VENV_PATH" ]; then
                 source "$VENV_PATH/bin/activate"
-                lighteval accelerate \
+                _maybe_timeout lighteval accelerate \
                     "model_name=$model_path,trust_remote_code=True,{additional_model_args}" \
                     "$LIGHT_TASK_ARG" \
                     --load-tasks-multilingual \
                     --output-dir "$RESULTS_SUBDIR" \
-                    ${{LIMIT:+--max-samples $LIMIT}}
+                    ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
             else
-                singularity exec $SINGULARITY_ARGS \
+                _maybe_timeout singularity exec $SINGULARITY_ARGS \
                     $SINGULARITY_ENV_ARGS \
                     $SINGULARITY_HOME_ARG \
                     --bind $BIND_PATHS \
@@ -208,7 +224,7 @@ do
                         "$LIGHT_TASK_ARG" \
                         --load-tasks-multilingual \
                         --output-dir "$RESULTS_SUBDIR" \
-                        ${{LIMIT:+--max-samples $LIMIT}}
+                        ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
             fi
             rc=$?
             ;;
@@ -234,7 +250,7 @@ do
 
             run_python -m lmms_eval \
                 --model "$_lmms_adapter" \
-                --model_args "pretrained=$model_path,device_map=auto$_lmms_extra_args" \
+                --model_args "pretrained=$model_path,device_map=auto$_lmms_extra_args{quantization_model_args}" \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
                 --output_path "$OUTPUT_JSON" \
@@ -249,14 +265,14 @@ do
                 (
                     source "$VENV_PATH/bin/activate"
                     cd "$EVALCHEMY_WORK_DIR" || exit 1
-                    accelerate launch --num-processes "$GPUS_PER_NODE" --num-machines 1 \
+                    _maybe_timeout accelerate launch --num-processes "$GPUS_PER_NODE" --num-machines 1 \
                         $MULTI_GPU_FLAG -m eval.eval \
                         --model hf \
                         --tasks "$task_path" \
-                        --model_args "trust_remote_code=True,pretrained=$model_path" \
+                        --model_args "trust_remote_code=True,pretrained=$model_path{quantization_model_args}" \
                         --batch_size auto \
                         --output_path "$RESULTS_SUBDIR" \
-                        ${{LIMIT:+--limit $LIMIT}}
+                        ${{LIMIT:+--limit $LIMIT}} < /dev/null
                 )
                 rc=$?
             else
@@ -280,7 +296,9 @@ do
     echo "----------------------------------------------------"
     if [ "$rc" -ne 0 ]; then
         FAILED_ROWS=$((FAILED_ROWS + 1))
-        echo "[ERROR] Evaluation FAILED (exit=$rc) for model=$model_path task=$task_path n_shot=$n_shot suite=$eval_suite"
+        _timeout_note=""
+        if [ "$rc" -eq 124 ]; then _timeout_note=" (ROW_TIMEOUT=${{ROW_TIMEOUT:-}} exceeded)"; fi
+        echo "[ERROR] Evaluation FAILED (exit=$rc)$_timeout_note for model=$model_path task=$task_path n_shot=$n_shot suite=$eval_suite"
     else
         echo "Evaluation finished for model: $model_path"
     fi

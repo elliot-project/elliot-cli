@@ -93,6 +93,46 @@ SNAPSHOTS: dict[str, dict] = {
     "longvideobench_val_v": {
         "longvideobench_val_v/lvb_acc,none": 0.473,
     },
+    # MME emits raw point sums (cognition /800 preferred per task_metrics).
+    "mme": {
+        "mme/mme_cognition_score,none": 512.3,
+        "mme/mme_perception_score,none": 1373.2,
+    },
+    # ── Newer image benchmarks (added 41eabb8) ──
+    "ocrbench_v2": {
+        "ocrbench_v2/ocrbench_v2_accuracy,none": 0.412,
+    },
+    "realworldqa": {
+        "realworldqa/exact_match,none": 0.583,
+    },
+    # NOTE: emitted scale not yet confirmed against a real run — the fixture
+    # pins map↔scale consistency (0–1 assumed).
+    "mmerealworld": {
+        "mmerealworld/mme_realworld_score,none": 0.437,
+    },
+    "mmstar": {
+        "mmstar/average,none": 0.451,
+    },
+    "ai2d": {
+        "ai2d/exact_match,none": 0.702,
+    },
+    # NOTE: emitted scale not yet confirmed against a real run (0–100 assumed).
+    "mathvision_test": {
+        "mathvision_test/mathvision_standard_eval,none": 19.2,
+    },
+    "seedbench": {
+        "seedbench/seed_image,none": 0.612,
+    },
+    # ── Per-task scale overrides (TASK_METRIC_SCALE_OVERRIDES) ──
+    # lm-eval squadv2 wraps the official squad_v2 metric → 0–100 percentages.
+    "squadv2": {
+        "f1,none": 55.3,
+        "exact,none": 50.1,
+    },
+    # lmms-eval voicebench judge returns the raw 1–5 average.
+    "voicebench_commoneval": {
+        "voicebench_commoneval/llm_as_judge_eval,none": 3.4,
+    },
 }
 
 
@@ -144,28 +184,21 @@ def test_every_snapshot_has_a_task_metrics_entry(task_metrics: dict) -> None:
     )
 
 
-# List the image+video tasks that MUST have a snapshot. Sourced from the
-# image-vqa, video-understanding task groups.
-REQUIRED_TASKS_WITH_SNAPSHOT: set[str] = {
-    "vqav2_val",
-    "mmbench_en_dev",
-    "mmmu_val",
-    "chartqa",
-    "docvqa_val",
-    "textvqa_val",
-    "ocrbench",
-    "mathvista_testmini_cot",
-    "mathvista_testmini_format",
-    "mathvista_testmini_solution",
-    "video_mmmu_perception",
-    "video_mmmu_comprehension",
-    "video_mmmu_adaptation",
-    "mvbench",
-    "egoschema_subset",
-    "videomme",
-    "activitynetqa",
-    "longvideobench_val_v",
-}
+# Every task of every image-* / video-* task group MUST have a snapshot —
+# derived from task-groups.yaml so the set cannot drift when benchmarks are
+# added.
+def _image_video_tasks_from_yaml() -> set[str]:
+    data = yaml.safe_load((files("oellm.resources") / "task-groups.yaml").read_text())
+    tasks: set[str] = set()
+    for gname, g in data.get("task_groups", {}).items():
+        if gname.startswith(("image-", "video-")):
+            for t in g.get("tasks", []):
+                if t.get("task"):
+                    tasks.add(t["task"])
+    return tasks
+
+
+REQUIRED_TASKS_WITH_SNAPSHOT: set[str] = _image_video_tasks_from_yaml()
 
 
 def test_all_required_image_video_tasks_have_snapshot() -> None:
@@ -193,7 +226,7 @@ def test_normalized_value_is_in_zero_to_hundred_range(
     from oellm.results import _normalize_to_100
 
     value, resolved_key = _resolve_metric(task_name, SNAPSHOTS[task_name], task_metrics)
-    normalized = _normalize_to_100(value, resolved_key)
+    normalized = _normalize_to_100(value, resolved_key, task_name)
     assert normalized is not None, (
         f"_normalize_to_100 returned None for {task_name} "
         f"(value={value}, key={resolved_key}). The metric's native scale is "

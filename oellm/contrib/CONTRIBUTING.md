@@ -278,3 +278,15 @@ See `tests/test_regiondial_bench.py` as a reference.
 
 - Point `HF_HOME` to a filesystem with sufficient space. Home directories on
   HPC clusters typically have small quotas (50 GB or less).
+
+## Runtime environment variables available to `run()`
+
+The dispatcher passes the full job environment via the ``env`` parameter.
+Interim channels (a formal ``eval_args`` parameter is planned for a future
+plugin-protocol revision):
+
+- ``LIMIT`` — sample cap requested via ``--limit`` (empty = no cap).
+- ``OELLM_QUANTIZATION`` — ``"4bit"`` / ``"8bit"`` / empty. Plugins that can
+  honor quantized loading should read this; plugins that cannot should ignore
+  it (the scheduler already warns the operator that contrib rows run at full
+  precision).
