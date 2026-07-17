@@ -22,6 +22,8 @@ export LIMIT="{limit}"
 # Quantization request ("4bit" / "8bit" / empty). HF-style engines receive it
 # via --model_args below; contrib plugins may opt in by reading this variable.
 export OELLM_QUANTIZATION="{quantization}"
+# Non-empty => pass --trust_remote_code to lm_eval (dataset-side trust).
+LM_EVAL_TRC="{lm_eval_trc}"
 VENV_PATH="{venv_path}"
 LM_EVAL_INCLUDE_PATH="{lm_eval_include_path}"
 
@@ -172,11 +174,11 @@ do
             echo "----------------------------------------------------"
             echo "lm_eval Execution"
             run_python -m lm_eval --model hf \
-                --model_args pretrained="$model_path",trust_remote_code=True{quantization_model_args} \
+                --model_args {lm_eval_model_args} \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
                 --output_path "{evals_dir}/$(openssl rand -hex 5).json" \
-                --trust_remote_code \
+                ${{LM_EVAL_TRC:+--trust_remote_code}} \
                 --batch_size auto \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $LM_EVAL_INCLUDE_PATH}} \
                 ${{LIMIT:+--limit $LIMIT}}
@@ -207,7 +209,7 @@ do
             if [ -n "$VENV_PATH" ]; then
                 source "$VENV_PATH/bin/activate"
                 _maybe_timeout lighteval accelerate \
-                    "model_name=$model_path,trust_remote_code=True,{additional_model_args}" \
+                    "model_name=$model_path,{lighteval_trc}{additional_model_args}" \
                     "$LIGHT_TASK_ARG" \
                     --load-tasks-multilingual \
                     --output-dir "$RESULTS_SUBDIR" \
@@ -220,7 +222,7 @@ do
                     $EVAL_SIF_PATH \
                     env CUDA_VISIBLE_DEVICES=$GPU_DEVICES \
                     lighteval accelerate \
-                        "model_name=$model_path,{additional_model_args}" \
+                        "model_name=$model_path,{lighteval_trc}{additional_model_args}" \
                         "$LIGHT_TASK_ARG" \
                         --load-tasks-multilingual \
                         --output-dir "$RESULTS_SUBDIR" \
@@ -250,7 +252,7 @@ do
 
             run_python -m lmms_eval \
                 --model "$_lmms_adapter" \
-                --model_args "pretrained=$model_path,device_map=auto$_lmms_extra_args{quantization_model_args}" \
+                --model_args "{lmms_eval_model_args}" \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
                 --output_path "$OUTPUT_JSON" \
@@ -269,7 +271,7 @@ do
                         $MULTI_GPU_FLAG -m eval.eval \
                         --model hf \
                         --tasks "$task_path" \
-                        --model_args "trust_remote_code=True,pretrained=$model_path{quantization_model_args}" \
+                        --model_args "{evalchemy_model_args}" \
                         --batch_size auto \
                         --output_path "$RESULTS_SUBDIR" \
                         ${{LIMIT:+--limit $LIMIT}} < /dev/null

@@ -24,6 +24,8 @@ Required
 ``parse_results(data: dict) -> tuple | None``
     Try to parse a raw JSON dict produced by this suite.  Returns
     ``(model_id, task_name, n_shot, {metric: value})`` or ``None``.
+    Called by :func:`oellm.results.collect_results` as a first-chance
+    parser — a suite that claims a file owns its format outright.
 
 Optional
 ~~~~~~~~
@@ -34,6 +36,12 @@ Optional
 ``detect_model_flags(model_path: str) -> str | None``
     Return a model-type suffix for the ``eval_suite`` column
     (e.g. ``"vision_reasoner"``), or ``None``.
+
+``LMMS_MODEL_ADAPTERS: list[tuple[list[str], str]]``
+    lmms-eval adapter detection patterns (same shape as
+    ``oellm.constants.LMMS_MODEL_ADAPTERS``). Consulted BEFORE the built-in
+    table by ``detect_lmms_model_type`` so a plugin can route new model
+    families without core edits.
 
 Adding a new benchmark
 ----------------------
@@ -115,6 +123,19 @@ def get_suite(name: str) -> types.ModuleType:
 def get_all_suites() -> list[types.ModuleType]:
     """Return all discovered suite modules."""
     return list(_discover().values())
+
+
+def get_lmms_adapter_overrides() -> list[tuple[list[str], str]]:
+    """Contrib-registered lmms-eval adapter detection patterns.
+
+    Aggregates the optional ``LMMS_MODEL_ADAPTERS`` export of every
+    discovered suite; entries take precedence over the built-in table in
+    ``oellm.constants``.
+    """
+    overrides: list[tuple[list[str], str]] = []
+    for mod in _discover().values():
+        overrides.extend(getattr(mod, "LMMS_MODEL_ADAPTERS", None) or [])
+    return overrides
 
 
 def get_all_task_groups() -> dict:

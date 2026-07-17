@@ -138,7 +138,11 @@ class BaseTask(ABC):
         """
         inst = cls()
 
-        task_entry: dict = {"task": inst.name}
+        # The engine-facing name goes into the task entry: it is what lands
+        # in jobs.csv, what the engine CLI receives, and what results come
+        # back under — so collect and --check stay consistent. Overriding
+        # engine_task_name is the plan's "one-liner plugin" pathway.
+        task_entry: dict = {"task": inst.engine_task_name}
         if inst.dataset_specs:
             task_entry["dataset"] = inst.dataset_specs[0].repo_id
             if inst.dataset_specs[0].subset:
@@ -158,5 +162,5 @@ class BaseTask(ABC):
 
         result: dict = {"task_groups": {inst.task_group_name: task_group}}
         if inst.primary_metric:
-            result["task_metrics"] = {inst.name: inst.primary_metric}
+            result["task_metrics"] = {inst.engine_task_name: inst.primary_metric}
         return result

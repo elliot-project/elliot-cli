@@ -193,7 +193,7 @@ def _sample(
     }
     if round is not None:
         d["round"] = round
-    return json.dumps(d)
+    return d
 
 
 class TestGIoU:
@@ -211,27 +211,27 @@ class TestGIoU:
 
     def test_perfect_overlap(self, metric):
         s = _sample(100, 100)
-        assert metric.compute([s], [""]) == pytest.approx(1.0)
+        assert metric.compute([s]) == pytest.approx(1.0)
 
     def test_zero_overlap(self, metric):
         s = _sample(0, 200)
-        assert metric.compute([s], [""]) == pytest.approx(0.0)
+        assert metric.compute([s]) == pytest.approx(0.0)
 
     def test_partial_overlap(self, metric):
         s = _sample(25, 175)
-        assert metric.compute([s], [""]) == pytest.approx(25 / 175, abs=1e-4)
+        assert metric.compute([s]) == pytest.approx(25 / 175, abs=1e-4)
 
     def test_mean_over_multiple_samples(self, metric):
         perfect = _sample(100, 100)
         zero = _sample(0, 200)
-        score = metric.compute([perfect, zero], ["", ""])
+        score = metric.compute([perfect, zero])
         assert score == pytest.approx(0.5)
 
     def test_empty_input(self, metric):
-        assert metric.compute([], []) == pytest.approx(0.0)
+        assert metric.compute([]) == pytest.approx(0.0)
 
     def test_null_sample(self, metric):
-        score = metric.compute(["null"], [""])
+        score = metric.compute([None])
         assert score == pytest.approx(0.0)
 
 
@@ -250,11 +250,11 @@ class TestCIoU:
 
     def test_perfect_overlap(self, metric):
         s = _sample(100, 100)
-        assert metric.compute([s], [""]) == pytest.approx(1.0)
+        assert metric.compute([s]) == pytest.approx(1.0)
 
     def test_zero_overlap(self, metric):
         s = _sample(0, 200)
-        assert metric.compute([s], [""]) == pytest.approx(0.0)
+        assert metric.compute([s]) == pytest.approx(0.0)
 
     def test_cumulative_formula_differs_from_giou(self, metric):
         from oellm.contrib.regiondial_bench.metrics import GIoU
@@ -263,15 +263,14 @@ class TestCIoU:
         s1 = _sample(100, 100)
         s2 = _sample(50, 200)
         preds = [s1, s2]
-        refs = ["", ""]
-        ciou_val = metric.compute(preds, refs)  # (100+50)/(100+200) = 0.5
-        giou_val = giou.compute(preds, refs)  # (1.0+0.25)/2 = 0.625
+        ciou_val = metric.compute(preds)  # (100+50)/(100+200) = 0.5
+        giou_val = giou.compute(preds)  # (1.0+0.25)/2 = 0.625
         assert ciou_val == pytest.approx(0.5)
         assert giou_val == pytest.approx(0.625)
         assert ciou_val != pytest.approx(giou_val)
 
     def test_empty_input(self, metric):
-        assert metric.compute([], []) == pytest.approx(0.0)
+        assert metric.compute([]) == pytest.approx(0.0)
 
 
 class TestBboxAP:
@@ -289,19 +288,19 @@ class TestBboxAP:
 
     def test_all_correct(self, metric):
         s = _sample(100, 100, bbox_iou=0.9)
-        assert metric.compute([s, s], ["", ""]) == pytest.approx(1.0)
+        assert metric.compute([s, s]) == pytest.approx(1.0)
 
     def test_none_correct(self, metric):
         s = _sample(10, 200, bbox_iou=0.3)
-        assert metric.compute([s], [""]) == pytest.approx(0.0)
+        assert metric.compute([s]) == pytest.approx(0.0)
 
     def test_threshold_at_half(self, metric):
         above = _sample(80, 100, bbox_iou=0.6)
         below = _sample(10, 100, bbox_iou=0.4)
-        assert metric.compute([above, below], ["", ""]) == pytest.approx(0.5)
+        assert metric.compute([above, below]) == pytest.approx(0.5)
 
     def test_empty_input(self, metric):
-        assert metric.compute([], []) == pytest.approx(0.0)
+        assert metric.compute([]) == pytest.approx(0.0)
 
 
 class TestPassRate:
@@ -325,14 +324,14 @@ class TestPassRate:
 
         s = _sample(100, 100)
         pr = PassRate(0.5)
-        assert pr.compute([s, s], ["", ""]) == pytest.approx(1.0)
+        assert pr.compute([s, s]) == pytest.approx(1.0)
 
     def test_none_pass(self):
         from oellm.contrib.regiondial_bench.metrics import PassRate
 
         s = _sample(0, 100)
         pr = PassRate(0.3)
-        assert pr.compute([s], [""]) == pytest.approx(0.0)
+        assert pr.compute([s]) == pytest.approx(0.0)
 
     def test_half_pass(self):
         from oellm.contrib.regiondial_bench.metrics import PassRate
@@ -340,7 +339,7 @@ class TestPassRate:
         perfect = _sample(100, 100)
         zero = _sample(0, 100)
         pr = PassRate(0.5)
-        score = pr.compute([perfect, zero], ["", ""])
+        score = pr.compute([perfect, zero])
         assert score == pytest.approx(0.5)
 
     def test_invalid_threshold_raises(self):
@@ -356,7 +355,7 @@ class TestPassRate:
     def test_empty_input(self):
         from oellm.contrib.regiondial_bench.metrics import PassRate
 
-        assert PassRate(0.5).compute([], []) == pytest.approx(0.0)
+        assert PassRate(0.5).compute([]) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

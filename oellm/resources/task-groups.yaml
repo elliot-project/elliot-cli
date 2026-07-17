@@ -528,6 +528,11 @@ task_metrics:
   mgsm_native_cot_es: exact_match,flexible-extract
   mgsm_native_cot_fr: exact_match,flexible-extract
 
+  # Custom lm-eval task — definition in custom_lm_eval_tasks/tabfact/.
+  tabfact: acc
+  # Custom lm-eval task — definition in custom_lm_eval_tasks/timeseriesexam/.
+  timeseriesexam: acc
+
 task_groups:
   sib200-eu:
     description: "SIB-200 European language topic classification tasks (0-shot)"
@@ -1460,6 +1465,22 @@ task_groups:
     tasks:
       - task: "polymath_{lang}_top"
         subset: "{lang}"
+  tabular-tabfact:
+    description: "TabFact: is a statement entailed or refuted by a Wikipedia table. Few-shot drawn from the train split."
+    suite: lm-eval-harness
+    n_shots: [0]
+    tasks:
+      - task: tabfact
+        dataset: wenhu/tab_fact
+        subset: tab_fact
+
+  timeseries-tsexam:
+    description: "TimeSeriesExam (AutonLab, arXiv 2410.14752): MCQ time-series understanding for LLMs — trend, seasonality, anomalies, causality. Strictly 0-shot (test split only); series subsampled to 128 points."
+    suite: lm-eval-harness
+    n_shots: [0]
+    tasks:
+      - task: timeseriesexam
+        dataset: AutonLab/TimeSeriesExam1
 
 super_groups:
   oellm-multilingual:

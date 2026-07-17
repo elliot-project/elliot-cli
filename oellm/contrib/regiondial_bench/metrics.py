@@ -4,21 +4,20 @@
 per-sample inference results.  These are used by ``suite._aggregate_shards()``
 to score any model's predictions on RegionDial-Bench.
 
-Input format
-------------
-Each sample is a JSON-serialised dict containing pre-computed fields from the
-inference script::
+Input format (BaseMetric API v2)
+--------------------------------
+Each sample is a dict of pre-computed fields from the inference script::
 
     {
       "intersection": 12345,
       "union": 23456,
       "bbox_iou": 0.73,
-      "round": 1
+      "image_id": "0001",
     }
 
-``predictions`` passed to ``compute()`` are ``list[str]`` — one JSON string
-per sample.  ``references`` are unused (empty strings) since ground truth is
-already folded into the intersection/union computation by the inference script.
+Entries that are not dicts (``None``, upstream parse failures) are treated
+as failed samples: the per-sample metrics (gIoU, bbox_AP, pass rates) score
+them 0, while cIoU — a corpus-level ratio — excludes them from both sums.
 
 Metrics
 -------
@@ -30,22 +29,15 @@ Metrics
 
 from __future__ import annotations
 
-import json
+from collections.abc import Sequence
+from typing import Any
 
 from oellm.core.base_metric import BaseMetric
 
 
-def _parse_sample(s: str) -> dict | None:
-    """Parse a JSON-serialised sample dict. Returns None on failure."""
-    if not s or s.strip() in ("null", "none", ""):
-        return None
-    try:
-        val = json.loads(s)
-        if isinstance(val, dict):
-            return val
-    except (json.JSONDecodeError, ValueError, TypeError):
-        pass
-    return None
+def _as_sample(s: Any) -> dict | None:
+    """Return *s* if it is a usable sample record, else ``None``."""
+    return s if isinstance(s, dict) else None
 
 
 def _mask_iou(sample: dict) -> float:
@@ -60,19 +52,20 @@ def _mask_iou(sample: dict) -> float:
 class GIoU(BaseMetric):
     """Mean per-sample mask IoU (gIoU as reported in RegionDial-Bench).
 
-    Formula: ``mean(intersection_i / union_i)`` over all samples.
+    Formula: ``mean(intersection_i / union_i)`` over all samples; failed
+    samples count as 0.
     """
 
     @property
     def name(self) -> str:
         return "gIoU"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
-        if not predictions:
+    def compute(self, samples: Sequence[Any]) -> float:
+        if not samples:
             return 0.0
         ious = []
-        for s in predictions:
-            sample = _parse_sample(s)
+        for s in samples:
+            sample = _as_sample(s)
             ious.append(_mask_iou(sample) if sample else 0.0)
         return sum(ious) / len(ious)
 
@@ -80,18 +73,19 @@ class GIoU(BaseMetric):
 class CIoU(BaseMetric):
     """cIoU as reported in RegionDial-Bench.
 
-    Formula: ``sum(all intersections) / sum(all unions)``.
+    Formula: ``sum(all intersections) / sum(all unions)``; failed samples
+    are excluded from both sums (they carry no area information).
     """
 
     @property
     def name(self) -> str:
         return "cIoU"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
+    def compute(self, samples: Sequence[Any]) -> float:
         total_intersection = 0.0
         total_union = 0.0
-        for s in predictions:
-            sample = _parse_sample(s)
+        for s in samples:
+            sample = _as_sample(s)
             if sample is None:
                 continue
             total_intersection += sample.get("intersection", 0)
@@ -105,22 +99,22 @@ class BboxAP(BaseMetric):
     """Binarised bounding-box AP at IoU threshold 0.5.
 
     Uses the pre-computed ``bbox_iou`` field from the inference script.
-    Formula: ``mean(bbox_iou_i > 0.5)``.
+    Formula: ``mean(bbox_iou_i > 0.5)``; failed samples count as misses.
     """
 
     @property
     def name(self) -> str:
         return "bbox_AP"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
-        if not predictions:
+    def compute(self, samples: Sequence[Any]) -> float:
+        if not samples:
             return 0.0
         hits = 0
-        for s in predictions:
-            sample = _parse_sample(s)
+        for s in samples:
+            sample = _as_sample(s)
             if sample and sample.get("bbox_iou", 0) > 0.5:
                 hits += 1
-        return hits / len(predictions)
+        return hits / len(samples)
 
 
 class PassRate(BaseMetric):
@@ -141,12 +135,12 @@ class PassRate(BaseMetric):
         label = f"{t:.10g}"
         return f"pass_rate_{label}"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
-        if not predictions:
+    def compute(self, samples: Sequence[Any]) -> float:
+        if not samples:
             return 0.0
         hits = 0
-        for s in predictions:
-            sample = _parse_sample(s)
+        for s in samples:
+            sample = _as_sample(s)
             if sample and _mask_iou(sample) > self._threshold:
                 hits += 1
-        return hits / len(predictions)
+        return hits / len(samples)

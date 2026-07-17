@@ -88,15 +88,26 @@ def detect_lmms_model_type(model_path: str) -> str:
     lmms-eval requires --model <adapter_class> (e.g. llava_hf, qwen2_5_vl).
     This is inferred from the model name so users never need to set it manually.
 
-    To add support for a new model family, add an entry to LMMS_MODEL_ADAPTERS
-    above or register a BaseModelAdapter via the contrib plugin system.
+    To add support for a new model family, either add an entry to
+    LMMS_MODEL_ADAPTERS above, or export ``LMMS_MODEL_ADAPTERS`` (same shape)
+    from a contrib suite module — contrib entries are consulted FIRST, so
+    plugins can route new families without touching core files.
     """
     name = str(model_path).lower()
+
+    # Contrib-registered patterns take precedence. Lazy import: the registry
+    # walks contrib packages; constants must stay import-light.
+    from oellm.registry import get_lmms_adapter_overrides  # noqa: PLC0415
+
+    for patterns, adapter in get_lmms_adapter_overrides():
+        if any(p in name for p in patterns):
+            return adapter
+
     for patterns, adapter in LMMS_MODEL_ADAPTERS:
         if any(p in name for p in patterns):
             return adapter
     raise ValueError(
         f"Cannot auto-detect lmms-eval adapter class from model path '{model_path}'. "
-        "Add a pattern to LMMS_MODEL_ADAPTERS in constants.py or register a "
-        "BaseModelAdapter via a contrib plugin."
+        "Add a pattern to LMMS_MODEL_ADAPTERS in constants.py or export "
+        "LMMS_MODEL_ADAPTERS from a contrib suite module."
     )

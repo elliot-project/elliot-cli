@@ -1,6 +1,7 @@
 # Integrating Custom Benchmarks
 
-There are two ways to add a benchmark to elliot-cli.
+There are three ways to add a benchmark to elliot-cli, in increasing order
+of effort. Pick the first one that fits.
 
 ---
 
@@ -39,7 +40,51 @@ Supported `suite` values:
 
 ---
 
-## Path 2 — Custom benchmark (new contrib suite)
+## Path 2 — Custom lm-eval task (YAML + helpers, no plugin)
+
+Use this when the benchmark is **not** in any engine yet but fits lm-eval's
+task model: an HF dataset in, a per-sample prompt and target out. You write
+only the task definition; scheduling, staging, collection, and reporting are
+the platform's existing lm-eval machinery. No core file changes.
+
+1. Create `oellm/resources/custom_lm_eval_tasks/<task>/<task>.yaml` — a
+   standard lm-eval task config (plain `.yaml` directly in
+   `custom_lm_eval_tasks/` also works for simple tasks). Prompt logic that
+   doesn't fit YAML goes in a sibling `utils.py`, referenced as
+   `!function utils.my_fn`. The bundled directory is passed to lm_eval via
+   `--include_path` automatically; the `lm_eval_include_path` key in a run
+   config (`oellm-eval eval --config …`) can point at an out-of-tree
+   directory instead.
+2. Wire `oellm/resources/task-groups.yaml`: a `task_metrics:` entry naming
+   the headline metric, and a task group with `suite: lm-eval-harness`. The
+   YAML `task:` field, the group's `task:` entry, and the `task_metrics:`
+   key must all match.
+3. Add a conformance test class in `tests/test_plugin_protocol.py`: group
+   expansion, metric mapping, and prompt construction on a synthetic doc.
+
+Live references, in increasing order of trickiness:
+
+- `jeopardy.yaml`, `sib200/`, `arc_mt/` — plain YAML tasks.
+- `tabfact/` — `utils.py` serializes tables into the prompt with a row cap;
+  few-shot drawn from the train split.
+- `timeseriesexam/` — the full toolbox: `doc_to_choice`/`doc_to_target` as
+  functions (the dataset stores answers as option *text* with variable
+  option counts), fixed-policy subsampling of 1000+-point series, and
+  0-shot only because the dataset ships just a test split.
+
+Gotchas:
+
+- Few-shot needs a split to draw from (`fewshot_split`); test-only datasets
+  must schedule with `n_shots: [0]`.
+- Script-based datasets need `dataset_kwargs: {trust_remote_code: true}` in
+  the task YAML; parquet-native datasets need nothing.
+- Any serialization policy (row caps, series subsampling) must be fixed and
+  documented in the task — every model has to see the identical prompt or
+  scores stop being comparable.
+
+---
+
+## Path 3 — Custom benchmark (new contrib suite)
 
 Use this when the benchmark has its own inference script, custom metrics, or
 requires multi-GPU sharding.
@@ -211,12 +256,11 @@ def parse_results(data: dict) -> tuple[str, str, int, dict[str, float]] | None:
 pre-flight on the login node (before SLURM submission) and by `dispatch.py`
 on the compute node before `run()` is called.
 
-> **Note on `parse_results`:** the protocol requires it (and the registry
-> tests enforce it), but result collection currently parses the
-> lmms-eval-shaped JSON that `run()` writes *generically* — `parse_results`
-> is not invoked by `collect`. Treat the JSON shape written by `run()` as the
-> real contract; keep `parse_results` correct so the suite is ready for
-> format-specific collection.
+> **Note on `parse_results`:** `oellm-eval collect` calls every suite's
+> `parse_results` **first-chance** on each result JSON before falling back
+> to the generic lmms-eval-shaped parsing — a suite that recognizes a file
+> owns its format (enforced end-to-end by `tests/test_plugin_protocol.py`).
+> Returning `None` for files that are not yours is part of the contract.
 
 ---
 
@@ -231,16 +275,23 @@ class MyMetric(BaseMetric):
     def name(self) -> str:
         return "my_metric"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
-        import json
+    def compute(self, samples) -> float:
+        # A sample is whatever record your inference step produces —
+        # dicts recommended; put references inside the record.
+        if not samples:
+            return 0.0
         correct = sum(
-            json.loads(p) == json.loads(r)
-            for p, r in zip(predictions, references)
+            1
+            for s in samples
+            if isinstance(s, dict) and s.get("prediction") == s.get("reference")
         )
-        return correct / len(predictions) if predictions else 0.0
+        return correct / len(samples)
 ```
 
-`compute()` receives predictions and references as JSON-serialized strings.
+`compute()` receives the task's per-sample records directly (BaseMetric API
+v2 — see `oellm.core.CORE_API_VERSION`). Multi-reference tasks put their
+references inside each record; handle invalid records (`None`, parse
+failures) deliberately and document the choice.
 
 ---
 
