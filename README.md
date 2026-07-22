@@ -8,10 +8,11 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Collect results** and check for missing evaluations: `oellm-eval collect`
 - **Diagnose your environment** (cluster vars, HF cache, venv engines): `oellm-eval doctor`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
-- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius)
+- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius, UFAL)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, OCRBench v2, MathVista, MathVision, MMStar, AI2D, RealWorldQA, MME, MME-RealWorld, SEED-Bench)
 - **Video evaluation** via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
+- **Tabular & time-series evaluation** via custom lm-eval tasks (TabFact, TimeSeriesExam)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
 
@@ -23,7 +24,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 | `oellm-eval eval --config eval.yaml` | Same as `schedule`, driven by a YAML config file; CLI flags override the file |
 | `oellm-eval collect <dir>` | Aggregate result JSONs into `eval_results.csv` + `.json` + `.md`; `--check` writes a re-schedulable CSV of missing jobs |
 | `oellm-eval list-tasks` | Show every task group, its engine, task count, and n-shot settings |
-| `oellm-eval compare <a> <b>` | Diff two collected `results.json` files task by task |
+| `oellm-eval compare <a> <b>` | Diff two collected results (files or run directories) per model × task × n-shot × metric |
 | `oellm-eval doctor` | Diagnose the environment: cluster detection, env vars, HF cache, venv engines |
 
 ## Quick Start
@@ -45,11 +46,11 @@ oellm-eval schedule \
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 ```
 
 This will automatically:
-- Detect your current HPC cluster (Leonardo, LUMI, JURECA, Jupiter, or Snellius)
+- Detect your current HPC cluster (Leonardo, LUMI, JURECA, Jupiter, Snellius, or UFAL)
 - Download and cache the specified models
 - Pre-download datasets for known tasks (see warning below)
 - Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
@@ -136,6 +137,15 @@ The lmms-eval adapter class (`llava_hf`, `llava_onevision`, `qwen2_5_vl`, etc.) 
 
 Audio tasks also run through lmms-eval — use the general venv from [docs/VENV.md](docs/VENV.md) (the `[audio]` extra adds the audio decoding helpers, but lmms-eval itself must be installed per that guide). Judge-model groups (AIR-Bench chat, Alpaca-Audio, OpenHermes, WavCaps) need `OPENAI_API_KEY` on the compute node — scheduling refuses without it unless you pass `--allow-missing-judge`. The HPC Singularity image must include `ffmpeg` for non-WAV decode.
 
+### Tabular & Time Series
+
+| Group | Benchmark | Engine |
+|---|---|---|
+| `tabular-tabfact` | TabFact — is a statement entailed or refuted by a Wikipedia table (few-shot from the train split) | lm-eval (custom task) |
+| `timeseries-tsexam` | TimeSeriesExam — MCQ time-series understanding: trend, seasonality, anomalies, causality (strictly 0-shot) | lm-eval (custom task) |
+
+Both are custom lm-eval task definitions shipped in [`custom_lm_eval_tasks/`](oellm/resources/custom_lm_eval_tasks/) — no plugin needed; see path 2 in the [Contributing Guide](oellm/contrib/CONTRIBUTING.md). TabFact's dataset is script-based, so schedule it with `--trust-remote-code`.
+
 ### Custom Benchmarks (contrib)
 
 Community-contributed benchmarks that run outside the standard evaluation engines. See the [contrib registry](oellm/contrib/README.md) for the full list.
@@ -145,19 +155,25 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 
 # Run all 5 video benchmarks
 oellm-eval schedule \
     --models "lmms-lab/llava-onevision-7b" \
     --task-groups "video-understanding" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 
 # Mix image and text benchmarks in one submission
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-mmbench,open-sci-0.01" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
+
+# Tabular + time-series benchmarks (custom lm-eval tasks)
+oellm-eval schedule \
+    --models "meta-llama/Llama-3.1-8B-Instruct" \
+    --task-groups "tabular-tabfact,timeseries-tsexam" \
+    --venv-path /path/to/.venv --trust-remote-code
 
 # Use multiple task groups or a super group
 oellm-eval schedule --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
@@ -276,7 +292,7 @@ override these defaults:
 BATCH_SIZE=8 oellm-eval schedule \
   --models "model-name" \
   --task-groups "belebele-eu-cf" \
-  --venv-path .venv
+  --venv-path /path/to/.venv
 ```
 
 If you need full manual control over all model args, set `MODEL_ARGS`,
@@ -284,8 +300,22 @@ for example:
 
 ```bash
 MODEL_ARGS='batch_size=8' oellm-eval schedule \
-  --models "model-name" --task-groups "belebele-eu-cf" --venv-path .venv
+  --models "model-name" --task-groups "belebele-eu-cf" --venv-path /path/to/.venv
 ```
+
+## Quantized Evaluation & Per-Row Timeouts
+
+```bash
+# bitsandbytes 4-bit / 8-bit loading (lm-eval, lmms-eval, evalchemy; flags are mutually exclusive)
+oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" --load-in-4bit
+
+# Bound each evaluation row's wall clock: a hung engine fails one row (exit 124)
+# instead of consuming the whole job slice; `collect --check` re-schedules just that row
+ROW_TIMEOUT=30m oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01"
+```
+
+Quantization is recorded in the run's provenance. Rows on engines that cannot
+honor it run at full precision — the scheduler lists them at submission time.
 
 ## ⚠️ Dataset Pre-Download Warning
 
@@ -297,7 +327,7 @@ If you use custom tasks via `--tasks` that are not in the task groups registry, 
 
 ## Collecting Results
 
-After evaluations complete, collect results into a CSV.  `collect` **recursively** searches the given directory for every `jobs.csv` file and every `.json` result file, so you can point it at a top-level output folder that contains many sub-runs:
+After evaluations complete, collect results into a CSV.  `collect` **recursively** searches the given directory for every `jobs.csv` file and every `.json` result file, so you can point it at a top-level output folder that contains many sub-runs. Alongside the CSV/Markdown tables it writes `eval_results.json` — a versioned envelope that embeds each run's provenance (engine versions, model revisions, quantization, submitter), which is also the ingestion format for the ELLIOT evaluation dashboard:
 
 ```
 output/
@@ -387,7 +417,7 @@ oellm-eval schedule \
     --models "EleutherAI/pythia-160m" \
     --tasks "gsm8k" \
     --n-shot 0 \
-    --venv-path .venv
+    --venv-path /path/to/.venv
 ```
 
 Later, we will add recommendation for a project-wide setting to share tools and models.
@@ -457,10 +487,11 @@ uv run oellm-eval schedule --models "EleutherAI/pythia-160m" --task-groups "open
 
 ## Contributing Custom Benchmarks
 
-ELLIOT supports two paths for adding benchmarks:
+ELLIOT supports three paths for adding benchmarks:
 
 1. **Benchmark already in lm-eval / lighteval / lmms-eval** -- add a YAML entry to [`task-groups.yaml`](oellm/resources/task-groups.yaml)
-2. **Fully custom benchmark** -- drop a contrib plugin into [`oellm/contrib/`](oellm/contrib/)
+2. **Custom lm-eval task, no plugin** -- a task YAML plus optional prompt helpers in [`custom_lm_eval_tasks/`](oellm/resources/custom_lm_eval_tasks/); TabFact and TimeSeriesExam are the reference implementations
+3. **Fully custom benchmark** -- drop a contrib plugin into [`oellm/contrib/`](oellm/contrib/)
 
 See the [Contributing Guide](oellm/contrib/CONTRIBUTING.md) for step-by-step instructions.
 
