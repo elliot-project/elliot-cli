@@ -89,7 +89,10 @@ def schedule_evals(
         skip_checks: If True, skip container image, environment pre-flight (engine availability
             in the venv/container per scheduled suite), model validation, and dataset
             pre-download checks for faster execution.
-        trust_remote_code: If True, trust remote code when downloading datasets. Default is True. Workflow might fail if set to False.
+        trust_remote_code: If True, trust remote code when downloading datasets AND
+            at eval time for lm_eval / lighteval / evalchemy (previously hardcoded
+            True at eval time). lmms-eval adapters manage their own loading.
+            Default True. Workflow might fail if set to False.
         venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
             this venv instead of inside a Singularity/Apptainer container.
         lm_eval_include_path: Path to a directory containing custom lm_eval task YAML definitions.

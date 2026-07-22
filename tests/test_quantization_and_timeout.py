@@ -119,6 +119,13 @@ class TestRowTimeout:
         )
         assert prov["row_timeout"] == "2h"
 
+    def test_submitter_recorded(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OELLM_SUBMITTED_BY", "ci-bot")
+        _, prov = _schedule(
+            tmp_path, monkeypatch, models="org/m", tasks="hellaswag", n_shot=0
+        )
+        assert prov["submitted_by"] == "ci-bot"
+
 
 class TestEngineVersionProvenance:
     def test_versions_probed_from_venv(self, tmp_path, monkeypatch):
@@ -177,3 +184,34 @@ class TestEngineVersionProvenance:
             tmp_path, monkeypatch, models="org/m", tasks="hellaswag", n_shot=0
         )
         assert prov["engine_versions"] == {}
+
+
+class TestAdapterRenderedModelArgs:
+    """The engine --model_args strings are rendered by DefaultHFAdapter and
+    trust_remote_code genuinely governs eval time."""
+
+    def test_trc_true_renders_like_before(self, tmp_path, monkeypatch):
+        sbatch, prov = _schedule(
+            tmp_path, monkeypatch, models="org/m", tasks="hellaswag", n_shot=0
+        )
+        assert 'pretrained="$model_path",trust_remote_code=True' in sbatch
+        assert "trust_remote_code=True,pretrained=$model_path" in sbatch
+        assert "model_name=$model_path,trust_remote_code=True," in sbatch
+        assert 'LM_EVAL_TRC="1"' in sbatch
+        assert prov["trust_remote_code"] is True
+        assert "lm_eval" in prov["engine_model_args"]
+
+    def test_trc_false_disables_eval_time_trust(self, tmp_path, monkeypatch):
+        sbatch, prov = _schedule(
+            tmp_path,
+            monkeypatch,
+            models="org/m",
+            tasks="hellaswag",
+            n_shot=0,
+            trust_remote_code=False,
+        )
+        assert "trust_remote_code=True" not in sbatch
+        assert 'pretrained="$model_path",trust_remote_code=False' in sbatch
+        assert 'LM_EVAL_TRC=""' in sbatch
+        assert "model_name=$model_path,batch_size" in sbatch
+        assert prov["trust_remote_code"] is False

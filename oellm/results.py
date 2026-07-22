@@ -264,6 +264,31 @@ def _load_task_metrics() -> dict:
     return task_metrics
 
 
+def _try_contrib_parse(data: dict) -> tuple[str, str, int, dict] | None:
+    """First-chance parse via contrib suites' ``parse_results()``.
+
+    Lets a plugin own its output format outright instead of relying on the
+    generic lmms-shaped heuristics in :func:`collect_results`. A broken
+    parser must never break collect: exceptions are logged and skipped.
+    """
+    from oellm.registry import get_all_suites
+
+    for mod in get_all_suites():
+        parser = getattr(mod, "parse_results", None)
+        if parser is None:
+            continue
+        try:
+            parsed = parser(data)
+        except Exception as e:  # noqa: BLE001 — plugin code; isolate failures
+            logging.debug(
+                f"parse_results of {getattr(mod, 'SUITE_NAME', mod)!r} raised: {e}"
+            )
+            continue
+        if parsed:
+            return parsed
+    return None
+
+
 def collect_results(
     results_dir: str,
     output_csv: str = "eval_results.csv",
@@ -378,6 +403,34 @@ def collect_results(
                 f"Skipping '{json_file}': top-level JSON is a "
                 f"{type(data).__name__}, not a dict"
             )
+            continue
+
+        # First-chance: a contrib suite may claim this file outright via its
+        # parse_results() protocol member and own the format end-to-end.
+        _contrib_parsed = _try_contrib_parse(data)
+        if _contrib_parsed is not None:
+            _c_model, _c_task, _c_n_shot, _c_metrics = _contrib_parsed
+            performance, metric_name = _resolve_metric(_c_task, _c_metrics, task_metrics)
+            if performance is not None:
+                if check:
+                    completed_jobs.add((_c_model, _c_task, _c_n_shot))
+                rows.append(
+                    {
+                        "model_name": _c_model,
+                        "task": _c_task,
+                        "n_shot": _c_n_shot,
+                        "performance": performance,
+                        "performance_normalized": _normalize_to_100(
+                            performance, metric_name, _c_task
+                        ),
+                        "metric_name": metric_name if metric_name is not None else "",
+                    }
+                )
+            else:
+                logging.warning(
+                    f"No numeric metric for contrib-parsed '{_c_task}' in "
+                    f"{json_file.name} — check the suite's task_metrics entry"
+                )
             continue
 
         # Model name lives in different keys depending on the harness:

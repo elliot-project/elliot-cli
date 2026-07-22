@@ -37,12 +37,10 @@ class ExactMatchMetric(BaseMetric):
     def name(self) -> str:
         return "exact_match"
 
-    def compute(self, predictions: list[str], references: list[str]) -> float:
-        if not predictions:
+    def compute(self, samples) -> float:
+        if not samples:
             return 0.0
-        return sum(p == r for p, r in zip(predictions, references, strict=True)) / len(
-            predictions
-        )
+        return sum(1 for s in samples if s["prediction"] == s["reference"]) / len(samples)
 
 
 class HFAdapter(BaseModelAdapter):
@@ -145,23 +143,38 @@ class TestBaseMetric:
 
     def test_compute_perfect_score(self):
         m = ExactMatchMetric()
-        assert m.compute(["a", "b", "c"], ["a", "b", "c"]) == 1.0
+        assert (
+            m.compute([{"prediction": x, "reference": x} for x in ("a", "b", "c")]) == 1.0
+        )
 
     def test_compute_zero_score(self):
         m = ExactMatchMetric()
-        assert m.compute(["a", "b"], ["x", "y"]) == 0.0
+        assert (
+            m.compute(
+                [
+                    {"prediction": "a", "reference": "x"},
+                    {"prediction": "b", "reference": "y"},
+                ]
+            )
+            == 0.0
+        )
 
     def test_compute_partial_score(self):
         m = ExactMatchMetric()
-        assert m.compute(["a", "b"], ["a", "x"]) == pytest.approx(0.5)
+        assert m.compute(
+            [
+                {"prediction": "a", "reference": "a"},
+                {"prediction": "b", "reference": "x"},
+            ]
+        ) == pytest.approx(0.5)
 
     def test_compute_empty_returns_zero(self):
         m = ExactMatchMetric()
-        assert m.compute([], []) == 0.0
+        assert m.compute([]) == 0.0
 
     def test_missing_abstract_name_raises(self):
         class BadMetric(BaseMetric):
-            def compute(self, predictions, references):
+            def compute(self, samples):
                 return 0.0
 
         with pytest.raises(TypeError):

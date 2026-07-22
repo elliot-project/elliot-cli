@@ -381,9 +381,6 @@ def _aggregate_shards(
         "Aggregating %d samples from %d shards", len(all_samples), len(shard_files)
     )
 
-    samples = [json.dumps(s) for s in all_samples]
-    empty_refs = [""] * len(samples)
-
     aggregate_metrics = [
         GIoU(),
         CIoU(),
@@ -396,7 +393,7 @@ def _aggregate_shards(
 
     metrics: dict[str, float] = {}
     for m in aggregate_metrics:
-        val = m.compute(samples, empty_refs)
+        val = m.compute(all_samples)
         metrics[m.name] = val
         logger.debug("%s = %.4f", m.name, val)
 
@@ -404,20 +401,19 @@ def _aggregate_shards(
     # the output (mirrors calculate_iou_with_bbox_by_turns.py).  The inference
     # script emits turns in sequential order per image, so the k-th time an
     # image_id appears corresponds to turn k (1-indexed).
-    rounds_map: dict[int, list[str]] = defaultdict(list)
+    rounds_map: dict[int, list[dict]] = defaultdict(list)
     image_turn_counter: dict[str, int] = {}
-    for sample_dict, sample_str in zip(all_samples, samples, strict=True):
+    for sample_dict in all_samples:
         image_id = str(sample_dict.get("image_id", ""))
         image_turn_counter[image_id] = image_turn_counter.get(image_id, 0) + 1
         rnd = image_turn_counter[image_id]
-        rounds_map[rnd].append(sample_str)
+        rounds_map[rnd].append(sample_dict)
 
     per_round_metrics = [GIoU(), BboxAP()]
     for rnd in sorted(rounds_map):
         rnd_samples = rounds_map[rnd]
-        rnd_refs = [""] * len(rnd_samples)
         for m in per_round_metrics:
-            val = m.compute(rnd_samples, rnd_refs)
+            val = m.compute(rnd_samples)
             metrics[f"{m.name}_R{rnd}"] = val
             logger.debug("%s_R%d = %.4f", m.name, rnd, val)
 

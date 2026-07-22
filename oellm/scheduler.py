@@ -1,3 +1,4 @@
+import getpass
 import json
 import logging
 import math
@@ -14,6 +15,7 @@ import pandas as pd
 
 from oellm import __version__
 from oellm.constants import EvaluationJob
+from oellm.core import DefaultHFAdapter
 from oellm.results import _collector_git_commit, _load_task_metrics
 from oellm.runner import EvalRunner
 from oellm.task_groups import (
@@ -178,7 +180,11 @@ def schedule_evals(
         download_only: If True, only download the datasets and models and exit.
         dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
         skip_checks: If True, skip container image, model validation, and dataset pre-download checks for faster execution.
-        trust_remote_code: If True, trust remote code when downloading datasets. Default is True. Workflow might fail if set to False.
+        trust_remote_code: If True, trust remote code when downloading datasets AND
+            at eval time for lm_eval / lighteval / evalchemy (threaded through the
+            adapter-rendered model args; previously hardcoded True at eval time).
+            lmms-eval adapters manage their own loading. Default True. Workflow
+            might fail if set to False.
         venv_path: Path to a Python virtual environment. If provided, evaluations run directly using
             this venv instead of inside a Singularity/Apptainer container.
         lm_eval_include_path: Path to a directory containing custom lm_eval task YAML definitions.
@@ -380,6 +386,20 @@ def schedule_evals(
                 f"OELLM_QUANTIZATION env var exported to the job)."
             )
 
+    # Engine --model_args now come from the adapter layer (single source of
+    # truth — template.sbatch receives only rendered strings; previously the
+    # strings were hardcoded in bash and BaseModelAdapter was dead code).
+    # "$model_path" stays a literal bash placeholder substituted per CSV row
+    # on the compute node. trust_remote_code now genuinely governs eval time
+    # for lm_eval / lighteval / evalchemy — it used to be hardcoded True.
+    _adapter = DefaultHFAdapter(
+        trust_remote_code=trust_remote_code, extra_args=quantization_model_args
+    )
+    lm_eval_model_args = _adapter.to_lm_eval_args()
+    lmms_eval_model_args = _adapter.to_lmms_eval_args()
+    evalchemy_model_args = _adapter.to_evalchemy_args()
+    lighteval_trc = "trust_remote_code=True," if trust_remote_code else ""
+
     if not skip_checks:
         # Verify the runtime can actually execute the scheduled suites before
         # any network work: missing engines otherwise fail row-by-row on the
@@ -576,6 +596,9 @@ def schedule_evals(
         "schema": 1,
         "created_at": timestamp,
         "hostname": socket.gethostname(),
+        "submitted_by": getpass.getuser()
+        if not os.environ.get("OELLM_SUBMITTED_BY")
+        else os.environ["OELLM_SUBMITTED_BY"],
         "oellm_version": __version__,
         "scheduler_git_commit": _collector_git_commit(),
         "eval_suites": sorted({str(j.eval_suite) for j in expanded_eval_jobs}),
@@ -590,6 +613,12 @@ def schedule_evals(
         "hf_hub_offline": _resolve_hf_hub_offline(local),
         "quantization": quantization or None,
         "row_timeout": os.environ.get("ROW_TIMEOUT"),
+        "trust_remote_code": trust_remote_code,
+        "engine_model_args": {
+            "lm_eval": lm_eval_model_args,
+            "lmms_eval": lmms_eval_model_args,
+            "evalchemy": evalchemy_model_args,
+        },
         "model_revisions": model_revisions,
         "engine_versions": {} if skip_checks else _probe_engine_versions(venv_path),
         "container_image": None if venv_path else os.environ.get("EVAL_CONTAINER_IMAGE"),
@@ -615,7 +644,11 @@ def schedule_evals(
         additional_model_args=additional_model_args,
         evalchemy_dir=os.environ.get("EVALCHEMY_DIR", "/opt/evalchemy"),
         quantization=quantization,
-        quantization_model_args=quantization_model_args,
+        lm_eval_model_args=lm_eval_model_args,
+        lmms_eval_model_args=lmms_eval_model_args,
+        evalchemy_model_args=evalchemy_model_args,
+        lighteval_trc=lighteval_trc,
+        lm_eval_trc="1" if trust_remote_code else "",
     )
 
     # Drop optional #SBATCH directives whose env var is unset, so safe_substitute
