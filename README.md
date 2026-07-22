@@ -8,7 +8,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Collect results** and check for missing evaluations: `oellm-eval collect`
 - **Diagnose your environment** (cluster vars, HF cache, venv engines): `oellm-eval doctor`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
-- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius)
+- **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius, UFAL)
 - **Image evaluation** via lmms-eval (VQAv2, MMBench, MMMU, ChartQA, DocVQA, TextVQA, OCRBench, OCRBench v2, MathVista, MathVision, MMStar, AI2D, RealWorldQA, MME, MME-RealWorld, SEED-Bench)
 - **Video evaluation** via lmms-eval (VideoMMMU, EgoSchema, VideoMME, ActivityNet-QA, LongVideoBench)
 - **Audio evaluation** via lmms-eval (LibriSpeech, FLEURS, GigaSpeech, TED-LIUM, WenetSpeech, CoVoST2, VocalSound, MuChoMusic)
@@ -46,11 +46,11 @@ oellm-eval schedule \
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 ```
 
 This will automatically:
-- Detect your current HPC cluster (Leonardo, LUMI, JURECA, Jupiter, or Snellius)
+- Detect your current HPC cluster (Leonardo, LUMI, JURECA, Jupiter, Snellius, or UFAL)
 - Download and cache the specified models
 - Pre-download datasets for known tasks (see warning below)
 - Generate and submit a SLURM job array with appropriate cluster-specific resources and using containers built for this cluster
@@ -141,8 +141,8 @@ Audio tasks also run through lmms-eval — use the general venv from [docs/VENV.
 
 | Group | Benchmark | Engine |
 |---|---|---|
-| `tabular-tabfact` | TabFact — is a statement entailed or refuted by a Wikipedia table (few-shot from the train split) | lm-eval-harness (custom task) |
-| `timeseries-tsexam` | TimeSeriesExam — MCQ time-series understanding: trend, seasonality, anomalies, causality (strictly 0-shot) | lm-eval-harness (custom task) |
+| `tabular-tabfact` | TabFact — is a statement entailed or refuted by a Wikipedia table (few-shot from the train split) | lm-eval (custom task) |
+| `timeseries-tsexam` | TimeSeriesExam — MCQ time-series understanding: trend, seasonality, anomalies, causality (strictly 0-shot) | lm-eval (custom task) |
 
 Both are custom lm-eval task definitions shipped in [`custom_lm_eval_tasks/`](oellm/resources/custom_lm_eval_tasks/) — no plugin needed; see path 2 in the [Contributing Guide](oellm/contrib/CONTRIBUTING.md). TabFact's dataset is script-based, so schedule it with `--trust-remote-code`.
 
@@ -155,25 +155,25 @@ Community-contributed benchmarks that run outside the standard evaluation engine
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-vqa" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 
 # Run all 5 video benchmarks
 oellm-eval schedule \
     --models "lmms-lab/llava-onevision-7b" \
     --task-groups "video-understanding" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 
 # Mix image and text benchmarks in one submission
 oellm-eval schedule \
     --models "llava-hf/llava-1.5-7b-hf" \
     --task-groups "image-mmbench,open-sci-0.01" \
-    --venv-path ~/elliot-venv
+    --venv-path /path/to/.venv
 
 # Tabular + time-series benchmarks (custom lm-eval tasks)
 oellm-eval schedule \
     --models "meta-llama/Llama-3.1-8B-Instruct" \
     --task-groups "tabular-tabfact,timeseries-tsexam" \
-    --venv-path ~/elliot-venv --trust-remote-code
+    --venv-path /path/to/.venv --trust-remote-code
 
 # Use multiple task groups or a super group
 oellm-eval schedule --models "model-name" --task-groups "belebele-eu-5-shot,global-mmlu-eu"
@@ -292,7 +292,7 @@ override these defaults:
 BATCH_SIZE=8 oellm-eval schedule \
   --models "model-name" \
   --task-groups "belebele-eu-cf" \
-  --venv-path .venv
+  --venv-path /path/to/.venv
 ```
 
 If you need full manual control over all model args, set `MODEL_ARGS`,
@@ -300,7 +300,7 @@ for example:
 
 ```bash
 MODEL_ARGS='batch_size=8' oellm-eval schedule \
-  --models "model-name" --task-groups "belebele-eu-cf" --venv-path .venv
+  --models "model-name" --task-groups "belebele-eu-cf" --venv-path /path/to/.venv
 ```
 
 ## Quantized Evaluation & Per-Row Timeouts
@@ -417,7 +417,7 @@ oellm-eval schedule \
     --models "EleutherAI/pythia-160m" \
     --tasks "gsm8k" \
     --n-shot 0 \
-    --venv-path .venv
+    --venv-path /path/to/.venv
 ```
 
 Later, we will add recommendation for a project-wide setting to share tools and models.
