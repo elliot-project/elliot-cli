@@ -14,11 +14,16 @@ Both rules are deliberate and must not be unified.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import torch
-import torch.nn.functional as F
+
+# torch is imported inside the encoding functions, not at module level:
+# ``group_metrics`` is pure aggregation, and the base install that runs the test
+# suite has no torch. Importing it here would make the worst-group metric
+# untestable without the optional ``spurious-robustness`` extra.
+if TYPE_CHECKING:
+    import torch
 
 
 def encode_texts(model, tokenizer, texts: Sequence[str], device: str) -> torch.Tensor:
@@ -30,6 +35,9 @@ def encode_texts(model, tokenizer, texts: Sequence[str], device: str) -> torch.T
     samples and move worst-group accuracy. Dropping it makes scores diverge
     from the published ones.
     """
+    import torch
+    import torch.nn.functional as F
+
     tokens = tokenizer(list(texts)).to(device)
     with torch.no_grad(), torch.amp.autocast(device):
         features = model.encode_text(tokens)
@@ -48,6 +56,8 @@ def encode_images(
     Accepts PIL images (how the HF parquet datasets arrive) or filesystem paths
     (how the UrbanCars image tree arrives).
     """
+    import torch
+    import torch.nn.functional as F
     from PIL import Image
 
     batch: list[torch.Tensor] = []

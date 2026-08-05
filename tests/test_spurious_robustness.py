@@ -177,8 +177,8 @@ class TestTasksAndAdapter:
         from oellm.contrib.spurious_robustness.task import (
             SpuriousCelebATask,
             SpuriousImageNetTask,
-            SpuriousUrbanCarsTask,
         )
+        from oellm.contrib.spurious_urbancars.task import SpuriousUrbanCarsTask
 
         imagenet, celeba, urbancars = (
             SpuriousImageNetTask(),
@@ -189,9 +189,13 @@ class TestTasksAndAdapter:
         assert celeba.primary_metric == "worst_group_accuracy"
         assert urbancars.primary_metric == "worst_group_accuracy"
         for task in (imagenet, celeba, urbancars):
-            assert task.suite == "spurious_robustness"
             assert task.n_shots == [0]
             assert task.description
+
+        assert imagenet.suite == "spurious_robustness"
+        assert celeba.suite == "spurious_robustness"
+        # UrbanCars is its own suite so its data dir can be a required env var.
+        assert urbancars.suite == "spurious_urbancars"
 
         # Staged from the Hub; UrbanCars has nothing to stage.
         assert imagenet.dataset_specs[0].repo_id == "ILSVRC/imagenet-1k"
@@ -207,14 +211,20 @@ class TestTasksAndAdapter:
         assert OpenClipAdapter("hf-hub:laion/X").to_open_clip_spec() == "hf-hub:laion/X"
         assert OpenClipAdapter(str(tmp_path)).to_open_clip_spec() == str(tmp_path)
 
-    def test_suite_declares_no_required_cluster_env_vars(self):
+    def test_hub_suite_requires_no_cluster_env_vars(self):
         """Listing UrbanCars' path here would fail CelebA and ImageNet rows."""
         from oellm.contrib.spurious_robustness import suite
 
         assert suite.CLUSTER_ENV_VARS == []
 
+    def test_urbancars_suite_declares_its_data_dir(self):
+        """Declared so the login-node pre-flight catches it before submission."""
+        from oellm.contrib.spurious_urbancars import suite
+
+        assert suite.CLUSTER_ENV_VARS == ["URBANCARS_DATA_DIR"]
+
     def test_urbancars_without_data_dir_raises_with_guidance(self, tmp_path):
-        from oellm.contrib.spurious_robustness import suite
+        from oellm.contrib.spurious_urbancars import suite
 
         with pytest.raises(RuntimeError, match="URBANCARS_DATA_DIR"):
             suite.run(
@@ -225,6 +235,38 @@ class TestTasksAndAdapter:
                 model_flags=None,
                 env={"URBANCARS_DATA_DIR": ""},
             )
+
+    def test_suites_do_not_claim_each_others_results(self):
+        """A suite that recognises a file owns its format."""
+        from oellm.contrib.spurious_robustness import suite as hub_suite
+        from oellm.contrib.spurious_urbancars import suite as uc_suite
+
+        uc = {
+            "model_name_or_path": "m",
+            "results": {"spurious_urbancars": {"worst_group_accuracy": 0.1}},
+        }
+        celeba = {
+            "model_name_or_path": "m",
+            "results": {"spurious_celeba": {"worst_group_accuracy": 0.2}},
+        }
+        assert hub_suite.parse_results(uc) is None
+        assert uc_suite.parse_results(celeba) is None
+        assert uc_suite.parse_results(uc)[1] == "spurious_urbancars"
+        assert hub_suite.parse_results(celeba)[1] == "spurious_celeba"
+
+    def test_login_node_preflight_checks_only_urbancars(self, monkeypatch):
+        """The whole point of the split: no false failures for the Hub tasks."""
+        import sys
+        from pathlib import Path
+
+        from oellm.envcheck import collect_problems
+
+        monkeypatch.delenv("URBANCARS_DATA_DIR", raising=False)
+        venv = str(Path(sys.prefix))
+
+        problems = collect_problems({"spurious_urbancars"}, venv_path=venv)
+        assert any("URBANCARS_DATA_DIR" in p for p in problems)
+        assert collect_problems({"spurious_robustness"}, venv_path=venv) == []
 
     def test_unknown_task_raises(self, tmp_path):
         from oellm.contrib.spurious_robustness import suite
@@ -273,18 +315,23 @@ class TestSchedule:
     def test_jobs_csv_carries_the_suite_and_task(self, tmp_path):
         import pandas as pd
 
-        self._schedule(tmp_path, "spurious-robustness")
+        self._schedule(tmp_path, "spurious-robustness,spurious-urbancars")
         csvs = list(tmp_path.glob("**/jobs.csv"))
         assert len(csvs) == 1
         df = pd.read_csv(csvs[0])
         # The frozen jobs.csv schema.
         assert list(df.columns) == ["model_path", "task_path", "n_shot", "eval_suite"]
-        assert set(df["eval_suite"]) == {"spurious_robustness"}
         assert set(df["task_path"]) == {
             "spurious_imagenet",
             "spurious_celeba",
             "spurious_urbancars",
         }
+        # Both groups schedule together; each row carries its own suite so the
+        # dispatcher routes UrbanCars to the suite that requires its data dir.
+        by_task = dict(zip(df["task_path"], df["eval_suite"], strict=True))
+        assert by_task["spurious_imagenet"] == "spurious_robustness"
+        assert by_task["spurious_celeba"] == "spurious_robustness"
+        assert by_task["spurious_urbancars"] == "spurious_urbancars"
         assert set(df["n_shot"]) == {0}
 
 

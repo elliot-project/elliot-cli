@@ -275,12 +275,15 @@ class TestSpuriousRobustnessSuite:
             ("spurious_celeba", 0, "spurious_robustness")
         ]
 
+        # UrbanCars is a separate suite (its data dir is a required env var), so
+        # the combined group covers only the two Hub-staged benchmarks.
         combined = _expand_task_groups(["spurious-robustness"])
-        assert {r.task for r in combined} == {
-            "spurious_imagenet",
-            "spurious_celeba",
-            "spurious_urbancars",
-        }
+        assert {r.task for r in combined} == {"spurious_imagenet", "spurious_celeba"}
+
+        urbancars = _expand_task_groups(["spurious-urbancars"])
+        assert [(r.task, r.n_shot, r.suite) for r in urbancars] == [
+            ("spurious_urbancars", 0, "spurious_urbancars")
+        ]
 
     def test_pinned_metrics_have_a_native_scale(self):
         """A pinned metric with no scale entry renders a blank normalized column."""
