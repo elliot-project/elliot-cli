@@ -113,10 +113,12 @@ metrics match bit-for-bit with `laion/CLIP-ViT-B-32-laion2B-s34B-b79K`
 Label and group assignment were separately verified element-wise across all
 19,962 images.
 
-**UrbanCars — exact, on a synthetic eight-directory tree.** Real images are
-unavailable, but equivalence does not need them: identical inputs test the
-prompt set, max-over-prompts scoring, label derivation from directory names, and
-the worst-group aggregation. All eight per-group accuracies match.
+**UrbanCars — exact, on a real eight-directory tree.** All eight per-group
+accuracies, the average, the worst-group value and the worst group itself match
+the reference. Only `.jpg` files are samples: the generator writes a
+`_mask.png` and a `_co_occur_obj_mask.png` beside every composited image, and
+those masks are segmentation output, not photographs. Fixtures include them so
+file selection is exercised.
 
 **ImageNet — exact, on a synthetic 1000-synset tree.** Top-1, top-5 and image
 count all match. The mapping is the part that matters here: the reference maps

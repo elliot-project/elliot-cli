@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from oellm.contrib.spurious_robustness import datasets as ds
+from oellm.contrib.spurious_robustness import prompts
 from oellm.contrib.spurious_robustness.adapter import OpenClipAdapter
 from oellm.contrib.spurious_robustness.metrics import (
     AverageAccuracy,
@@ -170,6 +171,92 @@ class TestUrbanCarsGrouping:
     def test_missing_tree_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="no UrbanCars subgroup"):
             list(ds.load_urbancars(str(tmp_path)))
+
+
+class TestUrbanCarsFileSelection:
+    @staticmethod
+    def _tree(root, n_per_group=2):
+        for obj in ("urban", "country"):
+            for bg in ("urban", "country"):
+                for co in ("urban", "country"):
+                    d = root / f"obj-{obj}_bg-{bg}_co_occur_obj-{co}"
+                    d.mkdir()
+                    for i in range(n_per_group):
+                        for suffix in (".jpg", "_mask.png", "_co_occur_obj_mask.png"):
+                            (d / f"{i:03d}{suffix}").touch()
+        return root
+
+    def test_mask_pngs_are_not_scored(self, tmp_path):
+        d = tmp_path / "obj-urban_bg-urban_co_occur_obj-urban"
+        d.mkdir()
+        for name in ("000.jpg", "000_mask.png", "000_co_occur_obj_mask.png"):
+            (d / name).touch()
+        batches = list(ds.load_urbancars(str(tmp_path)))
+        paths = [p for imgs, _, _ in batches for p in imgs]
+        assert paths == [str(d / "000.jpg")]
+
+    def test_sample_count_matches_jpg_count_not_file_count(self, tmp_path):
+        self._tree(tmp_path, n_per_group=5)
+        batches = list(ds.load_urbancars(str(tmp_path), batch_size=64))
+        paths = [p for imgs, _, _ in batches for p in imgs]
+        assert len(paths) == 8 * 5
+        assert all(p.endswith(".jpg") for p in paths)
+
+    def test_every_group_is_represented(self, tmp_path):
+        self._tree(tmp_path, n_per_group=3)
+        batches = list(ds.load_urbancars(str(tmp_path), batch_size=64))
+        groups = {g for _, _, gs in batches for g in gs}
+        assert len(groups) == 8
+
+
+class TestReferenceParity:
+    def test_urbancars_prompts_are_frozen(self):
+        assert prompts.URBANCARS_PROMPTS == {
+            "urban": ["a photograph of a compact, sports, sedan car"],
+            "country": ["a photograph of a truck, jeep, pickup car"],
+        }
+
+    def test_celeba_prompts_are_frozen(self):
+        assert prompts.CELEBA_PROMPTS == {
+            "blonde": [
+                "a photo of a person with blonde hair",
+                "a photo of a person with light blonde hair",
+                "a photo of a person with golden hair",
+                "a photo of a person with platinum blonde hair",
+            ],
+            "non-blonde": [
+                "a photo of a person with dark hair",
+                "a photo of a person with black hair",
+                "a photo of a person with brown hair",
+                "a photo of a brunette person",
+                "a photo of a person with red hair",
+                "a photo of a person with grey hair",
+                "a photo of a bald person",
+                "a photo of a person with auburn hair",
+            ],
+        }
+
+    def test_class_name_order_matches_prompt_key_order(self):
+        assert ds.CELEBA_CLASS_NAMES == tuple(prompts.CELEBA_PROMPTS)
+        assert ds.URBANCARS_CLASS_NAMES == tuple(prompts.URBANCARS_PROMPTS)
+
+    def test_urbancars_class_index_matches_reference(self):
+        assert ds.URBANCARS_CLASS_NAMES.index("urban") == 0
+        assert ds.URBANCARS_CLASS_NAMES.index("country") == 1
+
+    def test_class_score_is_max_over_prompts_not_mean(self):
+        torch = pytest.importorskip("torch")
+        from oellm.contrib.spurious_robustness.zeroshot import class_scores, predict
+
+        image_features = torch.tensor([[1.0, 0.0]])
+        prompt_features = [
+            torch.tensor([[0.9, 0.0], [0.0, 0.0]]),
+            torch.tensor([[0.5, 0.0], [0.5, 0.0]]),
+        ]
+        scores = class_scores(image_features, prompt_features)
+        assert scores[0][0] == pytest.approx(0.9)
+        assert scores[0][1] == pytest.approx(0.5)
+        assert predict(scores).tolist() == [0]
 
 
 class TestTasksAndAdapter:

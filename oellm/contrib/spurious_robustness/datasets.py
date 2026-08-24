@@ -36,6 +36,8 @@ IMAGENET_SPLIT = "validation"
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".JPEG")
 
+URBANCARS_EXTENSIONS = (".jpg",)
+
 
 def _batched(iterable, size: int):
     batch = []
@@ -187,7 +189,7 @@ def load_urbancars(
         for dirname in sorted(subgroups):
             group, label = urbancars_group_label(dirname)
             for fname in sorted(os.listdir(subgroups[dirname])):
-                if fname.endswith(IMAGE_EXTENSIONS):
+                if fname.endswith(URBANCARS_EXTENSIONS):
                     yield os.path.join(subgroups[dirname], fname), label, group
 
     stream = samples()
