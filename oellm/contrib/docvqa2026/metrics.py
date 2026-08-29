@@ -1,0 +1,59 @@
+"""Scoring for DocVQA 2026.
+
+Every verdict comes from the vendored competition scorer; nothing here
+re-implements matching. This module only aggregates.
+
+Both averages are reported because they answer different questions and can
+disagree: ``accuracy`` over all questions, ``macro_accuracy`` over the eight
+document categories. On the val split they are equal — each category holds
+exactly 10 of the 80 questions — so the published per-domain table reproduces
+either way. They would diverge on a split with uneven categories.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+from oellm.contrib.docvqa2026._vendor_eval_utils import evaluate_docvqa_prediction
+
+MARKER = "FINAL ANSWER:"
+
+
+def score_prediction(raw_prediction: str, ground_truth: str) -> tuple[bool, str, bool]:
+    """Official verdict for one prediction: (correct, extracted, has_marker)."""
+    correct, extracted = evaluate_docvqa_prediction(raw_prediction, ground_truth)
+    return bool(correct), extracted, MARKER in str(raw_prediction)
+
+
+def aggregate(records: list[dict]) -> dict[str, float | int]:
+    """Aggregate per-question verdicts into the reported metric set.
+
+    Each record needs ``correct`` and ``doc_category``.
+    """
+    if not records:
+        raise RuntimeError("DocVQA 2026 evaluation produced no samples")
+
+    per_category: dict[str, list[bool]] = defaultdict(list)
+    for r in records:
+        per_category[r["doc_category"]].append(bool(r["correct"]))
+
+    n_correct = sum(bool(r["correct"]) for r in records)
+    category_rates = {cat: sum(v) / len(v) for cat, v in sorted(per_category.items())}
+
+    # A prediction without the marker is wrong by the competition's first
+    # rule, so a model that ignores the output protocol scores zero however
+    # well it reads. Reporting compliance separately keeps that visible: a
+    # 0.0 with 0.0 compliance is a formatting failure, not a reasoning one.
+    n_marked = sum(bool(r.get("has_marker")) for r in records)
+
+    metrics: dict[str, float | int] = {
+        "accuracy": n_correct / len(records),
+        "format_compliance": n_marked / len(records),
+        "macro_accuracy": sum(category_rates.values()) / len(category_rates),
+        "n_questions": len(records),
+        "n_correct": n_correct,
+        "n_categories": len(category_rates),
+    }
+    for cat, rate in category_rates.items():
+        metrics[f"acc_{cat}"] = rate
+    return metrics
