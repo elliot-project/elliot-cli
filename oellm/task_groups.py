@@ -165,6 +165,15 @@ class DatasetSpec:
     # HF dataset revisions to pre-fetch. Most datasets only need `main`;
     # OpenGVLab/MVBench keeps videos on a separate `video` branch.
     revisions: list[str] = field(default_factory=lambda: ["main"])
+    # Restrict the snapshot to these repo files. Without it the whole repo is
+    # fetched, which for split-per-file datasets means staging splits the task
+    # never scores.
+    allow_patterns: list[str] | None = None
+    # Whether to build the Arrow cache with load_dataset(). Suites that read
+    # the staged files directly set this False — some dataset cards declare
+    # feature types the pinned datasets version cannot parse, and the build
+    # would abort the schedule for data the suite never loads that way.
+    build_arrow_cache: bool = True
 
 
 @dataclass

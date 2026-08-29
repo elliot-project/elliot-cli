@@ -47,4 +47,11 @@ class DocVQA2026ValTask(BaseTask):
 
     @property
     def dataset_specs(self) -> list[DatasetSpec]:
-        return [DatasetSpec(repo_id="VLR-CVC/DocVQA-2026")]
+        return [
+            DatasetSpec(
+                repo_id="VLR-CVC/DocVQA-2026",
+                needs_snapshot_download=True,
+                allow_patterns=["val.parquet"],
+                build_arrow_cache=False,
+            )
+        ]

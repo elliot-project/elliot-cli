@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from oellm.contrib.docvqa2026._vendor_eval_utils import evaluate_docvqa_prediction
-
 MARKER = "FINAL ANSWER:"
 
 
 def score_prediction(raw_prediction: str, ground_truth: str) -> tuple[bool, str, bool]:
     """Official verdict for one prediction: (correct, extracted, has_marker)."""
+    from oellm.contrib.docvqa2026._vendor_eval_utils import (
+        evaluate_docvqa_prediction,
+    )
+
     correct, extracted = evaluate_docvqa_prediction(raw_prediction, ground_truth)
     return bool(correct), extracted, MARKER in str(raw_prediction)
 

@@ -185,7 +185,7 @@ class TestPreDownloadRevisions:
     def test_snapshot_download_called_once_per_revision(self, monkeypatch):
         snapshot_calls = []
 
-        def fake_snapshot(*, repo_id, repo_type, revision, max_workers):
+        def fake_snapshot(*, repo_id, repo_type, revision, max_workers, **kwargs):
             snapshot_calls.append((repo_id, revision))
 
         def fake_load_dataset(*args, **kwargs):
@@ -217,7 +217,7 @@ class TestPreDownloadRevisions:
         """A media spec without an explicit revisions list still snapshots 'main'."""
         snapshot_calls = []
 
-        def fake_snapshot(*, repo_id, repo_type, revision, max_workers):
+        def fake_snapshot(*, repo_id, repo_type, revision, max_workers, **kwargs):
             snapshot_calls.append((repo_id, revision))
 
         def fake_load_dataset(*args, **kwargs):
@@ -239,7 +239,7 @@ class TestPreDownloadRevisions:
         load_dataset() fetches + builds them in one step."""
         snapshot_calls = []
 
-        def fake_snapshot(*, repo_id, repo_type, revision, max_workers):
+        def fake_snapshot(*, repo_id, repo_type, revision, max_workers, **kwargs):
             snapshot_calls.append((repo_id, revision))
 
         def fake_load_dataset(*args, **kwargs):
@@ -540,3 +540,51 @@ class TestLoadClusterEnv:
         # still raises, even on a no-ACCOUNT cluster.
         with pytest.raises(RuntimeError, match="HF_HOME"):
             self._run(monkeypatch, "node.noacct.test", {"USER": "tester"})
+
+
+class TestFileOnlyStaging:
+    """Specs a suite reads as files, without an Arrow build."""
+
+    def test_allow_patterns_reaches_snapshot_download(self, monkeypatch):
+        calls = []
+
+        def fake_snapshot(*, repo_id, repo_type, revision, max_workers, **kwargs):
+            calls.append(kwargs.get("allow_patterns"))
+
+        monkeypatch.setattr("oellm.utils.get_console", lambda: _NoopConsole())
+        monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot)
+        monkeypatch.setattr(
+            "datasets.load_dataset", lambda *a, **k: pytest.fail("must not build")
+        )
+
+        from oellm.task_groups import DatasetSpec
+
+        _pre_download_datasets_from_specs(
+            [
+                DatasetSpec(
+                    repo_id="VLR-CVC/DocVQA-2026",
+                    needs_snapshot_download=True,
+                    allow_patterns=["val.parquet"],
+                    build_arrow_cache=False,
+                )
+            ]
+        )
+        assert calls == [["val.parquet"]]
+
+    def test_arrow_build_still_runs_by_default(self, monkeypatch):
+        built = []
+
+        monkeypatch.setattr("oellm.utils.get_console", lambda: _NoopConsole())
+        monkeypatch.setattr(
+            "huggingface_hub.snapshot_download",
+            lambda **kwargs: None,
+        )
+        monkeypatch.setattr(
+            "datasets.load_dataset",
+            lambda *a, **k: built.append(a[0]) or object(),
+        )
+
+        from oellm.task_groups import DatasetSpec
+
+        _pre_download_datasets_from_specs([DatasetSpec(repo_id="some/dataset")])
+        assert built == ["some/dataset"]
