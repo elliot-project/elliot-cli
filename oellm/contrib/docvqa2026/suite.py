@@ -1,27 +1,9 @@
 """DocVQA 2026 contrib suite — plugin protocol implementation.
 
-Replicates the ICDAR 2026 competition benchmark
-(https://github.com/VLR-CVC/DocVQA2026): reasoning questions over multi-page
-documents in eight domains, scored by the competition's own matcher.
+Replicates https://github.com/VLR-CVC/DocVQA2026. Only the val split is
+evaluable; test answers are withheld for the RRC platform.
 
-Why a contrib suite rather than an lmms-eval task: the benchmark scores one
-question against a whole document (~36 page images), demands the
-``FINAL ANSWER:`` marker, and grades with a strict number/unit/date matcher
-that falls back to ANLS only for non-numeric ground truths. None of that is
-expressible as an lmms-eval task config, and the scorer is the benchmark.
-
-The scorer is vendored byte-for-byte in ``_vendor_eval_utils.py`` and pinned
-against upstream by tests/test_docvqa2026_parity.py.
-
-Only the val split is evaluable: the test split's answers are withheld and
-graded solely on the RRC platform.
-
-Configuration
--------------
-``DOCVQA2026_MAX_PAGES``
-    Optional cap on pages per document. Unset means every page, which is what
-    the competition scores; a cap makes the benchmark tractable for models that
-    cannot hold ~50k image tokens, and is recorded in the results.
+``DOCVQA2026_MAX_PAGES`` optionally caps pages per document.
 """
 
 from __future__ import annotations
@@ -33,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 SUITE_NAME = "docvqa2026"
 
-# The dataset is staged from the Hub; nothing cluster-local is required.
 CLUSTER_ENV_VARS: list[str] = []
 
 from oellm.contrib.docvqa2026.task import DocVQA2026ValTask  # noqa: E402

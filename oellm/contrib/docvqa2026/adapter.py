@@ -1,10 +1,4 @@
-"""Model adapter for DocVQA 2026.
-
-The benchmark needs a generative vision-language model that accepts several
-images in one turn. Any checkpoint whose processor exposes a chat template
-taking interleaved images works — SmolVLM, Idefics, Qwen-VL and friends — so
-the adapter carries no per-family branching.
-"""
+"""Model adapter for DocVQA 2026."""
 
 from __future__ import annotations
 

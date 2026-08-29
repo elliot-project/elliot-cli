@@ -1,14 +1,4 @@
-"""Loading the DocVQA 2026 val split as one sample per question.
-
-The dataset stores one row per *document*: ~36 page images, and several
-questions sharing them. Scoring is per question, so each row fans out into one
-sample per question, every sample carrying the whole document.
-
-That fan-out is why ``DOCVQA2026_MAX_PAGES`` exists. 25 documents hold 905
-pages; feeding all of them costs roughly 50k image tokens per question, beyond
-most open VLMs. The cap keeps a run finishable and is recorded in the results
-so a capped number is never mistaken for a full one.
-"""
+"""Loading the DocVQA 2026 val split as one sample per question."""
 
 from __future__ import annotations
 

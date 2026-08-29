@@ -1,10 +1,13 @@
-"""Wiring and aggregation tests for the DocVQA 2026 contrib suite.
-
-Scorer parity lives in test_docvqa2026_parity.py; this file covers everything
-around it — discovery, the task entry, the metric set, and the page cap.
-"""
+"""Tests for the DocVQA 2026 contrib suite."""
 
 import pytest
+
+
+@pytest.fixture(scope="module")
+def scorer():
+    from oellm.contrib.docvqa2026 import _vendor_eval_utils
+
+    return _vendor_eval_utils
 
 
 class TestSuiteWiring:
@@ -21,8 +24,6 @@ class TestSuiteWiring:
         """image-docvqa/docvqa_val already exists; 2026 must not collide."""
         from oellm.task_groups import _expand_task_groups
 
-        # core (2020, lmms-eval) and contrib (2026) stay separate groups
-        # resolving to separate tasks on separate engines
         core = _expand_task_groups(["image-docvqa"])
         ours = _expand_task_groups(["image-docvqa2026"])
         assert [r.task for r in core] == ["docvqa_val"]
@@ -35,7 +36,7 @@ class TestSuiteWiring:
         with pytest.raises(ValueError, match="Unknown task"):
             suite.run(
                 model_path="m",
-                task="docvqa_val",  # the 2020 task is not ours
+                task="docvqa_val",
                 n_shot=0,
                 output_path=tmp_path / "out.json",
                 model_flags=None,
@@ -63,7 +64,6 @@ class TestAggregation:
     def test_reports_both_averages_and_per_category(self):
         from oellm.contrib.docvqa2026.metrics import aggregate
 
-        # maps 1/3, slide 2/2 — micro 3/5 = 0.6, macro (0.333+1)/2 = 0.667
         records = [
             {"correct": True, "doc_category": "maps"},
             {"correct": False, "doc_category": "maps"},
@@ -143,11 +143,10 @@ class TestRunEndToEnd:
             ds_mod.Sample("q2", "d1", "maps", "which town?", "Wareham", ["img"], 36),
             ds_mod.Sample("q3", "d2", "slide", "what colour?", "green", ["img"], 1),
         ]
-        # answers keyed by question, so the stub "model" is deterministic
         replies = {
-            "how many?": "FINAL ANSWER: 4",  # correct
-            "which town?": "FINAL ANSWER: Boston",  # wrong
-            "what colour?": "the colour is green",  # no marker -> wrong
+            "how many?": "FINAL ANSWER: 4",
+            "which town?": "FINAL ANSWER: Boston",
+            "what colour?": "the colour is green",
         }
         monkeypatch.setattr(
             ds_mod, "load_val", lambda limit=None, max_pages=None: samples
@@ -178,13 +177,10 @@ class TestRunEndToEnd:
         assert metrics["n_questions"] == 3
         assert metrics["n_correct"] == 1
         assert metrics["accuracy"] == pytest.approx(1 / 3)
-        # maps 1/2, slide 0/1 -> macro 0.25, which micro is not
         assert metrics["macro_accuracy"] == pytest.approx(0.25)
         assert metrics["acc_maps"] == 0.5 and metrics["acc_slide"] == 0.0
         assert metrics["max_pages"] == 1
-        # one of three replies carried the marker
         assert metrics["format_compliance"] == pytest.approx(2 / 3)
-        # two of three samples came from a 36-page document capped to 1
         assert metrics["n_truncated_documents"] == 2
 
     def test_results_round_trip_through_the_collector(self, stub_run, tmp_path):
@@ -257,7 +253,6 @@ class TestOracleOnRealData:
 
         records = []
         for category, gt in self._real_answers():
-            # answer a list ground truth the way a model should: one candidate
             try:
                 parsed = ast.literal_eval(gt)
                 spoken = str(parsed[0]) if isinstance(parsed, list) else gt
@@ -289,3 +284,73 @@ class TestOracleOnRealData:
         metrics = aggregate(records)
         assert metrics["accuracy"] == 0.0
         assert metrics["format_compliance"] == 0.0
+
+
+class TestDocumentedQuirksHold:
+    """Behaviour the competition scorer depends on, stated explicitly."""
+
+    def test_missing_marker_is_always_wrong(self, scorer):
+        correct, extracted = scorer.evaluate_docvqa_prediction("4", "4")
+        assert correct is False
+        assert extracted == "4"
+
+    def test_numeric_ground_truth_skips_the_anls_fallback(self, scorer):
+        assert scorer.evaluate_docvqa_prediction("FINAL ANSWER: four", "4")[0] is False
+
+    def test_value_equal_unit_different_is_wrong(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: 50 g", "50 kg")[0] is False
+        )
+
+    def test_unit_and_value_equal_is_right(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: 50 kg", "50 kg")[0] is True
+        )
+
+    def test_textual_date_matches_iso_ground_truth(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: Jan 1st 24", "2024-01-01")[0]
+            is True
+        )
+
+    def test_version_strings_compare_exactly(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: 12.0.0", "12.0.0")[0] is True
+        )
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: 12.0.1", "12.0.0")[0]
+            is False
+        )
+
+    def test_list_ground_truth_accepts_any_candidate(self, scorer):
+        gt = "['olive green', 'green', 'dark green']"
+        assert scorer.evaluate_docvqa_prediction("FINAL ANSWER: green", gt)[0] is True
+        assert scorer.evaluate_docvqa_prediction("FINAL ANSWER: blue", gt)[0] is False
+
+    def test_articles_and_punctuation_are_normalised(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: a wrench!", "wrench")[0]
+            is True
+        )
+
+    def test_anls_threshold_sits_at_0_90(self, scorer):
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: adjustablee", "adjustable")[
+                0
+            ]
+            is True
+        )
+        assert (
+            scorer.evaluate_docvqa_prediction("FINAL ANSWER: wrenchh", "wrench")[0]
+            is False
+        )
+
+    def test_last_marker_wins(self, scorer):
+        correct, extracted = scorer.evaluate_docvqa_prediction(
+            "FINAL ANSWER: wrong\nFINAL ANSWER: 4", "4"
+        )
+        assert extracted == "4"
+        assert correct is True
+
+    def test_prompt_demands_the_marker(self, scorer):
+        assert "FINAL ANSWER:" in scorer.get_evaluation_prompt()

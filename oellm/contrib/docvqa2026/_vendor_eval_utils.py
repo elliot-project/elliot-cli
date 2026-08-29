@@ -15,8 +15,8 @@ they describe is load-bearing for the score:
     the date branch is only reachable for non-numeric predictions.
 
 Reformatting or "fixing" any of it changes scores. The file is excluded from
-ruff in pyproject.toml for that reason; tests/test_docvqa2026_parity.py pins
-the behaviour against a golden fixture.
+ruff in pyproject.toml for that reason, and tests/test_docvqa2026.py pins the
+branches that decide them.
 """
 
 import Levenshtein

@@ -29,10 +29,8 @@ answers withheld and is graded solely on the
 ## Scoring is the competition's own code
 
 `_vendor_eval_utils.py` is copied byte-for-byte from the official
-`eval_utils.py` and excluded from ruff, so no formatter can drift it. Its
-behaviour is pinned by `tests/test_docvqa2026_parity.py` against a fixture of
-1241 recorded upstream verdicts, which is why the test suite never needs a
-clone of the competition repository.
+`eval_utils.py` and excluded from ruff, so no formatter can drift it.
+`tests/test_docvqa2026.py` pins the branches that decide scores.
 
 Three behaviours of that scorer decide most scores, and none of them are
 bugs to fix here:

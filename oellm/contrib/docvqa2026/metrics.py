@@ -1,14 +1,4 @@
-"""Scoring for DocVQA 2026.
-
-Every verdict comes from the vendored competition scorer; nothing here
-re-implements matching. This module only aggregates.
-
-Both averages are reported because they answer different questions and can
-disagree: ``accuracy`` over all questions, ``macro_accuracy`` over the eight
-document categories. On the val split they are equal — each category holds
-exactly 10 of the 80 questions — so the published per-domain table reproduces
-either way. They would diverge on a split with uneven categories.
-"""
+"""Scoring and aggregation for DocVQA 2026."""
 
 from __future__ import annotations
 
@@ -40,10 +30,6 @@ def aggregate(records: list[dict]) -> dict[str, float | int]:
     n_correct = sum(bool(r["correct"]) for r in records)
     category_rates = {cat: sum(v) / len(v) for cat, v in sorted(per_category.items())}
 
-    # A prediction without the marker is wrong by the competition's first
-    # rule, so a model that ignores the output protocol scores zero however
-    # well it reads. Reporting compliance separately keeps that visible: a
-    # 0.0 with 0.0 compliance is a formatting failure, not a reasoning one.
     n_marked = sum(bool(r.get("has_marker")) for r in records)
 
     metrics: dict[str, float | int] = {
