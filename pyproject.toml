@@ -156,6 +156,10 @@ conflicts = [
         { extra = "video" },
         { extra = "evalchemy" },
     ],
+    [
+        { extra = "docvqa2026" },
+        { extra = "evalchemy" },
+    ],
 ]
 
 [tool.ruff]
