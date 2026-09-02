@@ -11,6 +11,14 @@ def scorer():
 
 
 class TestSuiteWiring:
+    def test_staging_flows_through_the_scheduler_path(self):
+        from oellm.task_groups import _collect_dataset_specs, _collect_hf_dataset_files
+
+        assert _collect_dataset_specs(["image-docvqa2026"]) == []
+        assert _collect_hf_dataset_files(["image-docvqa2026"]) == [
+            {"repo_id": "VLR-CVC/DocVQA-2026", "patterns": ["val.parquet"]}
+        ]
+
     def test_group_and_metric_registered(self):
         from oellm.results import _load_task_metrics
         from oellm.task_groups import _expand_task_groups
@@ -113,9 +121,36 @@ class TestPageCap:
     def test_truncation_is_visible_on_the_sample(self):
         from oellm.contrib.docvqa2026.datasets import Sample
 
-        s = Sample("q1", "d1", "maps", "q?", "a", images=[1, 2], n_pages_total=36)
+        s = Sample("q1", "d1", "maps", "q?", "a", encoded_pages=[1, 2], n_pages_total=36)
         assert s.pages_truncated is True
         assert Sample("q1", "d1", "maps", "q?", "a", [1], 1).pages_truncated is False
+
+
+class TestGenerationSettings:
+    @pytest.mark.parametrize("raw,expected", [("", 2048), ("512", 512), (" 4096 ", 4096)])
+    def test_read_max_new_tokens(self, raw, expected):
+        from oellm.contrib.docvqa2026.runner import read_max_new_tokens
+
+        assert read_max_new_tokens({"DOCVQA2026_MAX_NEW_TOKENS": raw}) == expected
+
+    @pytest.mark.parametrize("raw", ["0", "-1", "many"])
+    def test_bad_max_new_tokens_names_the_variable(self, raw):
+        from oellm.contrib.docvqa2026.runner import read_max_new_tokens
+
+        with pytest.raises(ValueError, match="DOCVQA2026_MAX_NEW_TOKENS"):
+            read_max_new_tokens({"DOCVQA2026_MAX_NEW_TOKENS": raw})
+
+    def test_no_pages_means_no_image_slots(self):
+        from oellm.contrib.docvqa2026.runner import build_messages
+
+        content = build_messages("q?", 0, "PROMPT")[0]["content"]
+        assert [c["type"] for c in content] == ["text"]
+        assert [c["type"] for c in build_messages("q?", 3, "P")[0]["content"]] == [
+            "image",
+            "image",
+            "image",
+            "text",
+        ]
 
 
 class TestPrompt:
@@ -126,11 +161,7 @@ class TestPrompt:
 
 
 class TestRunEndToEnd:
-    """run() orchestration, with the dataset and model stubbed out.
-
-    Exercises the path a real run takes — fan-out, scoring, aggregation, the
-    results file and the collector round-trip — without a download or a GPU.
-    """
+    """run() orchestration with the dataset and model stubbed out."""
 
     @pytest.fixture
     def stub_run(self, monkeypatch):
@@ -139,9 +170,9 @@ class TestRunEndToEnd:
         from oellm.contrib.docvqa2026 import suite
 
         samples = [
-            ds_mod.Sample("q1", "d1", "maps", "how many?", "4", ["img"], 36),
-            ds_mod.Sample("q2", "d1", "maps", "which town?", "Wareham", ["img"], 36),
-            ds_mod.Sample("q3", "d2", "slide", "what colour?", "green", ["img"], 1),
+            ds_mod.Sample("q1", "d1", "maps", "how many?", "4", ["enc"], 36),
+            ds_mod.Sample("q2", "d1", "maps", "which town?", "Wareham", ["enc"], 36),
+            ds_mod.Sample("q3", "d2", "slide", "what colour?", "green", ["enc"], 1),
         ]
         replies = {
             "how many?": "FINAL ANSWER: 4",
@@ -151,12 +182,16 @@ class TestRunEndToEnd:
         monkeypatch.setattr(
             ds_mod, "load_val", lambda limit=None, max_pages=None: samples
         )
+        monkeypatch.setattr(ds_mod, "decode_pages", lambda sample: ["img"])
         monkeypatch.setattr(run_mod, "load_model", lambda *a, **k: ("model", "proc"))
         monkeypatch.setattr(run_mod, "resolve_device", lambda: "cpu")
         monkeypatch.setattr(
             run_mod,
             "generate_answer",
-            lambda model, processor, sample, prompt, device: replies[sample.question],
+            lambda model, processor, question, images, prompt, device, max_new_tokens: (
+                replies[question],
+                False,
+            ),
         )
         return suite
 
@@ -181,7 +216,9 @@ class TestRunEndToEnd:
         assert metrics["acc_maps"] == 0.5 and metrics["acc_slide"] == 0.0
         assert metrics["max_pages"] == 1
         assert metrics["format_compliance"] == pytest.approx(2 / 3)
-        assert metrics["n_truncated_documents"] == 2
+        assert metrics["n_truncated_documents"] == 1
+        assert metrics["max_new_tokens"] == 2048
+        assert metrics["n_hit_token_limit"] == 0
 
     def test_results_round_trip_through_the_collector(self, stub_run, tmp_path):
         import csv
@@ -222,11 +259,7 @@ def _cached_val_parquet():
 
 @pytest.mark.skipif(_cached_val_parquet() is None, reason="val.parquet not cached")
 class TestOracleOnRealData:
-    """Feed the real answers back as predictions: the score must be perfect.
-
-    Separates a weak model from a broken pipeline. If a model scores 0 while
-    this scores 1.0, the scoring path is sound and the model is the story.
-    """
+    """Feeding the real answers back as predictions must score perfectly."""
 
     @staticmethod
     def _real_answers():
@@ -240,7 +273,7 @@ class TestOracleOnRealData:
                 zip(
                     row["answers"]["question_id"],
                     row["answers"]["answer"],
-                    strict=False,
+                    strict=True,
                 )
             )
             for qid in row["questions"]["question_id"]:

@@ -65,16 +65,20 @@ See the full [spurious-robustness README](spurious_robustness/README.md) for gro
 
 ```bash
 oellm-eval schedule \
-  --models Qwen/Qwen2-VL-7B-Instruct \
+  --models HuggingFaceTB/SmolVLM-256M-Instruct \
   --task-groups image-docvqa2026 \
   --venv-path ~/docvqa-venv
 ```
+
+Requires a venv built with the `docvqa2026` extra. Tested with SmolVLM; other
+`AutoModelForVision2Seq` checkpoints (Qwen2-VL, Idefics3) are expected to work
+but have not been run.
 
 Only the `val` split is scorable — 80 questions over 25 documents. The test
 split's answers are withheld and graded solely on the
 [RRC platform](https://rrc.cvc.uab.es/?ch=34).
 
-The scorer is vendored byte-for-byte from the competition's `eval_utils.py`,
+The scorer's code is vendored verbatim from the competition's `eval_utils.py`,
 so a prediction without the `FINAL ANSWER:` marker is wrong whatever it says,
 and a numeric ground truth is matched on value *and* unit with no ANLS
 fallback. `format_compliance` reports how often the model followed the output

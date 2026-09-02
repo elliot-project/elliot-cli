@@ -499,7 +499,6 @@ def _pre_download_datasets_from_specs(
                             repo_type="dataset",
                             revision=rev,
                             max_workers=2,
-                            allow_patterns=getattr(spec, "allow_patterns", None),
                         )
                     except Exception as e:
                         # Media files are NOT fetched by load_dataset() below,
@@ -518,10 +517,6 @@ def _pre_download_datasets_from_specs(
             # re-download them. NOTE: the build can OOM the login node for very
             # large media datasets (e.g. 60 GB librispeech), which then need a
             # separate staging strategy.
-            if not getattr(spec, "build_arrow_cache", True):
-                logging.debug(f"Staged '{label}' as files; skipping the Arrow build.")
-                continue
-
             try:
                 ds = load_dataset(
                     spec.repo_id,

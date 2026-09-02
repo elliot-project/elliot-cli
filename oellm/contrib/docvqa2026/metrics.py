@@ -18,10 +18,7 @@ def score_prediction(raw_prediction: str, ground_truth: str) -> tuple[bool, str,
 
 
 def aggregate(records: list[dict]) -> dict[str, float | int]:
-    """Aggregate per-question verdicts into the reported metric set.
-
-    Each record needs ``correct`` and ``doc_category``.
-    """
+    """Aggregate per-question verdicts into the reported metric set."""
     if not records:
         raise RuntimeError("DocVQA 2026 evaluation produced no samples")
 

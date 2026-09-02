@@ -50,6 +50,9 @@ image = [
 docvqa2026 = [
     "Levenshtein",
     "python-dateutil",
+    "torch",
+    "transformers>=4.45,<4.50",
+    "pillow",
 ]
 video = [
     "transformers>=4.45,<4.50",

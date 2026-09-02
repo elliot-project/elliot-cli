@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 from oellm.core.base_task import BaseTask
-from oellm.task_groups import DatasetSpec
 
 SUITE_NAME = "docvqa2026"
 
 
 class DocVQA2026ValTask(BaseTask):
-    """DocVQA 2026 validation split: 80 questions over 25 multi-page documents.
-
-    Only ``val`` is scorable here. The test split ships with its answers
-    withheld and is graded solely by the RRC platform.
-    """
+    """DocVQA 2026 validation split: 80 questions over 25 multi-page documents."""
 
     @property
     def name(self) -> str:
@@ -25,8 +20,6 @@ class DocVQA2026ValTask(BaseTask):
 
     @property
     def task_group_name(self) -> str:
-        """Mirrors the core ``image-docvqa`` / ``docvqa_val`` pairing: the group
-        carries the modality prefix, the task inside it carries the split."""
         return "image-docvqa2026"
 
     @property
@@ -46,12 +39,5 @@ class DocVQA2026ValTask(BaseTask):
         )
 
     @property
-    def dataset_specs(self) -> list[DatasetSpec]:
-        return [
-            DatasetSpec(
-                repo_id="VLR-CVC/DocVQA-2026",
-                needs_snapshot_download=True,
-                allow_patterns=["val.parquet"],
-                build_arrow_cache=False,
-            )
-        ]
+    def hf_dataset_files(self) -> list[dict]:
+        return [{"repo_id": "VLR-CVC/DocVQA-2026", "patterns": ["val.parquet"]}]

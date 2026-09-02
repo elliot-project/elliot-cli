@@ -1,22 +1,7 @@
-"""Vendored scorer and prompt for the DocVQA 2026 competition.
-
-Copied **verbatim** from the official evaluation code at
-https://github.com/VLR-CVC/DocVQA2026 (``eval_utils.py``), so our accuracy
-reproduces the competition's own numbers rather than an approximation of them.
-
-Nothing below is edited, including behaviour the upstream authors have marked
-with ``(S.O.)`` as questionable. Those comments are theirs and the behaviour
-they describe is load-bearing for the score:
-
-  * a prediction without the ``FINAL ANSWER:`` marker is wrong, whatever it says;
-  * when the ground truth parses as a number, a failed strict match returns
-    False without ever reaching the ANLS fallback (46% of the val answers);
-  * ``parse_magnitude_unit`` reads ``2024-01-01`` as ``2024`` + ``-01-01``, so
-    the date branch is only reachable for non-numeric predictions.
-
-Reformatting or "fixing" any of it changes scores. The file is excluded from
-ruff in pyproject.toml for that reason, and tests/test_docvqa2026.py pins the
-branches that decide them.
+"""Official DocVQA 2026 scorer and prompt, copied verbatim below this docstring
+from https://github.com/VLR-CVC/DocVQA2026 (eval_utils.py). Do not edit or
+reformat: any change alters competition scores. Excluded from ruff in
+pyproject.toml.
 """
 
 import Levenshtein
