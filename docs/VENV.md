@@ -37,12 +37,13 @@ venv against the groups you plan to run.
 # 1. Create venv
 uv venv --python 3.12 /path/to/.venv
 
-# 2. Install lmms-eval editable from git
-#    (Editable is required — wheel build drops `_default_template_yaml` files.)
-#    Pin a known-good commit (`...lmms-eval.git@<commit>#egg=...`) so two venvs
-#    created on different days run the same engine — unpinned `main` drifts.
-uv pip install --python /path/to/.venv/bin/python \
-    -e "git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@45c766f60b6f8c153e4c72d06ca636e2db0ebcdb#egg=lmms-eval"
+# 2. Install lmms-eval editable from a clone at the pinned commit
+#    (Editable is required — wheel build drops `_default_template_yaml` files.
+#    uv refuses `-e git+…`, so clone first. Keep the commit pinned so two venvs
+#    created on different days run the same engine — unpinned `main` drifts.)
+git clone https://github.com/EvolvingLMMs-Lab/lmms-eval.git /path/to/lmms-eval
+git -C /path/to/lmms-eval checkout 45c766f60b6f8c153e4c72d06ca636e2db0ebcdb
+uv pip install --python /path/to/.venv/bin/python -e /path/to/lmms-eval
 
 # 3. Install oellm-cli with engine extras
 uv pip install --python /path/to/.venv/bin/python -e '.[text,image,audio]'
@@ -76,10 +77,29 @@ oellm-eval schedule \
     --venv-path /path/to/.venv
 ```
 
+## Local runs without CUDA (macOS)
+
+lmms-eval adapters default to `device=cuda`. With `--local` on macOS the job
+script targets MPS automatically (`device=mps,device_map=mps`). On any host,
+`LMMS_MODEL_ARGS` (comma-separated `key=value` pairs) is appended to lmms-eval's
+`--model_args` and takes precedence, for example:
+
+```bash
+LMMS_MODEL_ARGS="device=cpu,device_map=cpu" oellm-eval schedule … --local
+```
+
+Several lmms-eval adapters import `decord` at module load, and there is no
+macOS arm64 wheel for it, so those adapters need a `decord` build on a Mac.
+
+Idefics3-architecture models (SmolVLM, Idefics3) cannot be evaluated with the
+pinned lmms-eval and `transformers<4.50`: no dedicated adapter exists and the
+generic `huggingface` adapter loads them without a language-model head. The
+scheduler refuses them at schedule time.
+
 ## Why Multiple Install Steps?
 
 
-lm-eval requires `datasets<4.0.0` while lighteval requires `datasets>=4.0.0`. Installing lighteval as an isolated uv tool (like the containers do) avoids this conflict. `lmms-eval` is compatible with `datasets<4.0.0` and can be installed alongside lm-eval in the same venv.
+The general venv pins `datasets<4.0.0`: lm-eval itself accepts newer versions, but datasets 4 dropped script-based datasets (which `tabfact` still uses) and `lmms-eval` targets `<4.0.0`, while lighteval requires `datasets>=4.0.0`. Installing lighteval as an isolated uv tool (like the containers do) keeps both constraints satisfied in one setup.
 
 ## Dependency Summary
 

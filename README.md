@@ -253,6 +253,10 @@ oellm-eval schedule \
 
 Results are written to `./oellm-output/<timestamp>/results/`.
 
+lmms-eval tasks (image, video, audio) target MPS automatically on macOS; set
+`LMMS_MODEL_ARGS` (for example `device=cpu,device_map=cpu`) to override the
+device arguments on any host. See [docs/VENV.md](docs/VENV.md).
+
 **Air-gapped cluster nodes (no internet):** batch jobs set `HF_HUB_OFFLINE=1` and get `HF_HOME` from your cluster env. With `--local`, the CLI defaults `HF_HOME` to `~/.cache/huggingface` if unset and would otherwise allow Hub access—so on a compute node without network, export your real cache and offline flag before running, for example:
 
 ```bash
@@ -316,6 +320,26 @@ ROW_TIMEOUT=30m oellm-eval schedule --models "model-name" --task-groups "open-sc
 
 Quantization is recorded in the run's provenance. Rows on engines that cannot
 honor it run at full precision — the scheduler lists them at submission time.
+
+### Workaround for `acc_norm` tasks
+
+> [!WARNING]
+> There is currently an upstream `lighteval` issue affecting tasks that use the
+> `acc_norm` metric. `LogProbTokenNorm` may raise an `IndexError` when
+> `choices_tokens` is shorter than `choices_logprob`.
+>
+> Until the upstream fix is available, manually apply the change proposed in
+> [huggingface/lighteval#1171](https://github.com/huggingface/lighteval/pull/1171)
+> to `src/lighteval/metrics/normalizations.py` in your local `lighteval`
+> installation.
+>
+> When using the patched local installation, pass `--venv-path .venv` (or the
+> path to your patched virtual environment) so that the modified `lighteval`
+> installation is used.
+>
+> See [huggingface/lighteval#1170](https://github.com/huggingface/lighteval/issues/1170)
+> for details about the bug and [OpenEuroLLM/oellm-eval#60](https://github.com/OpenEuroLLM/oellm-eval/pull/60)
+> for the previously documented workaround.
 
 ## ⚠️ Dataset Pre-Download Warning
 
