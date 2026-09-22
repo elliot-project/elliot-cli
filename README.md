@@ -23,6 +23,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 | `oellm-eval schedule` | Expand models × tasks, pre-download models/datasets on the login node, generate and submit a SLURM array job (or run locally with `--local`) |
 | `oellm-eval eval --config eval.yaml` | Same as `schedule`, driven by a YAML config file; CLI flags override the file |
 | `oellm-eval collect <dir>` | Aggregate result JSONs into `eval_results.csv` + `.json` + `.md`; `--check` writes a re-schedulable CSV of missing jobs |
+| `oellm-eval push <dir>` | Send collected results to the ELLIOT dashboard over HTTPS; also available as `collect --push` |
 | `oellm-eval list-tasks` | Show every task group, its engine, task count, and n-shot settings |
 | `oellm-eval compare <a> <b>` | Diff two collected results (files or run directories) per model × task × n-shot × metric |
 | `oellm-eval doctor` | Diagnose the environment: cluster detection, env vars, HF cache, venv engines |
@@ -272,6 +273,25 @@ oellm-eval schedule ... --venv-path .venv --local
 ```
 
 The `HF_HUB_OFFLINE` value is read when you invoke `oellm-eval` and baked into the generated script.
+
+## Publishing Results to the Dashboard
+
+`push` sends the `eval_results.json` written by `collect` to the
+[ELLIOT dashboard](https://github.com/elliot-project/elliot-eval-dashboard)
+over HTTPS from the login node. Ask the dashboard maintainers (ELLIOT WP4) for
+a personal token, then:
+
+```bash
+mkdir -p ~/.config/oellm && chmod 700 ~/.config/oellm
+echo '<token>' > ~/.config/oellm/dash_token && chmod 600 ~/.config/oellm/dash_token
+export OELLM_DASH_URL=https://<host>/elliot-dashboard
+
+oellm-eval collect <run_dir> --push   # or later: oellm-eval push <run_dir>
+```
+
+Pushing the same results twice is harmless, and a failed push never fails
+`collect`. Alternatives to the default token file: `--token-file`,
+`$OELLM_DASH_TOKEN_FILE`, `$OELLM_DASH_TOKEN`.
 
 ## SLURM Overrides
 
