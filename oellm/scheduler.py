@@ -156,6 +156,20 @@ def _probe_engine_versions(venv_path: str | None) -> dict[str, str]:
     return versions
 
 
+def _cluster_setting_names() -> set[str]:
+    """Every setting clusters.yaml can define (PARTITION, ACCOUNT, HF_HOME, …)."""
+    import yaml
+
+    clusters = yaml.safe_load((files("oellm.resources") / "clusters.yaml").read_text())
+    return {
+        key
+        for section in (clusters or {}).values()
+        if isinstance(section, dict)
+        for key in section
+        if key != "hostname_pattern"
+    }
+
+
 @capture_third_party_output_from_kwarg("verbose")
 def schedule_evals(
     models: str | None = None,
@@ -197,7 +211,8 @@ def schedule_evals(
         tasks: A string of comma-separated task names (lm_eval) or paths.
             Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
         task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
-            Each group expands into concrete (task, n_shots, suite) entries; `n_shot` is ignored for groups.
+            Each group expands into concrete (task, n_shots, suite) entries and sets its own shots;
+            `n_shot` applies to `tasks` only. Given together, `tasks` and `task_groups` are both scheduled.
         n_shot: An integer or list of integers specifying the number of shots applied to `tasks`.
         eval_csv_path: A path to a CSV file containing evaluation data.
             Warning: exclusive argument. Cannot specify `models`, `tasks`, `task_groups`, or `n_shot` when `eval_csv_path` is provided.
@@ -303,26 +318,16 @@ def schedule_evals(
         )
 
     elif models:
-        if group_names is None:
-            # Look up each bare task name in the registered groups so
-            # ``--tasks belebele_eng_Latn_cf`` (lighteval) or ``--tasks
-            # regiondial_refcocog_all`` (contrib) get routed correctly.
-            # Tasks not in any group default to lm_eval.
-            task_suite_map = _build_task_suite_map()
-            eval_jobs.extend(
-                [
-                    EvaluationJob(
-                        model_path=model,
-                        task_path=task,
-                        n_shot=shot,
-                        eval_suite=task_suite_map.get(task, "lm_eval"),
-                    )
-                    for model in models
-                    for task in tasks
-                    for shot in n_shot
-                ]
+        # --tasks and --task-groups together schedule both; --n-shot belongs
+        # to --tasks, since groups define their own shots.
+        if tasks and not n_shot:
+            raise ValueError("n_shot is required when specifying individual tasks.")
+        if n_shot and group_names is not None and not tasks:
+            raise ValueError(
+                "n_shot applies to tasks only; task groups set their own shots "
+                "(see oellm-eval list-tasks)."
             )
-        else:
+        if group_names is not None:
             expanded = _expand_task_groups(group_names)
             eval_jobs.extend(
                 [
@@ -334,6 +339,27 @@ def schedule_evals(
                     )
                     for model in models
                     for result in expanded
+                ]
+            )
+        if tasks:
+            # Look up each bare task name in the registered groups so
+            # ``--tasks belebele_eng_Latn_cf`` (lighteval) or ``--tasks
+            # regiondial_refcocog_all`` (contrib) get routed correctly.
+            # Tasks not in any group default to lm_eval.
+            task_suite_map = _build_task_suite_map()
+            scheduled = {(j.model_path, j.task_path, j.n_shot) for j in eval_jobs}
+            eval_jobs.extend(
+                [
+                    EvaluationJob(
+                        model_path=model,
+                        task_path=task,
+                        n_shot=shot,
+                        eval_suite=task_suite_map.get(task, "lm_eval"),
+                    )
+                    for model in models
+                    for task in tasks
+                    for shot in n_shot
+                    if (model, task, shot) not in scheduled
                 ]
             )
 
@@ -487,9 +513,17 @@ def schedule_evals(
     # Ensure that all datasets required by the tasks are cached locally to avoid
     # network access on compute nodes.
     if not skip_checks:
+        # --tasks given alongside --task-groups need their data staged too.
+        extra_tasks = sorted(set(tasks or [])) if group_names else []
         dataset_specs = []
         if group_names:
             dataset_specs = _collect_dataset_specs(group_names)
+            staged = {(spec.repo_id, spec.subset) for spec in dataset_specs}
+            dataset_specs += [
+                spec
+                for spec in _lookup_dataset_specs_for_tasks(extra_tasks)
+                if (spec.repo_id, spec.subset) not in staged
+            ]
         else:
             # Look up individual tasks in task groups registry
             all_tasks = df["task_path"].unique().tolist()
@@ -511,6 +545,16 @@ def schedule_evals(
         if group_names:
             hf_model_repos = _collect_hf_model_repos(group_names)
             hf_dataset_files = _collect_hf_dataset_files(group_names)
+            hf_model_repos += [
+                repo
+                for repo in _lookup_hf_model_repos_for_tasks(extra_tasks)
+                if repo not in hf_model_repos
+            ]
+            hf_dataset_files += [
+                spec
+                for spec in _lookup_hf_dataset_files_for_tasks(extra_tasks)
+                if spec not in hf_dataset_files
+            ]
         else:
             _all_task_names = df["task_path"].unique().tolist()
             hf_model_repos = _lookup_hf_model_repos_for_tasks(_all_task_names)
@@ -580,6 +624,7 @@ def schedule_evals(
         )
 
     # Apply slurm_template_var overrides (JSON object)
+    template_var_names: set[str] = set()
     if slurm_template_var:
         try:
             opts = json.loads(slurm_template_var)
@@ -598,6 +643,7 @@ def schedule_evals(
                 logging.info(f"Using time limit override: {time_limit}")
             else:
                 os.environ[key] = str(value)
+                template_var_names.add(key)
                 logging.info(f"Using slurm_template_var override: {key}={value}")
 
     if nodelist:
@@ -698,12 +744,19 @@ def schedule_evals(
     if not os.environ.get("NODELIST"):
         sbatch_script = sbatch_script.replace("#SBATCH --nodelist=$NODELIST\n", "")
 
-    # Substitute $ENV_VAR occurrences from the environment — EXCLUDING SLURM_*
-    # runtime variables: when scheduling from inside an allocation
-    # (salloc/srun) those are set at render time and would be baked into the
-    # script (e.g. JOB_HOME losing its per-job uniqueness) instead of
-    # expanding on the compute node.
-    _template_env = {k: v for k, v in os.environ.items() if not k.startswith("SLURM_")}
+    # Fill in only the cluster settings (clusters.yaml names, --nodelist and
+    # --slurm-template-var keys) from the environment. Every other $NAME is the
+    # job's own variable (VENV_PATH, LIMIT, MODEL_DIR, …) and must expand on
+    # the compute node: filled in from the login shell, an exported VENV_PATH
+    # silently replaced --venv-path. SLURM_* runtime values stay unexpanded
+    # too — when scheduling from inside an allocation (salloc/srun) they would
+    # otherwise be baked in (e.g. JOB_HOME losing its per-job uniqueness).
+    render_names = _cluster_setting_names() | {"NODELIST"} | template_var_names
+    _template_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in render_names and not k.startswith("SLURM_")
+    }
     sbatch_script = Template(sbatch_script).safe_substitute(_template_env)
 
     sbatch_script_path = evals_dir / "submit_evals.sbatch"

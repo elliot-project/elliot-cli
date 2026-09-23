@@ -1,11 +1,12 @@
 """AudioBench contrib suite — plugin protocol implementation.
 
 AudioBench is not pip-installable (upstream has no build backend and uses
-bare imports like ``from dataset import ...``), so :func:`run` invokes its
-``src/main_evaluate.py`` entry point as a subprocess with ``cwd`` set to
-``$AUDIOBENCH_DIR``.  :func:`run` then re-shapes AudioBench's result JSON
-into a lmms-eval-compatible payload that :func:`oellm.main.collect_results`
-can parse unchanged.
+bare imports like ``from dataset import ...``), so :func:`run` runs its
+evaluation through ``launch.py`` in a subprocess with ``cwd`` set to
+``$AUDIOBENCH_DIR``; ``launch.py`` loads your checkpoint in place of the stock
+weights and keeps each run's AudioBench files in its own folder.  :func:`run`
+then re-shapes AudioBench's result JSON into a lmms-eval-compatible payload
+that :func:`oellm.main.collect_results` can parse unchanged.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ import json
 import logging
 import os
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from oellm.contrib.audiobench.task import (
@@ -104,10 +107,22 @@ def detect_model_flags(model_path: str) -> str | None:
     model family — :func:`run` then raises a clear error.  AudioBench has no
     generic loader, so silently falling back to a fictitious key would just
     move the error deeper inside the subprocess.
-    """
-    from oellm.contrib.audiobench.adapter import AudioBenchModelAdapter
 
-    return AudioBenchModelAdapter(model_path).to_contrib_flags()
+    Raises ``ValueError`` at schedule time for a checkpoint of a family whose
+    loader can only run the stock model (see ``CHECKPOINT_VARIABLE``).
+    """
+    from oellm.contrib.audiobench.adapter import (
+        CHECKPOINT_VARIABLE,
+        AudioBenchModelAdapter,
+        is_stock_model,
+        stock_only_message,
+    )
+
+    key = AudioBenchModelAdapter(model_path).to_contrib_flags()
+    if key is not None and key not in CHECKPOINT_VARIABLE:
+        if not is_stock_model(model_path, key):
+            raise ValueError(stock_only_message(model_path, key))
+    return key
 
 
 def run(
@@ -147,46 +162,68 @@ def run(
             f"model.  AudioBench dispatches on a fixed list of literal "
             f"model_name strings (Qwen2-Audio-7B-Instruct, SALMONN_7B, "
             f"whisper_large_v3, …) — see oellm/contrib/audiobench/adapter.py.  "
-            f"AudioBench cannot evaluate arbitrary HF checkpoints; it loads "
-            f"its own hardcoded HF repos per model family."
+            f"Checkpoints work for the families in CHECKPOINT_VARIABLE; pass a "
+            f"path that names the family or a local folder with its config.json."
         )
     model_key = model_flags  # AudioBench's dispatch key, e.g. "Qwen2-Audio-7B-Instruct"
 
-    cmd = [
-        "python",
-        "src/main_evaluate.py",
-        "--dataset_name",
-        spec.upstream_name,
-        "--model_name",
-        model_key,
-        "--metrics",
-        spec.upstream_metric,
-        # Force re-eval — AudioBench skips by default if a stale score file
-        # already exists under log_for_all_models/.
-        "--overwrite",
-        "True",
-    ]
-
-    limit = env.get("LIMIT", "").strip()
-    if limit:
-        cmd.extend(["--number_of_samples", str(limit)])
-
-    logger.info("AudioBench cmd: %s (cwd=%s)", " ".join(cmd), ab_dir)
-    completed = subprocess.run(
-        cmd,
-        cwd=ab_dir,
-        env=env,
-        check=False,
+    from oellm.contrib.audiobench.adapter import (
+        CHECKPOINT_VARIABLE,
+        is_stock_model,
+        stock_only_message,
     )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"AudioBench exited with code {completed.returncode} for "
-            f"task={task!r} model={model_path!r} (dispatch key={model_key!r})"
+
+    load_checkpoint = not is_stock_model(model_path, model_key)
+    if load_checkpoint and model_key not in CHECKPOINT_VARIABLE:
+        # Also covers rows whose key was set by hand (a CSV "audiobench:<key>").
+        raise RuntimeError(stock_only_message(model_path, model_key))
+
+    # A fresh folder per run: AudioBench keys its predictions and score file by
+    # family, so checkpoints of one family would overwrite or reuse each other.
+    with tempfile.TemporaryDirectory(prefix="audiobench_") as log_dir:
+        cmd = [
+            sys.executable,
+            str(Path(__file__).with_name("launch.py")),
+            "--audiobench-dir",
+            ab_dir,
+            "--log-dir",
+            log_dir,
+            "--dataset-name",
+            spec.upstream_name,
+            "--model-name",
+            model_key,
+            "--metrics",
+            spec.upstream_metric,
+        ]
+        if load_checkpoint:
+            module, variable = CHECKPOINT_VARIABLE[model_key]
+            cmd += [
+                "--module",
+                module,
+                "--variable",
+                variable,
+                "--checkpoint",
+                model_path,
+            ]
+
+        limit = env.get("LIMIT", "").strip()
+        if limit:
+            cmd += ["--number-of-samples", str(limit)]
+
+        logger.info("AudioBench cmd: %s (cwd=%s)", " ".join(cmd), ab_dir)
+        completed = subprocess.run(
+            cmd,
+            cwd=ab_dir,
+            env=env,
+            check=False,
         )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"AudioBench exited with code {completed.returncode} for "
+                f"task={task!r} model={model_path!r} (dispatch key={model_key!r})"
+            )
 
-    metrics = _extract_metrics(
-        audiobench_dir=Path(ab_dir), model_key=model_key, spec=spec
-    )
+        metrics = _extract_metrics(log_dir=Path(log_dir), model_key=model_key, spec=spec)
     _write_lmms_shaped_json(
         output_path=output_path,
         model_path=model_path,
@@ -199,20 +236,16 @@ def run(
 
 def _extract_metrics(
     *,
-    audiobench_dir: Path,
+    log_dir: Path,
     model_key: str,
     spec: AudioBenchTaskSpec,
 ) -> dict[str, float]:
-    """Read AudioBench's score file from its hardcoded output path.
-
-    AudioBench writes to ``$cwd/log_for_all_models/<model_name>/<dataset_name>_<metric>_score.json``
-    (see ``main_evaluate.py:118``).  Path is fixed — there is no ``--log_dir``.
+    """Read the score file AudioBench wrote under *log_dir* (``launch.py``
+    redirects AudioBench's ``log_for_all_models`` folder there):
+    ``<log_dir>/<model_name>/<dataset_name>_<metric>_score.json``.
     """
     score_file = (
-        audiobench_dir
-        / "log_for_all_models"
-        / model_key
-        / f"{spec.upstream_name}_{spec.upstream_metric}_score.json"
+        log_dir / model_key / f"{spec.upstream_name}_{spec.upstream_metric}_score.json"
     )
     if not score_file.exists():
         raise RuntimeError(

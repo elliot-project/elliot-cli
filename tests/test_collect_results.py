@@ -1,6 +1,7 @@
 """Tests for collect_results() covering both lm-eval and lmms-eval output formats."""
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -438,7 +439,7 @@ class TestCollectResultsStructuredOutput:
         json_path = tmp_path / "out.json"
         assert json_path.exists()
         envelope = json.loads(json_path.read_text())
-        assert envelope["version"] == "1.2"
+        assert envelope["version"] == "1.3"
         assert len(envelope["results"]) == 1
         record = envelope["results"][0]
         assert record["task"] == "copa"
@@ -621,3 +622,247 @@ class TestCheckModeMatching:
             (tmp_path / "outfile").read_text()
             != (tmp_path / "outfile_missing.csv").read_text()
         )
+
+
+# ── --limit test runs versus full evaluations ────────────────────────────────
+
+
+def _lm_eval_result(task: str, acc: float, limit=None, date=None) -> dict:
+    data = {
+        "model_name": "EleutherAI/pythia-70m",
+        "results": {task: {"name": task, "alias": task, "acc,none": acc}},
+        "n-shot": {task: 0},
+        "config": {"limit": limit},
+    }
+    if date is not None:
+        data["date"] = date
+    return data
+
+
+def _make_run(root: Path, name: str, limit, payloads: dict[str, dict]) -> Path:
+    run = root / name
+    (run / "results").mkdir(parents=True)
+    (run / "provenance.json").write_text(json.dumps({"schema": 1, "limit": limit}))
+    for filename, payload in payloads.items():
+        write_result(run / "results", payload, filename=filename)
+    return run
+
+
+class TestLimitedRuns:
+    def test_full_evaluation_beats_newer_limited_run(self, tmp_path):
+        runs = tmp_path / "runs"
+        _make_run(
+            runs, "full", None, {"a.json": _lm_eval_result("copa", 0.57, date=1.7e9)}
+        )
+        _make_run(runs, "smoke", 4, {"b.json": _lm_eval_result("copa", 0.5, 4, 1.8e9)})
+
+        collect_results(str(runs), output_csv=str(tmp_path / "out.csv"))
+
+        df = pd.read_csv(tmp_path / "out.csv")
+        assert len(df) == 1
+        assert df.iloc[0]["performance"] == pytest.approx(0.57)
+        assert pd.isna(df.iloc[0]["limit"])
+        envelope = json.loads((tmp_path / "out.json").read_text())
+        assert envelope["results"][0]["limit"] is None
+        assert envelope["results"][0]["run"] == "full"
+        # Only the run whose row survived is embedded.
+        assert [r["limit"] for r in envelope["runs"]] == [None]
+
+    def test_limited_only_result_is_kept_and_marked(self, tmp_path):
+        runs = tmp_path / "runs"
+        _make_run(runs, "smoke", 4, {"b.json": _lm_eval_result("copa", 0.5, 4)})
+
+        collect_results(str(runs), output_csv=str(tmp_path / "out.csv"))
+
+        envelope = json.loads((tmp_path / "out.json").read_text())
+        assert envelope["results"][0]["limit"] == 4
+        assert envelope["runs"][0]["limit"] == 4
+        assert "† (limit 4)" in (tmp_path / "out.md").read_text()
+
+    def test_limit_read_from_the_engine_without_provenance(self, tmp_path):
+        df = run_collect(tmp_path, _lm_eval_result("copa", 0.5, limit=16.0))
+        assert df.iloc[0]["limit"] == 16
+
+    def test_results_folder_collected_directly_keeps_its_run(self, tmp_path):
+        run = _make_run(tmp_path, "smoke", 4, {"b.json": _lm_eval_result("copa", 0.6)})
+
+        collect_results(str(run / "results"), output_csv=str(tmp_path / "out.csv"))
+
+        envelope = json.loads((tmp_path / "out.json").read_text())
+        assert envelope["results"][0]["limit"] == 4
+        assert envelope["results"][0]["run"] == "smoke"
+        assert len(envelope["runs"]) == 1
+
+    def test_runs_without_rows_are_not_embedded(self, tmp_path):
+        runs = tmp_path / "runs"
+        _make_run(runs, "real", None, {"a.json": _lm_eval_result("copa", 0.57)})
+        _make_run(runs, "dry_run", 8, {})
+
+        collect_results(str(runs), output_csv=str(tmp_path / "out.csv"))
+
+        envelope = json.loads((tmp_path / "out.json").read_text())
+        assert [Path(r["_path"]).parent.name for r in envelope["runs"]] == ["real"]
+
+    def test_newest_evaluation_wins_by_engine_date(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        write_result(results_dir, _lm_eval_result("copa", 0.7, date=1.8e9), "newer.json")
+        write_result(results_dir, _lm_eval_result("copa", 0.6, date=1.7e9), "older.json")
+        # The older evaluation's file was copied last (newer mtime).
+        os.utime(results_dir / "newer.json", (1_000_000, 1_000_000))
+
+        collect_results(str(results_dir), output_csv=str(tmp_path / "out.csv"))
+
+        df = pd.read_csv(tmp_path / "out.csv")
+        assert df.iloc[0]["performance"] == pytest.approx(0.7)
+
+    def test_check_needs_a_full_result_for_a_full_job(self, tmp_path):
+        runs = tmp_path / "runs"
+        full = _make_run(runs, "full", None, {})
+        smoke = _make_run(runs, "smoke", 4, {"b.json": _lm_eval_result("copa", 0.5, 4)})
+        for run in (full, smoke):
+            (run / "jobs.csv").write_text(
+                "model_path,task_path,n_shot,eval_suite\n"
+                "EleutherAI/pythia-70m,copa,0,lm_eval\n"
+            )
+
+        collect_results(str(runs), output_csv=str(tmp_path / "out.csv"), check=True)
+
+        missing = pd.read_csv(tmp_path / "out_missing.csv")
+        assert list(missing.columns) == [
+            "model_path",
+            "task_path",
+            "n_shot",
+            "eval_suite",
+        ]
+        assert missing.iloc[0]["task_path"] == "copa"
+
+    def test_check_accepts_a_limited_result_for_a_limited_job(self, tmp_path):
+        runs = tmp_path / "runs"
+        smoke = _make_run(runs, "smoke", 4, {"b.json": _lm_eval_result("copa", 0.5, 4)})
+        (smoke / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\nEleutherAI/pythia-70m,copa,0,lm_eval\n"
+        )
+
+        collect_results(str(runs), output_csv=str(tmp_path / "out.csv"), check=True)
+
+        assert not (tmp_path / "out_missing.csv").exists()
+
+
+# ── counters are never reported as the score ─────────────────────────────────
+
+
+class TestUndeclaredMetricFallback:
+    def test_sample_len_is_not_the_score(self, tmp_path):
+        data = {
+            "model_name": "m",
+            "results": {
+                "humaneval": {
+                    "name": "humaneval",
+                    "alias": "humaneval",
+                    "sample_len": 164,
+                    "pass@1,create_test": 0.12,
+                    "pass@1_stderr,create_test": 0.02,
+                }
+            },
+            "n-shot": {"humaneval": 0},
+        }
+        df = run_collect(tmp_path, data)
+        assert df.iloc[0]["metric_name"] == "pass@1,create_test"
+        assert df.iloc[0]["performance"] == pytest.approx(0.12)
+
+    def test_a_result_with_only_counters_gives_no_row(self, tmp_path):
+        data = {
+            "model_name": "m",
+            "results": {"x": {"alias": "x", "sample_len": 10}},
+            "n-shot": {"x": 0},
+        }
+        assert run_collect(tmp_path, data).empty
+
+    def test_fetch_all_metrics_leaves_out_sample_len(self, tmp_path):
+        results_dir = tmp_path / "results"
+        results_dir.mkdir()
+        data = _lm_eval_result("copa", 0.57)
+        data["results"]["copa"]["sample_len"] = 100
+        write_result(results_dir, data)
+
+        collect_results(
+            str(results_dir), output_csv=str(tmp_path / "out.csv"), fetch_all_metrics=True
+        )
+
+        assert "sample_len" not in set(pd.read_csv(tmp_path / "out.csv")["metric_name"])
+
+
+# ── run details: quantization, dates, relative paths, old runs ───────────────
+
+
+class TestRunDetails:
+    def test_quantization_comes_from_what_the_engine_loaded(self, tmp_path):
+        """lighteval and contrib suites run at full precision even in a
+        --load-in-4bit run; only the engine's own model_args say 4-bit."""
+        run = tmp_path / "runs" / "quantized"
+        (run / "results").mkdir(parents=True)
+        (run / "provenance.json").write_text(json.dumps({"quantization": "4bit"}))
+        lm = _lm_eval_result("copa", 0.6)
+        lm["config"]["model_args"] = (
+            "pretrained=m,trust_remote_code=True,load_in_4bit=True"
+        )
+        write_result(run / "results", lm, "lm.json")
+        lighteval = {
+            "config_general": {"model_name": "EleutherAI/pythia-70m"},
+            "results": {"belebele_eng_Latn_cf|0": {"acc_norm": 0.4}},
+        }
+        write_result(run / "results", lighteval, "le.json")
+
+        collect_results(str(tmp_path / "runs"), output_csv=str(tmp_path / "out.csv"))
+
+        rows = {
+            r["task"]: r
+            for r in json.loads((tmp_path / "out.json").read_text())["results"]
+        }
+        assert rows["copa"]["quantization"] == "4bit"
+        assert rows["belebele_eng_Latn_cf"]["quantization"] is None
+
+    def test_lmms_eval_dates_are_utc_plus_8(self, tmp_path):
+        """lmms-eval stamps results with Asia/Singapore time by default."""
+        data = {
+            "model_name": "m",
+            "results": {"realworldqa": {"exact_match,none": 0.5}},
+            "configs": {"realworldqa": {"num_fewshot": 0}},
+            "date": "20260922_165022",
+        }
+        run_collect(tmp_path, data)
+        row = json.loads((tmp_path / "out.json").read_text())["results"][0]
+        assert row["evaluated_at"] == "2026-09-22T08:50:22+00:00"
+
+    @pytest.mark.parametrize("where", ["results", "."])
+    def test_relative_paths_keep_the_run(self, tmp_path, monkeypatch, where):
+        run = _make_run(tmp_path, "smoke", 8, {"b.json": _lm_eval_result("copa", 0.5)})
+        monkeypatch.chdir(run / where)
+
+        collect_results(".", output_csv=str(tmp_path / "out.csv"))
+
+        row = json.loads((tmp_path / "out.json").read_text())["results"][0]
+        assert row["run"] == "smoke"
+        assert row["limit"] == 8
+
+    def test_check_accepts_any_result_when_the_job_has_no_run_details(self, tmp_path):
+        """Runs scheduled before provenance.json existed have unknown limits."""
+        folder = tmp_path / "old_run"
+        (folder / "results").mkdir(parents=True)
+        write_result(folder / "results", _lm_eval_result("copa", 0.5, limit=4), "r.json")
+        (folder / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\nEleutherAI/pythia-70m,copa,0,lm_eval\n"
+        )
+
+        collect_results(str(folder), output_csv=str(tmp_path / "out.csv"), check=True)
+
+        assert not (tmp_path / "out_missing.csv").exists()
+
+    def test_lmms_eval_samples_count_is_not_the_score(self, tmp_path):
+        data = {
+            "model_name": "m",
+            "results": {"x": {"alias": "x", "samples": 499, "gpt_eval_score,none": None}},
+            "configs": {"x": {"num_fewshot": 0}},
+        }
+        assert run_collect(tmp_path, data).empty
