@@ -82,9 +82,7 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
 TASK_METRIC_SCALE_OVERRIDES: dict[tuple[str, str], float] = {
     ("squadv2", "f1"): 100.0,
     ("voicebench_commoneval", "llm_as_judge_eval"): 5.0,
-    # gpt_eval defaults to 0–5 (wavcaps averages 0–5 ratings), but alpaca_audio
-    # and openhermes multiply their 0–5 mean by 20, and air_bench_chat averages
-    # 1–10 ratings (lmms-eval tasks/*/utils.py, pinned commit 45c766f).
+    # lmms-eval 45c766f: alpaca_audio and openhermes report 0–100, air_bench_chat 1–10.
     ("alpaca_audio", "gpt_eval"): 100.0,
     ("openhermes", "gpt_eval"): 100.0,
     ("air_bench_chat_sound", "gpt_eval"): 10.0,
@@ -93,8 +91,7 @@ TASK_METRIC_SCALE_OVERRIDES: dict[tuple[str, str], float] = {
     ("air_bench_chat_mixed", "gpt_eval"): 10.0,
 }
 
-# Numeric entries of a result dict that describe the run, not the model's
-# score (lm-eval writes sample_len first in every task entry, lmms-eval samples).
+# Counters in engine output, never scores.
 _NON_METRIC_KEYS = {"alias", "name", " ", "", "sample_len", "sample_count", "samples"}
 
 
@@ -167,8 +164,7 @@ def _resolve_metric(
 
     # Last resort: pick the first numeric non-stderr value (catches lmms-eval
     # benchmarks with non-standard metric names like mme_cognition_score).
-    # Engine metric keys carry a ",filter" suffix, so prefer those over bare
-    # keys; never report a counter such as sample_len as the score.
+    # Prefer engine metric keys ("name,filter") over bare keys.
     candidates = [
         (k, v)
         for k, v in result_dict.items()
@@ -328,9 +324,7 @@ def _try_contrib_parse(data: dict) -> tuple[str, str, int, dict] | None:
 def _run_of(
     path: Path, cache: dict[Path, dict | None], stop: Path
 ) -> tuple[Path | None, dict | None]:
-    """The scheduler run *path* belongs to: the nearest folder holding a
-    provenance.json, searched upwards from *path* to *stop* (a run folder is at
-    most the parent of the collected folder, when its results/ is collected)."""
+    """Nearest folder above *path*, up to *stop*, with a provenance.json."""
     stop = stop.resolve()
     for folder in path.resolve().parents:
         if folder not in cache:
@@ -350,8 +344,7 @@ def _run_of(
 
 
 def _sample_limit(data: dict, provenance: dict | None) -> int | float | None:
-    """The --limit a result was produced with, or None for a full evaluation:
-    the run's provenance first, then the engine's own record of it."""
+    """The --limit behind a result, None for a full evaluation."""
     config = data.get("config")
     config_general = data.get("config_general")
     for value in (
@@ -365,10 +358,7 @@ def _sample_limit(data: dict, provenance: dict | None) -> int | float | None:
 
 
 def _quantization(data: dict) -> str | None:
-    """ "4bit"/"8bit" when the engine itself loaded the model quantized. The
-    scheduler passes load_in_4bit/8bit through --model_args to lm-eval,
-    lmms-eval and evalchemy only; lighteval and contrib suites run at full
-    precision whatever the run asked for."""
+    """Quantization the engine used; lighteval and contrib suites ignore the flag."""
     config = data.get("config")
     args = config.get("model_args") if isinstance(config, dict) else None
     text = json.dumps(args) if isinstance(args, dict) else str(args or "")
@@ -378,16 +368,12 @@ def _quantization(data: dict) -> str | None:
     return None
 
 
-# lmms-eval stamps results with Asia/Singapore time unless --timezone is
-# given, and the job script doesn't give it (lmms_eval/utils.py
-# get_datetime_str). Singapore has no daylight saving time.
+# lmms-eval's default timezone for "date"; the job script doesn't pass --timezone.
 _LMMS_EVAL_TZ = timezone(timedelta(hours=8))
 
 
 def _evaluated_at(data: dict, path: Path) -> str:
-    """When the evaluation ran, as UTC ISO time: the engine's own date (lm-eval
-    writes epoch seconds, lmms-eval YYYYmmdd_HHMMSS in UTC+8), else the file's
-    modification time."""
+    """Evaluation time in UTC: the engine's date, else the file's modification time."""
     date = data.get("date")
     moment = None
     if isinstance(date, (int, float)) and not isinstance(date, bool):
@@ -452,18 +438,12 @@ def collect_results(
     # on filesystem enumeration order.
     json_files.sort(key=lambda p: (p.stat().st_mtime, str(p)))
 
-    # Run-provenance sidecars written by the scheduler (schedule-time config,
-    # resolved model revisions, template knobs), keyed by run folder. Each
-    # result row records the run it came from, its --limit, quantization and
-    # evaluation time; the envelope embeds the sidecars of the runs whose rows
-    # survive, so a collected number can be traced to its run.
+    # provenance.json of each run folder, keyed by folder.
     provenance_cache: dict[Path, dict | None] = {}
     run_root = results_path.resolve().parent
 
     def _needs_full(jobs_csv: Path) -> bool:
-        """A job scheduled without --limit is only done once a full result
-        exists; without a provenance.json the limit is unknown, so either
-        kind of result completes it."""
+        """Scheduled without --limit according to its provenance.json."""
         provenance = _run_of(jobs_csv, provenance_cache, run_root)[1]
         return provenance is not None and _sample_limit({}, provenance) is None
 
@@ -502,17 +482,15 @@ def collect_results(
                 c for c in ("model_path", "task_path", "n_shot") if c in jobs_df.columns
             ]
             if dup_cols:
-                # Of a job scheduled both with and without --limit, keep the
-                # full one: it is only done once a full result exists.
+                # A job scheduled with and without --limit counts as full.
                 jobs_df = jobs_df.sort_values(
                     "_needs_full", kind="stable"
                 ).drop_duplicates(subset=dup_cols, keep="last")
             logging.info(f"Merged jobs.csv: {len(jobs_df)} unique scheduled jobs")
 
     rows = []
-    # (model, task, n_shot) -> whether a full (non --limit) result exists
+    # (model, task, n_shot) -> a full result exists
     completed_jobs: dict[tuple, bool] = {}
-    # Per result file: run folder, provenance, --limit, quantization, date.
     file_ctx: dict = {}
     row_run: dict[int, Path] = {}
 
@@ -804,11 +782,8 @@ def collect_results(
 
     if rows:
         # One row per (model, task, n_shot, metric): a full evaluation beats a
-        # --limit test run, otherwise the newest evaluation wins. Dedup the row
-        # list directly (not just the DataFrame) so the CSV, JSON, and Markdown
-        # outputs stay consistent and None values in performance_normalized
-        # survive (a pandas round-trip would coerce them to NaN and break the
-        # JSON envelope).
+        # --limit run, then the newest wins. Dedup the list, not a DataFrame,
+        # so None in performance_normalized doesn't become NaN.
         _deduped: dict[tuple, tuple[tuple, dict]] = {}
         for _i, _row in enumerate(rows):
             _key = (
@@ -852,7 +827,6 @@ def collect_results(
                 f"runs, not full evaluations (marked in the outputs)"
             )
 
-        # Provenance of the runs whose rows survived, in folder order.
         run_provenance = [
             {**provenance_cache[_dir], "_path": str(_dir / "provenance.json")}
             for _dir in sorted({row_run[id(r)] for r in rows if id(r) in row_run})
@@ -888,7 +862,6 @@ def collect_results(
 
         for _, job in jobs_df.iterrows():
             job_tuple = (job["model_path"], job["task_path"], job["n_shot"])
-            # A full job needs a full result; a --limit job accepts either.
             needs_full = bool(job.get("_needs_full"))
 
             is_completed = False
@@ -982,9 +955,8 @@ def write_results_json(
     `collector_git_commit`, per-run provenance under `runs`, and a reserved
     extensible `metadata` namespace (future additive fields — e.g. safety /
     compliance metadata — land there without a schema migration). Schema v1.3
-    adds per row the `run` folder it came from, its `limit` (null for a full
-    evaluation), `quantization` and `evaluated_at`; `runs` holds only the runs
-    those rows came from.
+    adds per-row `run`, `limit`, `quantization` and `evaluated_at`, and `runs`
+    lists only the runs those rows came from.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -15,8 +15,7 @@ ALL_TASK_GROUPS = list(_config["task_groups"].keys())
 
 @pytest.mark.parametrize("task_groups", ALL_TASK_GROUPS)
 def test_schedule_evals(tmp_path, task_groups):
-    # Groups set their own shots; n_shot together with a group is refused
-    # (see test_n_shot_with_groups_only_is_refused).
+    # n_shot with a group is refused (test_schedule_inputs.py).
     with (
         patch("oellm.scheduler._load_cluster_env"),
         patch("oellm.scheduler._num_jobs_in_queue", return_value=0),

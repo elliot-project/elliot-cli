@@ -598,8 +598,8 @@ def _select_tasks(group_names: Iterable[str]) -> list[tuple[str, _Task]]:
                     ", ".join(lang for lang in filt if lang in matched),
                 )
         # De-duplicate tasks shared by several groups (e.g. the `all` super_group
-        # spans groups whose benchmarks overlap), so they are scheduled once —
-        # with every shot count any of those groups asks for.
+        # spans groups whose benchmarks overlap), so they are scheduled once,
+        # with every group's shots.
         for suite, t in kept:
             key = (suite, t.name)
             if key not in seen:

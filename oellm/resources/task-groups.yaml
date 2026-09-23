@@ -252,9 +252,7 @@ task_groups:
       - task: xwinograd
         dataset: Muennighoff/xwinograd
       - task: xcopa
-        # lm-eval's xcopa_* tasks load the short id; the offline cache is
-        # keyed by the id used to download it (cambridgeltl/xcopa is not found).
-        dataset: xcopa
+        dataset: xcopa  # the id lm-eval loads; offline caches are keyed by it
       - task: xstorycloze
         dataset: juletxara/xstory_cloze
 

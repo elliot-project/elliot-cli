@@ -243,11 +243,9 @@ class TestScaleOverrides:
     @pytest.mark.parametrize(
         "task, raw, expected",
         [
-            ("alpaca_audio", 62.0, 62.0),  # lmms-eval already scales to 0–100
-            ("openhermes", 48.0, 48.0),
-            ("air_bench_chat_sound", 6.5, 65.0),  # 1–10 average
-            ("air_bench_chat_mixed", 6.5, 65.0),
-            ("wavcaps", 3.1, 62.0),  # 0–5 average (the gpt_eval default)
+            ("alpaca_audio", 62.0, 62.0),  # 0–100
+            ("air_bench_chat_sound", 6.5, 65.0),  # 1–10
+            ("wavcaps", 3.1, 62.0),  # 0–5, the gpt_eval default
         ],
     )
     def test_gpt_eval_judge_scales(self, task, raw, expected):

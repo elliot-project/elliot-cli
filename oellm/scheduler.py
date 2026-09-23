@@ -157,7 +157,7 @@ def _probe_engine_versions(venv_path: str | None) -> dict[str, str]:
 
 
 def _cluster_setting_names() -> set[str]:
-    """Every setting clusters.yaml can define (PARTITION, ACCOUNT, HF_HOME, …)."""
+    """Names of all settings in clusters.yaml."""
     import yaml
 
     clusters = yaml.safe_load((files("oellm.resources") / "clusters.yaml").read_text())
@@ -318,8 +318,6 @@ def schedule_evals(
         )
 
     elif models:
-        # --tasks and --task-groups together schedule both; --n-shot belongs
-        # to --tasks, since groups define their own shots.
         if tasks and not n_shot:
             raise ValueError("n_shot is required when specifying individual tasks.")
         if n_shot and group_names is not None and not tasks:
@@ -513,7 +511,7 @@ def schedule_evals(
     # Ensure that all datasets required by the tasks are cached locally to avoid
     # network access on compute nodes.
     if not skip_checks:
-        # --tasks given alongside --task-groups need their data staged too.
+        # Extra --tasks next to groups need their data too.
         extra_tasks = sorted(set(tasks or [])) if group_names else []
         dataset_specs = []
         if group_names:
@@ -744,13 +742,8 @@ def schedule_evals(
     if not os.environ.get("NODELIST"):
         sbatch_script = sbatch_script.replace("#SBATCH --nodelist=$NODELIST\n", "")
 
-    # Fill in only the cluster settings (clusters.yaml names, --nodelist and
-    # --slurm-template-var keys) from the environment. Every other $NAME is the
-    # job's own variable (VENV_PATH, LIMIT, MODEL_DIR, …) and must expand on
-    # the compute node: filled in from the login shell, an exported VENV_PATH
-    # silently replaced --venv-path. SLURM_* runtime values stay unexpanded
-    # too — when scheduling from inside an allocation (salloc/srun) they would
-    # otherwise be baked in (e.g. JOB_HOME losing its per-job uniqueness).
+    # Fill in only cluster settings from the environment; the job's own
+    # variables (VENV_PATH, LIMIT, …) and SLURM_* values expand on the node.
     render_names = _cluster_setting_names() | {"NODELIST"} | template_var_names
     _template_env = {
         k: v

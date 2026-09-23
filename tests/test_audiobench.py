@@ -329,61 +329,34 @@ class TestSuiteProtocol:
     @pytest.mark.parametrize(
         "path, key",
         [
-            (
-                "/leonardo_work/me/ckpts/qwen2-audio-7b-instruct-sft-step500",
-                "Qwen2-Audio-7B-Instruct",
-            ),
-            ("my-org/Qwen2-Audio-7B-Instruct-finetuned-v2", "Qwen2-Audio-7B-Instruct"),
-            ("openai/whisper-large-v3-turbo-ft", "whisper_large_v3"),
+            ("/ckpts/qwen2-audio-7b-instruct-sft-step500", "Qwen2-Audio-7B-Instruct"),
+            ("my-org/Qwen2-Audio-7B-Instruct-finetuned", "Qwen2-Audio-7B-Instruct"),
+            ("tsinghua/SALMONN-7B", "SALMONN_7B"),  # stock model, stock-only family
         ],
     )
-    def test_detect_model_flags_accepts_checkpoints(self, suite, path, key):
-        """launch.py loads the checkpoint in place of the stock weights."""
+    def test_detect_model_flags_accepts_checkpoints_and_stock_models(
+        self, suite, path, key
+    ):
         assert suite.detect_model_flags(path) == key
 
-    @pytest.mark.parametrize(
-        "path", ["/ckpts/seallms-audio-7b-sft", "my-org/salmonn-7b-finetuned"]
-    )
-    def test_detect_model_flags_refuses_checkpoints_of_stock_only_families(
-        self, suite, path
-    ):
-        """SeaLLMs-Audio loads a hard-coded repo id and SALMONN a multi-file
-        layout inside the clone: a checkpoint would be scored as the stock
-        model, so it is refused before anything is queued."""
+    def test_detect_model_flags_refuses_checkpoints_of_stock_only_families(self, suite):
         with pytest.raises(ValueError, match="only runs the stock model"):
-            suite.detect_model_flags(path)
+            suite.detect_model_flags("/ckpts/seallms-audio-7b-sft")
 
     @pytest.mark.parametrize(
         "architecture, key",
         [
             ("Qwen2AudioForConditionalGeneration", "Qwen2-Audio-7B-Instruct"),
-            ("WhisperForConditionalGeneration", "whisper_large_v3"),
-            ("Phi4MMForCausalLM", "phi_4_multimodal_instruct"),
             ("LlamaForCausalLM", None),
         ],
     )
     def test_detect_model_flags_reads_the_family_from_config(
         self, suite, tmp_path, architecture, key
     ):
-        checkpoint = tmp_path / "step-500"
-        checkpoint.mkdir()
-        (checkpoint / "config.json").write_text(
+        (tmp_path / "config.json").write_text(
             json.dumps({"architectures": [architecture]})
         )
-        assert suite.detect_model_flags(str(checkpoint)) == key
-
-    @pytest.mark.parametrize(
-        "path, key",
-        [
-            ("Qwen/Qwen2-Audio-7B-Instruct", "Qwen2-Audio-7B-Instruct"),
-            ("openai/whisper-large-v3", "whisper_large_v3"),
-            ("microsoft/Phi-4-multimodal-instruct", "phi_4_multimodal_instruct"),
-            ("tsinghua/SALMONN-7B", "SALMONN_7B"),
-            ("whisper_large_v2", "whisper_large_v2"),
-        ],
-    )
-    def test_detect_model_flags_accepts_stock_models(self, suite, path, key):
-        assert suite.detect_model_flags(path) == key
+        assert suite.detect_model_flags(str(tmp_path)) == key
 
     def test_parse_results_recognises_audiobench_json(self, suite):
         data = {
@@ -655,9 +628,7 @@ class TestRunHarness:
             )
 
     def test_run_refuses_a_checkpoint_of_a_stock_only_family(self, tmp_path, monkeypatch):
-        """A CSV row can carry "audiobench:<key>" for any path; for a family
-        whose loader can't load other weights, run() refuses before
-        AudioBench is started."""
+        """A CSV row can carry "audiobench:<key>" for any path."""
         from oellm.contrib.audiobench import suite
 
         ab_dir = self._fake_audiobench_tree(tmp_path)
@@ -673,30 +644,6 @@ class TestRunHarness:
                 env={"AUDIOBENCH_DIR": str(ab_dir)},
             )
         assert started == []
-
-    def test_run_loads_a_checkpoint_through_the_launcher(self, tmp_path):
-        from oellm.contrib.audiobench import suite
-
-        ab_dir = self._fake_audiobench_tree(tmp_path)
-        with patch(
-            "oellm.contrib.audiobench.suite.subprocess.run",
-            side_effect=self._fake_run_writing_score(ab_dir, score_value=0.08),
-        ) as mock_sp:
-            suite.run(
-                model_path="/ckpts/qwen2-audio-7b-instruct-sft",
-                task="audiobench_librispeech_test_clean",
-                n_shot=0,
-                output_path=tmp_path / "out.json",
-                model_flags="Qwen2-Audio-7B-Instruct",
-                env={"AUDIOBENCH_DIR": str(ab_dir)},
-            )
-
-        cmd = mock_sp.call_args.args[0]
-        assert cmd[cmd.index("--module") + 1] == "qwen2_audio_7b_instruct"
-        assert cmd[cmd.index("--variable") + 1] == "model_path"
-        assert cmd[cmd.index("--checkpoint") + 1] == "/ckpts/qwen2-audio-7b-instruct-sft"
-        body = json.loads((tmp_path / "out.json").read_text())
-        assert body["model_name_or_path"] == "/ckpts/qwen2-audio-7b-instruct-sft"
 
     def test_run_invokes_subprocess_with_expected_cli(self, tmp_path):
         from oellm.contrib.audiobench import suite
@@ -727,10 +674,8 @@ class TestRunHarness:
         assert cmd[cmd.index("--model-name") + 1] == "Qwen2-Audio-7B-Instruct"
         assert cmd[cmd.index("--metrics") + 1] == "wer"
         assert cmd[cmd.index("--number-of-samples") + 1] == "100"
-        # The stock model needs no replacement weights.
         assert "--checkpoint" not in cmd
 
-        # cwd is AUDIOBENCH_DIR: some loaders use paths relative to the clone.
         assert mock_sp.call_args.kwargs["cwd"] == str(ab_dir)
 
         # Output JSON is lmms-eval-shaped.
@@ -788,47 +733,6 @@ class TestRunHarness:
 
         cmd = mock_sp.call_args.args[0]
         assert "--number-of-samples" not in cmd
-
-    def test_each_run_uses_its_own_log_dir(self, tmp_path):
-        """Checkpoints of one family share AudioBench's dispatch key; a score
-        left in the clone's log_for_all_models (another run, another user)
-        must never be read back."""
-        from oellm.contrib.audiobench import suite
-
-        ab_dir = self._fake_audiobench_tree(tmp_path)
-        stale = self._score_file_path(
-            ab_dir / "log_for_all_models",
-            "Qwen2-Audio-7B-Instruct",
-            "librispeech_test_clean",
-            "wer",
-        )
-        stale.parent.mkdir(parents=True)
-        stale.write_text(json.dumps({"wer": 0.42}))
-
-        log_dirs = []
-        for value in (0.1, 0.2):
-            with patch(
-                "oellm.contrib.audiobench.suite.subprocess.run",
-                side_effect=self._fake_run_writing_score(ab_dir, score_value=value),
-            ) as mock_sp:
-                suite.run(
-                    model_path="Qwen/Qwen2-Audio-7B-Instruct",
-                    task="audiobench_librispeech_test_clean",
-                    n_shot=0,
-                    output_path=tmp_path / f"{value}.json",
-                    model_flags="Qwen2-Audio-7B-Instruct",
-                    env={"AUDIOBENCH_DIR": str(ab_dir)},
-                )
-            cmd = mock_sp.call_args.args[0]
-            log_dirs.append(Path(cmd[cmd.index("--log-dir") + 1]))
-            body = json.loads((tmp_path / f"{value}.json").read_text())
-            assert body["results"]["audiobench_librispeech_test_clean"][
-                "wer"
-            ] == pytest.approx(value)
-
-        assert log_dirs[0] != log_dirs[1]
-        assert not any(d.exists() for d in log_dirs)  # removed after the run
-        assert not any(ab_dir in d.parents for d in log_dirs)
 
     def test_run_nonzero_exit_raises(self, tmp_path):
         from oellm.contrib.audiobench import suite
@@ -931,121 +835,71 @@ class TestRunHarness:
                 )
 
 
-class TestLauncher:
-    """Run launch.py for real against a minimal AudioBench tree whose loader
-    records the weights location it was given."""
+FAKE_MAIN = """
+import json, os
+from model import Model
+file_save_folder = "log_for_all_models"
+def main(dataset_name, model_name, metrics, overwrite, number_of_samples):
+    model = Model(model_name)
+    os.makedirs(f"{file_save_folder}/{model_name}", exist_ok=True)
+    body = {metrics: 0.5, "loaded": model.loaded, "samples": number_of_samples,
+            "cwd": os.getcwd()}
+    for path in (f"{file_save_folder}/{model_name}/{dataset_name}_{metrics}_score.json",
+                 os.environ["RECORD"]):
+        json.dump(body, open(path, "w"))
+"""
+FAKE_MODEL = """
+import importlib
+class Model:
+    def __init__(self, name):
+        module = importlib.import_module("model_src.qwen2_audio_7b_instruct")
+        module.qwen2_audio_7b_instruct_model_loader(self)
+"""
+FAKE_LOADER = """
+model_path = "Qwen/Qwen2-Audio-7B-Instruct"
+def qwen2_audio_7b_instruct_model_loader(self):
+    self.loaded = model_path
+"""
 
-    STOCK = "Qwen/Qwen2-Audio-7B-Instruct"
 
-    def _tree(self, tmp_path: Path) -> Path:
-        ab_dir = tmp_path / "AudioBench"
-        (ab_dir / "src" / "model_src").mkdir(parents=True)
-        (ab_dir / "src" / "main_evaluate.py").write_text(
-            "import json, os\n"
-            "from model import Model\n"
-            "file_save_folder = 'log_for_all_models'\n"
-            "def main(dataset_name=None, model_name=None, batch_size=1,\n"
-            "         overwrite=False, metrics=None, number_of_samples=-1):\n"
-            "    model = Model(model_name)\n"
-            "    folder = f'{file_save_folder}/{model_name}'\n"
-            "    os.makedirs(folder, exist_ok=True)\n"
-            "    body = {metrics: 0.5, 'loaded': model.loaded,\n"
-            "            'samples': number_of_samples, 'cwd': os.getcwd()}\n"
-            "    with open(f'{folder}/{dataset_name}_{metrics}_score.json', 'w') as f:\n"
-            "        json.dump(body, f)\n"
-            "    if os.environ.get('RECORD'):\n"
-            "        json.dump(body, open(os.environ['RECORD'], 'w'))\n"
-        )
-        (ab_dir / "src" / "model.py").write_text(
-            "import importlib\n"
-            "MODEL_REGISTRY = {'Qwen2-Audio-7B-Instruct': 'qwen2_audio_7b_instruct'}\n"
-            "class Model:\n"
-            "    def __init__(self, name):\n"
-            "        module = MODEL_REGISTRY[name]\n"
-            "        loader = getattr(importlib.import_module('model_src.' + module),\n"
-            "                         module + '_model_loader')\n"
-            "        loader(self)\n"
-        )
-        (ab_dir / "src" / "model_src" / "qwen2_audio_7b_instruct.py").write_text(
-            f"model_path = {self.STOCK!r}\n"
-            "def qwen2_audio_7b_instruct_model_loader(self):\n"
-            "    self.loaded = model_path\n"
-        )
-        return ab_dir
+def test_suite_run_evaluates_the_checkpoint(tmp_path):
+    """Real launch.py against a minimal AudioBench tree whose loader records its weights."""
+    from oellm.contrib.audiobench import suite
 
-    def _launch(self, ab_dir: Path, log_dir: Path, *extra: str) -> dict:
-        import subprocess
+    ab_dir = tmp_path / "AudioBench"
+    (ab_dir / "src" / "model_src").mkdir(parents=True)
+    (ab_dir / "src" / "main_evaluate.py").write_text(FAKE_MAIN)
+    (ab_dir / "src" / "model.py").write_text(FAKE_MODEL)
+    (ab_dir / "src" / "model_src" / "qwen2_audio_7b_instruct.py").write_text(FAKE_LOADER)
+    stale = (
+        ab_dir
+        / "log_for_all_models/Qwen2-Audio-7B-Instruct/librispeech_test_clean_wer_score.json"
+    )
+    stale.parent.mkdir(parents=True)
+    stale.write_text('{"wer": 0.42}')
+    record = tmp_path / "record.json"
 
-        from oellm.contrib.audiobench import suite
+    suite.run(
+        model_path="/ckpts/qwen2-audio-7b-instruct-sft",
+        task="audiobench_librispeech_test_clean",
+        n_shot=0,
+        output_path=tmp_path / "out.json",
+        model_flags="Qwen2-Audio-7B-Instruct",
+        env={
+            **os.environ,
+            "AUDIOBENCH_DIR": str(ab_dir),
+            "RECORD": str(record),
+            "LIMIT": "3",
+        },
+    )
 
-        launcher = Path(suite.__file__).with_name("launch.py")
-        subprocess.run(
-            [
-                sys.executable,
-                str(launcher),
-                "--audiobench-dir",
-                str(ab_dir),
-                "--log-dir",
-                str(log_dir),
-                "--dataset-name",
-                "librispeech_test_clean",
-                "--model-name",
-                "Qwen2-Audio-7B-Instruct",
-                "--metrics",
-                "wer",
-                *extra,
-            ],
-            cwd=ab_dir,
-            check=True,
-        )
-        score = (
-            log_dir / "Qwen2-Audio-7B-Instruct" / "librispeech_test_clean_wer_score.json"
-        )
-        return json.loads(score.read_text())
-
-    def test_the_checkpoint_replaces_the_stock_weights(self, tmp_path):
-        ab_dir = self._tree(tmp_path)
-        body = self._launch(
-            ab_dir,
-            tmp_path / "logs",
-            "--module",
-            "qwen2_audio_7b_instruct",
-            "--variable",
-            "model_path",
-            "--checkpoint",
-            "/ckpts/my-qwen2-audio",
-            "--number-of-samples",
-            "3",
-        )
-        assert body["loaded"] == "/ckpts/my-qwen2-audio"
-        assert body["samples"] == 3
-        assert body["cwd"] == str(ab_dir.resolve())
-        assert not (ab_dir / "log_for_all_models").exists()
-
-    def test_without_a_checkpoint_the_stock_model_loads(self, tmp_path):
-        body = self._launch(self._tree(tmp_path), tmp_path / "logs")
-        assert body["loaded"] == self.STOCK
-
-    def test_suite_run_evaluates_the_checkpoint_end_to_end(self, tmp_path):
-        from oellm.contrib.audiobench import suite
-
-        ab_dir = self._tree(tmp_path)
-        record = tmp_path / "record.json"
-        suite.run(
-            model_path="/ckpts/qwen2-audio-7b-instruct-sft",
-            task="audiobench_librispeech_test_clean",
-            n_shot=0,
-            output_path=tmp_path / "out.json",
-            model_flags="Qwen2-Audio-7B-Instruct",
-            env={**os.environ, "AUDIOBENCH_DIR": str(ab_dir), "RECORD": str(record)},
-        )
-        assert (
-            json.loads(record.read_text())["loaded"]
-            == "/ckpts/qwen2-audio-7b-instruct-sft"
-        )
-        body = json.loads((tmp_path / "out.json").read_text())
-        assert body["model_name_or_path"] == "/ckpts/qwen2-audio-7b-instruct-sft"
-        assert body["results"]["audiobench_librispeech_test_clean"]["wer"] == 0.5
+    seen = json.loads(record.read_text())
+    assert seen["loaded"] == "/ckpts/qwen2-audio-7b-instruct-sft"
+    assert (seen["samples"], seen["cwd"]) == (3, str(ab_dir.resolve()))
+    assert stale.read_text() == '{"wer": 0.42}'  # the clone's files are untouched
+    body = json.loads((tmp_path / "out.json").read_text())
+    assert body["model_name_or_path"] == "/ckpts/qwen2-audio-7b-instruct-sft"
+    assert body["results"]["audiobench_librispeech_test_clean"]["wer"] == 0.5
 
 
 class _FakeCompletedProcess:

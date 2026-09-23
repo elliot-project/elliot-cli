@@ -1,15 +1,7 @@
-"""AudioBench model adapter.
+"""AudioBench model adapter: maps a model path to AudioBench's ``--model_name``.
 
-Maps a model path to AudioBench's literal ``--model_name`` value.
-
-AudioBench's ``Model`` class (in ``$AUDIOBENCH_DIR/src/model.py``) dispatches
-on **exact-string** match against a fixed list, and each loader under
-``model_src/`` reads its weights location from a module variable
-(``model_path = "Qwen/Qwen2-Audio-7B-Instruct"``). For the families in
-:data:`CHECKPOINT_VARIABLE`, ``launch.py`` points that variable at your
-checkpoint; the other families can only run their stock model. If we can't
-map ``model_path`` to a family, we return ``None`` and ``suite.run`` raises a
-clear error.
+For families in :data:`CHECKPOINT_VARIABLE`, ``launch.py`` loads the given
+checkpoint instead of the stock weights; the others run their stock model only.
 """
 
 from __future__ import annotations
@@ -70,10 +62,8 @@ def detect_audiobench_model_type(model_path: str) -> str | None:
     return AudioBenchModelAdapter(model_path).to_contrib_flags()
 
 
-# AudioBench family -> (model_src module, module variable its loader reads the
-# weights location from). launch.py points the variable at your checkpoint.
-# seallms_audio_7b loads a hard-coded repo id, SALMONN_7B a multi-file layout
-# under the clone and WavLLM_fairseq a fairseq script: stock models only.
+# Family -> (model_src module, variable holding its weights location).
+# SeaLLMs-Audio, SALMONN and WavLLM hard-code theirs: stock models only.
 CHECKPOINT_VARIABLE: dict[str, tuple[str, str]] = {
     "Qwen2-Audio-7B-Instruct": ("qwen2_audio_7b_instruct", "model_path"),
     "Qwen-Audio-Chat": ("qwen_audio_chat", "model_path"),
@@ -86,12 +76,11 @@ CHECKPOINT_VARIABLE: dict[str, tuple[str, str]] = {
     "phi_4_multimodal_instruct": ("phi_4_multimodal_instruct", "model_path"),
 }
 
-# config.json architecture of a local checkpoint whose path doesn't name its
-# family. The whisper_large_v2/v3 loaders differ only in the default weights.
+# config.json architecture -> family, for checkpoints whose path doesn't name it.
 _ARCHITECTURES: dict[str, str] = {
     "Qwen2AudioForConditionalGeneration": "Qwen2-Audio-7B-Instruct",
     "MERaLiONForConditionalGeneration": "MERaLiON-AudioLLM-Whisper-SEA-LION",
-    "WhisperForConditionalGeneration": "whisper_large_v3",
+    "WhisperForConditionalGeneration": "whisper_large_v3",  # same loader as v2
     "Phi4MMForCausalLM": "phi_4_multimodal_instruct",
 }
 
@@ -108,8 +97,7 @@ def _family_from_config(model_path: str) -> str | None:
     return next((_ARCHITECTURES[a] for a in architectures if a in _ARCHITECTURES), None)
 
 
-# Model names (last path component, "-" and "_" equivalent) of the stock model
-# behind each dispatch key.
+# Name (last path part, "-" = "_") of each family's stock model.
 _STOCK_NAMES: dict[str, tuple[str, ...]] = {
     "Qwen2-Audio-7B-Instruct": ("qwen2-audio-7b-instruct",),
     "Qwen-Audio-Chat": ("qwen-audio-chat",),
@@ -124,9 +112,7 @@ _STOCK_NAMES: dict[str, tuple[str, ...]] = {
 
 
 def is_stock_model(model_path: str, key: str) -> bool:
-    """True when *model_path* names the stock model AudioBench runs for *key*
-    (e.g. ``Qwen/Qwen2-Audio-7B-Instruct``), not a local checkpoint or a
-    fine-tune."""
+    """*model_path* names the stock model, not a local checkpoint or a fine-tune."""
     from pathlib import Path
 
     if model_path.startswith(("/", "~", ".")) or Path(model_path).expanduser().exists():

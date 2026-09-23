@@ -30,8 +30,7 @@ LM_EVAL_BATCH_SIZE="{lm_eval_batch_size}"
 
 # Compute nodes are air-gapped — every dataset must be cache-resolved.
 export HF_HOME=$HF_HOME
-# The datasets cache the pre-download filled: an exported HF_DATASETS_CACHE
-# (sbatch passes the submitting shell's environment) or datasets' default.
+# The cache the pre-download filled: an exported HF_DATASETS_CACHE, else the default.
 export HF_DATASETS_CACHE="${{HF_DATASETS_CACHE:-$HF_HOME/datasets}}"
 export HF_HUB_OFFLINE={hf_hub_offline}
 # HF_DATASETS_OFFLINE covers `dl_manager.download(arbitrary_url)` (external

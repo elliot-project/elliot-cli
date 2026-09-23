@@ -1,14 +1,7 @@
 """Run one AudioBench evaluation, optionally on your own checkpoint.
 
-AudioBench's loaders read their weights location from a module variable
-(e.g. ``model_path = "Qwen/Qwen2-Audio-7B-Instruct"`` in
-``model_src/qwen2_audio_7b_instruct.py``). This script points that variable at
-the checkpoint before AudioBench loads the model, and writes AudioBench's
-predictions and score file into ``--log-dir`` instead of the shared
-``log_for_all_models`` folder of the clone.
-
-Run by :func:`oellm.contrib.audiobench.suite.run` in a subprocess, with the
-AudioBench clone as working directory (some loaders use paths relative to it).
+Points the loader's weights variable at ``--checkpoint`` and writes AudioBench's
+files to ``--log-dir``. Run from the AudioBench clone: some loaders use relative paths.
 """
 
 from __future__ import annotations
@@ -34,8 +27,7 @@ def main(argv: list[str] | None = None) -> None:
     args = p.parse_args(argv)
 
     src = Path(args.audiobench_dir).resolve() / "src"
-    # AudioBench imports its own modules by bare name (``from dataset import
-    # Dataset``); keep this script's folder off the path so nothing shadows them.
+    # AudioBench imports its modules by bare name; keep this folder off the path.
     here = str(Path(__file__).resolve().parent)
     sys.path[:] = [str(src)] + [entry for entry in sys.path if entry != here]
     os.chdir(args.audiobench_dir)

@@ -187,8 +187,7 @@ class TestExpandTaskGroupsWithTemplates:
 
 
 class TestPreDownloadMatchesWhatTheTaskLoads:
-    """Compute nodes are offline and the dataset cache is keyed by the id used
-    to download it, so each spec must name the dataset the engine loads."""
+    """Offline caches are keyed by dataset id, so specs must match the task's."""
 
     @pytest.mark.parametrize(
         "group, repo_id",

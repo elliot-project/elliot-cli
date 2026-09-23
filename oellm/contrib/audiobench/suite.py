@@ -1,12 +1,10 @@
 """AudioBench contrib suite — plugin protocol implementation.
 
 AudioBench is not pip-installable (upstream has no build backend and uses
-bare imports like ``from dataset import ...``), so :func:`run` runs its
-evaluation through ``launch.py`` in a subprocess with ``cwd`` set to
-``$AUDIOBENCH_DIR``; ``launch.py`` loads your checkpoint in place of the stock
-weights and keeps each run's AudioBench files in its own folder.  :func:`run`
-then re-shapes AudioBench's result JSON into a lmms-eval-compatible payload
-that :func:`oellm.main.collect_results` can parse unchanged.
+bare imports like ``from dataset import ...``), so :func:`run` runs it through
+``launch.py`` in a subprocess with ``cwd`` set to ``$AUDIOBENCH_DIR``, then
+re-shapes AudioBench's result JSON into a lmms-eval-compatible payload that
+:func:`oellm.main.collect_results` can parse unchanged.
 """
 
 from __future__ import annotations
@@ -108,8 +106,7 @@ def detect_model_flags(model_path: str) -> str | None:
     generic loader, so silently falling back to a fictitious key would just
     move the error deeper inside the subprocess.
 
-    Raises ``ValueError`` at schedule time for a checkpoint of a family whose
-    loader can only run the stock model (see ``CHECKPOINT_VARIABLE``).
+    Raises ``ValueError`` for a checkpoint of a stock-only family.
     """
     from oellm.contrib.audiobench.adapter import (
         CHECKPOINT_VARIABLE,
@@ -162,8 +159,8 @@ def run(
             f"model.  AudioBench dispatches on a fixed list of literal "
             f"model_name strings (Qwen2-Audio-7B-Instruct, SALMONN_7B, "
             f"whisper_large_v3, …) — see oellm/contrib/audiobench/adapter.py.  "
-            f"Checkpoints work for the families in CHECKPOINT_VARIABLE; pass a "
-            f"path that names the family or a local folder with its config.json."
+            f"Pass a path that names the family, or a local checkpoint folder "
+            f"with its config.json."
         )
     model_key = model_flags  # AudioBench's dispatch key, e.g. "Qwen2-Audio-7B-Instruct"
 
@@ -175,11 +172,9 @@ def run(
 
     load_checkpoint = not is_stock_model(model_path, model_key)
     if load_checkpoint and model_key not in CHECKPOINT_VARIABLE:
-        # Also covers rows whose key was set by hand (a CSV "audiobench:<key>").
         raise RuntimeError(stock_only_message(model_path, model_key))
 
-    # A fresh folder per run: AudioBench keys its predictions and score file by
-    # family, so checkpoints of one family would overwrite or reuse each other.
+    # Own folder per run: AudioBench names its files by family, not by model.
     with tempfile.TemporaryDirectory(prefix="audiobench_") as log_dir:
         cmd = [
             sys.executable,
@@ -240,10 +235,7 @@ def _extract_metrics(
     model_key: str,
     spec: AudioBenchTaskSpec,
 ) -> dict[str, float]:
-    """Read the score file AudioBench wrote under *log_dir* (``launch.py``
-    redirects AudioBench's ``log_for_all_models`` folder there):
-    ``<log_dir>/<model_name>/<dataset_name>_<metric>_score.json``.
-    """
+    """Read AudioBench's score file for this run from *log_dir*."""
     score_file = (
         log_dir / model_key / f"{spec.upstream_name}_{spec.upstream_metric}_score.json"
     )
