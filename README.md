@@ -6,6 +6,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 
 - **Schedule evaluations** on multiple models and tasks: `oellm-eval schedule`
 - **Collect results** and check for missing evaluations: `oellm-eval collect`
+- **Results dashboard**: send results from any cluster to one shared web dashboard: `oellm-eval collect --push`
 - **Diagnose your environment** (cluster vars, HF cache, venv engines): `oellm-eval doctor`
 - **Task groups** for pre-defined evaluation suites with automatic dataset pre-downloading
 - **Multi-cluster support** with auto-detection (Leonardo, LUMI, JURECA, Jupiter, Snellius, UFAL)
@@ -15,6 +16,26 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 - **Tabular & time-series evaluation** via custom lm-eval tasks (TabFact, TimeSeriesExam)
 - **Plugin system** for contributing custom benchmarks without touching core code
 - **Automatic building and deployment of containers**
+
+## Results Dashboard
+
+Results from every cluster end up in one place. `oellm-eval collect --push` sends them from the login node to the [ELLIOT dashboard](https://github.com/elliot-project/elliot-eval-dashboard), where the whole team can compare models across modalities and trace every number back to the run that produced it.
+
+<p align="center">
+  <img src="docs/images/dashboard-leaderboard.png" alt="Dashboard text leaderboard: score per model and benchmark, colour-scaled, with the best score in each column outlined" width="100%">
+</p>
+<p align="center"><sub>Text leaderboard with full evaluations of small public models</sub></p>
+
+<p align="center">
+  <img src="docs/images/dashboard-flow.svg" alt="How results reach the dashboard: evaluations run on offline compute nodes, the login node runs oellm-eval collect --push, and the results travel over HTTPS with a personal token to the dashboard, which checks and stores them" width="100%">
+</p>
+
+- **Push, never pull**: results leave the cluster over HTTPS from the login node. Compute nodes stay offline, and the dashboard never needs access to a cluster.
+- **Every number is traceable**: each result keeps the provenance of its run: engine versions, model revision, sample limit, quantization and who submitted it.
+- **Safe to repeat**: personal tokens can only add results, pushing the same results twice changes nothing, and a failed push never fails `collect`.
+- **Fair averages**: `--limit` test runs and quantized runs are shown but kept out of averages, and every average says how many benchmarks it covers.
+
+To start pushing, see [Publishing Results to the Dashboard](#publishing-results-to-the-dashboard).
 
 ## Commands at a Glance
 
@@ -286,12 +307,20 @@ mkdir -p ~/.config/oellm && chmod 700 ~/.config/oellm
 echo '<token>' > ~/.config/oellm/dash_token && chmod 600 ~/.config/oellm/dash_token
 export OELLM_DASH_URL=https://<host>/elliot-dashboard
 
-oellm-eval collect <run_dir> --push   # or later: oellm-eval push <run_dir>
+oellm-eval collect <run_dir> --push   # collect and push in one step
+oellm-eval push eval_results.json     # push a file collected earlier
 ```
 
 Pushing the same results twice is harmless, and a failed push never fails
 `collect`. Alternatives to the default token file: `--token-file`,
 `$OELLM_DASH_TOKEN_FILE`, `$OELLM_DASH_TOKEN`.
+
+Pushed results show up on every page of the dashboard. The overview puts all
+models and modalities side by side:
+
+<p align="center">
+  <img src="docs/images/dashboard-overview.png" alt="Dashboard overview page: average score per model and modality" width="100%">
+</p>
 
 ## SLURM Overrides
 
