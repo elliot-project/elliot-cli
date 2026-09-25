@@ -19,7 +19,7 @@ A multimodal evaluation framework for scheduling LLM and VLM evaluations across 
 
 ## Results Dashboard
 
-Results from every cluster end up in one place. `oellm-eval collect --push` sends them from the login node to the [ELLIOT dashboard](https://github.com/elliot-project/elliot-eval-dashboard), where the whole team can compare models across modalities and trace every number back to the run that produced it.
+`oellm-eval collect --push` sends results from the login node to the [ELLIOT dashboard](https://github.com/elliot-project/elliot-eval-dashboard), so results from all clusters end up in one place.
 
 <p align="center">
   <img src="docs/images/dashboard-leaderboard.png" alt="Dashboard text leaderboard: score per model and benchmark, colour-scaled, with the best score in each column outlined" width="100%">
@@ -30,12 +30,7 @@ Results from every cluster end up in one place. `oellm-eval collect --push` send
   <img src="docs/images/dashboard-flow.svg" alt="How results reach the dashboard: evaluations run on offline compute nodes, the login node runs oellm-eval collect --push, and the results travel over HTTPS with a personal token to the dashboard, which checks and stores them" width="100%">
 </p>
 
-- **Push, never pull**: results leave the cluster over HTTPS from the login node. Compute nodes stay offline, and the dashboard never needs access to a cluster.
-- **Every number is traceable**: each result keeps the provenance of its run: engine versions, model revision, sample limit, quantization and who submitted it.
-- **Safe to repeat**: personal tokens can only add results, pushing the same results twice changes nothing, and a failed push never fails `collect`.
-- **Fair averages**: `--limit` test runs and quantized runs are shown but kept out of averages, and every average says how many benchmarks it covers.
-
-To start pushing, see [Publishing Results to the Dashboard](#publishing-results-to-the-dashboard).
+Setup: [Publishing Results to the Dashboard](#publishing-results-to-the-dashboard).
 
 ## Commands at a Glance
 
@@ -315,12 +310,10 @@ Pushing the same results twice is harmless, and a failed push never fails
 `collect`. Alternatives to the default token file: `--token-file`,
 `$OELLM_DASH_TOKEN_FILE`, `$OELLM_DASH_TOKEN`.
 
-Pushed results show up on every page of the dashboard. The overview puts all
-models and modalities side by side:
-
 <p align="center">
   <img src="docs/images/dashboard-overview.png" alt="Dashboard overview page: average score per model and modality" width="100%">
 </p>
+<p align="center"><sub>Overview page</sub></p>
 
 ## SLURM Overrides
 
