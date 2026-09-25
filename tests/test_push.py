@@ -2,6 +2,7 @@
 
 import inspect
 import json
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -50,7 +51,11 @@ class FakeDashboard:
                 for k, v in headers.items():
                     self.send_header(k, v)
                 self.end_headers()
-                self.wfile.write(json.dumps(payload).encode())
+                self.wfile.write(
+                    payload.encode()
+                    if isinstance(payload, str)
+                    else json.dumps(payload).encode()
+                )
 
             do_GET = do_POST
 
@@ -124,8 +129,62 @@ class TestFailures:
         outcome = push_envelope(
             envelope, "http://127.0.0.1:9", "t", timeout=2, sleep=waits.append
         )
-        assert outcome.status == "failed" and not outcome.ok
+        assert outcome.status == "failed" and not outcome.ok and outcome.unreachable
         assert waits == [1, 2, 4] and "gave up" in outcome.detail
+
+    @pytest.mark.parametrize(
+        "reply",
+        [[1, 2], {"ok": True}, "<html>sign in</html>"],
+        ids=["json-array", "json-object-without-status", "html-page"],
+    )
+    def test_a_reply_not_from_the_dashboard_fails(self, dashboard, envelope, reply):
+        dashboard.responses.append((200, reply, {}))
+        waits: list[float] = []
+        outcome = push_envelope(envelope, dashboard.url, "t", sleep=waits.append)
+        assert outcome.status == "failed" and "dashboard" in outcome.detail
+        assert len(dashboard.requests) == 1 and waits == []
+
+    def test_a_timeout_is_not_retried(self, envelope):
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(8)
+        accepted: list[socket.socket] = []
+
+        def accept_forever():
+            try:
+                while True:
+                    accepted.append(srv.accept()[0])
+            except OSError:
+                pass
+
+        threading.Thread(target=accept_forever, daemon=True).start()
+        waits: list[float] = []
+        outcome = push_envelope(
+            envelope,
+            f"http://127.0.0.1:{srv.getsockname()[1]}",
+            "t",
+            timeout=1,
+            sleep=waits.append,
+        )
+        srv.close()
+        for conn in accepted:
+            conn.close()
+        assert outcome.status == "failed" and outcome.unreachable
+        assert len(accepted) == 1 and waits == []
+
+    def test_an_unreachable_dashboard_stops_the_remaining_pushes(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("OELLM_DASH_TOKEN", "t")
+        monkeypatch.setattr(push, "BACKOFF_S", ())
+        for name in ("a", "b", "c"):
+            d = tmp_path / "out" / name
+            d.mkdir(parents=True)
+            (d / "eval_results.json").write_text(json.dumps(ENVELOPE))
+        outcomes = push_path(tmp_path / "out", server="http://127.0.0.1:9")
+        assert [o.status for o in outcomes] == ["failed"] * 3
+        assert outcomes[0].unreachable
+        assert all("not sent" in o.detail for o in outcomes[1:])
 
     def test_client_errors_are_final(self, dashboard, envelope):
         dashboard.responses.append((401, {"detail": "missing or invalid token"}, {}))
@@ -161,6 +220,10 @@ class TestConfiguration:
         assert push.resolve_server("https://dashboard.example.org/elliot/") == (
             "https://dashboard.example.org/elliot"
         )
+
+    def test_a_malformed_port_is_a_configuration_error(self):
+        with pytest.raises(PushError, match="not a valid dashboard address"):
+            push.resolve_server("https://dashboard.example.org:abc/elliot")
 
     def test_missing_address_is_a_clear_error(self):
         with pytest.raises(PushError, match="OELLM_DASH_URL"):
@@ -221,6 +284,16 @@ class TestCommand:
         (outcome,) = push_path(envelope, server=dashboard.url, dry_run=True)
         assert (outcome.status, outcome.rows) == ("dry-run", 1)
         assert dashboard.requests == []
+
+    def test_a_file_that_is_not_an_envelope_fails_the_command(
+        self, dashboard, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("OELLM_DASH_TOKEN", "t")
+        csv = tmp_path / "eval_results.csv"
+        csv.write_text("model_name,task\nm,copa\n")
+        with pytest.raises(SystemExit) as failed:
+            push_results(str(csv), server=dashboard.url)
+        assert failed.value.code == 1 and dashboard.requests == []
 
     def test_nothing_to_push_is_an_error(self, dashboard, tmp_path):
         with pytest.raises(PushError, match="collect"):

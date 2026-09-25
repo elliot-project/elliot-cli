@@ -7,6 +7,7 @@ library only, so it works in whatever environment already runs ``oellm-eval``.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ from pathlib import Path
 
 ENVELOPE_NAME = "eval_results.json"
 DEFAULT_TOKEN_FILE = "~/.config/oellm/dash_token"
-TIMEOUT_S = 60
+TIMEOUT_S = 30
 BACKOFF_S = (1, 2, 4)  # one entry per retry
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -36,10 +37,11 @@ class PushOutcome:
     status: str  # ingested | duplicate | dry-run | skipped | failed
     rows: int = 0
     detail: str = ""
+    unreachable: bool = False
 
     @property
     def ok(self) -> bool:
-        return self.status != "failed"
+        return self.status not in ("failed", "skipped")
 
 
 def resolve_server(server: str | None) -> str:
@@ -47,7 +49,12 @@ def resolve_server(server: str | None) -> str:
     if not url:
         raise PushError("no dashboard address: pass --server or set OELLM_DASH_URL")
     parts = urllib.parse.urlsplit(url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    try:
+        valid = parts.scheme in ("http", "https") and bool(parts.hostname)
+        valid = valid and parts.port != 0
+    except ValueError:  # malformed port
+        valid = False
+    if not valid:
         raise PushError(f"not a valid dashboard address: {url!r}")
     if parts.scheme == "http" and parts.hostname not in _LOCAL_HOSTS:
         raise PushError(
@@ -148,23 +155,52 @@ def push_envelope(
         },
     )
     opener = urllib.request.build_opener(_NoRedirect)
-    error = ""
+    error, unreachable = "", False
     for attempt in range(len(BACKOFF_S) + 1):
         if attempt:
             sleep(BACKOFF_S[attempt - 1])
         try:
             with opener.open(request, timeout=timeout) as response:
-                body = json.loads(response.read() or b"{}")
-            return PushOutcome(path, body.get("status", "ingested"), body.get("rows", 0))
+                raw = response.read()
         except urllib.error.HTTPError as e:
-            error = f"HTTP {e.code}: {_error_detail(e)}"
+            error, unreachable = f"HTTP {e.code}: {_error_detail(e)}", False
             if e.code < 500:
                 return PushOutcome(path, "failed", detail=error)
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
-            error = f"{type(e).__name__}: {getattr(e, 'reason', e)}"
+            continue
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as e:
+            reason = getattr(e, "reason", e)
+            if isinstance(reason, TimeoutError):
+                # Not retried: every retry would wait the full timeout again.
+                return PushOutcome(
+                    path,
+                    "failed",
+                    detail=f"no answer from the dashboard within {timeout:g} s",
+                    unreachable=True,
+                )
+            error, unreachable = f"{type(e).__name__}: {reason}", True
+            continue
+        return _parse_reply(path, raw)
     return PushOutcome(
-        path, "failed", detail=f"{error} (gave up after {len(BACKOFF_S)} retries)"
+        path,
+        "failed",
+        detail=f"{error} (gave up after {len(BACKOFF_S)} retries)",
+        unreachable=unreachable,
     )
+
+
+def _parse_reply(path: Path, raw: bytes) -> PushOutcome:
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or body.get("status") not in ("ingested", "duplicate"):
+        return PushOutcome(
+            path,
+            "failed",
+            detail="the reply did not come from an ELLIOT dashboard; check the address",
+        )
+    rows = body.get("rows")
+    return PushOutcome(path, body["status"], rows if isinstance(rows, int) else 0)
 
 
 def _error_detail(e: urllib.error.HTTPError) -> str:
@@ -189,7 +225,8 @@ def push_path(
     envelopes = find_envelopes(path)
     if not envelopes:
         raise PushError(
-            f"no {ENVELOPE_NAME} under {path}; run `oellm-eval collect` there first"
+            f"no {ENVELOPE_NAME} under {path}; collect writes it to the directory "
+            "it is run from, or next to --output-csv"
         )
     if dry_run:
         outcomes = []
@@ -202,7 +239,17 @@ def push_path(
             )
         return outcomes
     token = resolve_token(token_file)
-    return [push_envelope(f, url, token) for f in envelopes]
+    outcomes = []
+    for i, f in enumerate(envelopes):
+        outcome = push_envelope(f, url, token)
+        outcomes.append(outcome)
+        if outcome.unreachable:
+            outcomes += [
+                PushOutcome(g, "failed", detail="not sent: the dashboard is unreachable")
+                for g in envelopes[i + 1 :]
+            ]
+            break
+    return outcomes
 
 
 def _report(outcomes: list[PushOutcome], server: str) -> None:
@@ -214,7 +261,7 @@ def _report(outcomes: list[PushOutcome], server: str) -> None:
         elif o.status == "dry-run":
             logging.info(f"would push {o.path}: {o.rows} rows to {server}")
         elif o.status == "skipped":
-            logging.warning(f"skipped {o.path}: {o.detail}")
+            logging.error(f"skipped {o.path}: {o.detail}")
         else:
             logging.error(f"failed {o.path}: {o.detail}")
 
