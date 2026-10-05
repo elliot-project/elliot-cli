@@ -139,6 +139,8 @@ def schedule_evals(
             - This allows passing a single directory containing multiple models to evaluate them all
         tasks: A string of comma-separated task names (lm_eval) or paths.
             Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
+            Can be combined with `task_groups`: both are scheduled, and a task that a group already
+            schedules with the same shot count is scheduled once.
         task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
             Each group expands into concrete (task, n_shots, suite) entries; `n_shot` is ignored for groups.
             A group (or super_group) may be scoped to one or more languages with a bracket, e.g.
@@ -179,6 +181,13 @@ def schedule_evals(
             node constraint is added.
     """
     _setup_logging(verbose)
+
+    # Checked first, so a missing `n_shot` fails before any image or model download.
+    if tasks and n_shot is None and not eval_csv_path:
+        raise ValueError(
+            "`n_shot` is required when `tasks` is given, e.g. --n_shot 0. "
+            "Task groups set their own shots."
+        )
 
     if local:
         if not venv_path:
@@ -230,6 +239,7 @@ def schedule_evals(
         n_shot = [n_shot]
 
     eval_jobs: list[EvaluationJob] = []
+    group_list: list[str] = []
     if eval_csv_path:
         if models or tasks or task_groups or n_shot:
             raise ValueError(
@@ -262,7 +272,12 @@ def schedule_evals(
         )
 
     elif models:
-        if task_groups is None:
+        group_list = split_group_tokens(task_groups) if task_groups else []
+        expanded = _expand_task_groups(group_list) if group_list else []
+        if tasks:
+            # `tasks` are scheduled next to the groups. A task that a group
+            # already schedules with the same shot count is not added twice.
+            in_groups = {(result.task, result.n_shot) for result in expanded}
             task_suite_map = _build_task_suite_map()
             eval_jobs.extend(
                 [
@@ -275,11 +290,10 @@ def schedule_evals(
                     for model in models
                     for task in tasks
                     for shot in n_shot
+                    if (task, shot) not in in_groups
                 ]
             )
-        else:
-            group_list = split_group_tokens(task_groups) if task_groups else []
-            expanded = _expand_task_groups(group_list)
+        if group_list:
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -333,9 +347,15 @@ def schedule_evals(
     # network access on compute nodes.
     if not skip_checks:
         dataset_specs = []
-        if task_groups:
-            group_list = split_group_tokens(task_groups)
+        if group_list:
             dataset_specs = _collect_dataset_specs(group_list)
+            # `tasks` given next to the groups need their data too.
+            staged = {(spec.repo_id, spec.subset) for spec in dataset_specs}
+            dataset_specs += [
+                spec
+                for spec in _lookup_dataset_specs_for_tasks(tasks or [])
+                if (spec.repo_id, spec.subset) not in staged
+            ]
         else:
             # Look up individual tasks in task groups registry
             all_tasks = df["task_path"].unique().tolist()

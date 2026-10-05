@@ -4,6 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
 import yaml
 
@@ -29,6 +30,80 @@ def test_schedule_evals(tmp_path, n_shot, task_groups):
             venv_path=str(Path(sys.prefix)),
             dry_run=True,
         )
+
+
+def test_tasks_are_scheduled_next_to_task_groups(tmp_path):
+    """`tasks` given together with `task_groups` are scheduled too, each pair once."""
+    with (
+        patch("oellm.main._load_cluster_env"),
+        patch("oellm.main._num_jobs_in_queue", return_value=0),
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+    ):
+        schedule_evals(
+            models="EleutherAI/pythia-70m",
+            # the group already schedules crows_pairs_english at 0-shot
+            tasks="hellaswag,crows_pairs_english",
+            task_groups="crows-pairs",
+            n_shot=[0, 5],
+            skip_checks=True,
+            venv_path=str(Path(sys.prefix)),
+            dry_run=True,
+        )
+
+    df = pd.read_csv(next(iter(tmp_path.glob("**/jobs.csv"))))
+    scheduled = sorted(df[["task_path", "n_shot"]].itertuples(index=False, name=None))
+    assert scheduled == [
+        ("crows_pairs_english", 0),
+        ("crows_pairs_english", 5),
+        ("hellaswag", 0),
+        ("hellaswag", 5),
+    ]
+
+
+def test_datasets_of_tasks_and_task_groups_are_pre_downloaded(tmp_path):
+    """Data for `tasks` is staged too when they are given next to `task_groups`."""
+    with (
+        patch("oellm.main._load_cluster_env"),
+        patch("oellm.main._ensure_runtime_environment"),
+        patch("oellm.main._process_model_paths"),
+        patch("oellm.main._pre_download_datasets_from_specs") as pre_download,
+        patch.dict(
+            os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path), "HF_HOME": str(tmp_path)}
+        ),
+    ):
+        schedule_evals(
+            models="EleutherAI/pythia-70m",
+            tasks="hellaswag,crows_pairs_english",
+            task_groups="crows-pairs",
+            n_shot=0,
+            venv_path=str(Path(sys.prefix)),
+            download_only=True,
+        )
+
+    specs = pre_download.call_args.args[0]
+    assert [(spec.repo_id, spec.subset) for spec in specs] == [
+        ("jannalu/crows_pairs_multilingual", "english"),
+        ("Rowan/hellaswag", None),
+    ]
+
+
+@pytest.mark.parametrize("task_groups", [None, "crows-pairs"])
+def test_tasks_without_n_shot_fail_before_any_download(tmp_path, task_groups):
+    """`tasks` need `n_shot`, and the error comes before the runtime check."""
+    with (
+        patch("oellm.main._load_cluster_env"),
+        patch("oellm.main._ensure_runtime_environment") as runtime_check,
+        patch.dict(os.environ, {"EVAL_OUTPUT_DIR": str(tmp_path)}),
+    ):
+        with pytest.raises(ValueError, match="`n_shot` is required"):
+            schedule_evals(
+                models="EleutherAI/pythia-70m",
+                tasks="hellaswag",
+                task_groups=task_groups,
+                venv_path=str(Path(sys.prefix)),
+                dry_run=True,
+            )
+    runtime_check.assert_not_called()
 
 
 def test_schedule_evals_slurm_template_var_overrides(tmp_path):
