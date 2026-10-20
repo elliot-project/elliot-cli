@@ -9,7 +9,7 @@ against the narrower signature.
 """
 
 from oellm.core.base_metric import BaseMetric
-from oellm.core.base_model_adapter import BaseModelAdapter, DefaultHFAdapter
+from oellm.core.base_model_adapter import BaseModelAdapter, DefaultHFAdapter, VLLMAdapter
 from oellm.core.base_task import BaseTask
 
 CORE_API_VERSION = "1.0"
@@ -20,4 +20,5 @@ __all__ = [
     "BaseModelAdapter",
     "BaseTask",
     "DefaultHFAdapter",
+    "VLLMAdapter",
 ]

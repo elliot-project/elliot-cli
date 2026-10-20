@@ -16,7 +16,7 @@ import pandas as pd
 
 from oellm import __version__
 from oellm.constants import EvaluationJob
-from oellm.core import DefaultHFAdapter
+from oellm.core import DefaultHFAdapter, VLLMAdapter
 from oellm.results import _collector_git_commit, _load_task_metrics
 from oellm.runner import EvalRunner
 from oellm.task_groups import (
@@ -451,12 +451,44 @@ def schedule_evals(
     # "$model_path" stays a literal bash placeholder substituted per CSV row
     # on the compute node. trust_remote_code now genuinely governs eval time
     # for lm_eval / lighteval / evalchemy — it used to be hardcoded True.
-    _adapter = DefaultHFAdapter(
-        trust_remote_code=trust_remote_code, extra_args=quantization_model_args
-    )
-    lm_eval_model_args = _adapter.to_lm_eval_args()
-    lmms_eval_model_args = _adapter.to_lmms_eval_args()
-    evalchemy_model_args = _adapter.to_evalchemy_args()
+    _lmms_adapters_in_run = {
+        str(j.eval_suite).partition(":")[2]
+        for j in expanded_eval_jobs
+        if EvalRunner.canonical_name(str(j.eval_suite).partition(":")[0].lower())
+        == "lmms_eval"
+    }
+    if "vllm" in _lmms_adapters_in_run:
+        if _lmms_adapters_in_run != {"vllm"}:
+            raise ValueError(
+                "Cannot mix the 'vllm' lmms-eval adapter with other lmms-eval "
+                f"adapters in one schedule call (got {sorted(_lmms_adapters_in_run)}). "
+                "model_args are built once per run and shared by every CSV row — "
+                "schedule vllm-routed models separately."
+            )
+        _vllm_adapter = VLLMAdapter(
+            tensor_parallel_size=int(os.environ.get("VLLM_TENSOR_PARALLEL_SIZE", "1")),
+            gpu_memory_utilization=float(
+                os.environ.get("VLLM_GPU_MEMORY_UTILIZATION", "0.9")
+            ),
+            max_num_seqs=int(os.environ.get("VLLM_MAX_NUM_SEQS", "512")),
+            max_model_len=(
+                int(os.environ["VLLM_MAX_MODEL_LEN"])
+                if os.environ.get("VLLM_MAX_MODEL_LEN")
+                else None
+            ),
+            chat_template=os.environ.get("VLLM_CHAT_TEMPLATE"),
+            extra_args=quantization_model_args,
+        )
+        lm_eval_model_args = ""
+        lmms_eval_model_args = _vllm_adapter.to_lmms_eval_args()
+        evalchemy_model_args = ""
+    else:
+        _adapter = DefaultHFAdapter(
+            trust_remote_code=trust_remote_code, extra_args=quantization_model_args
+        )
+        lm_eval_model_args = _adapter.to_lm_eval_args()
+        lmms_eval_model_args = _adapter.to_lmms_eval_args()
+        evalchemy_model_args = _adapter.to_evalchemy_args()
     lighteval_trc = "trust_remote_code=True," if trust_remote_code else ""
 
     if not skip_checks:

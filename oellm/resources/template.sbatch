@@ -25,6 +25,13 @@ export OELLM_QUANTIZATION="{quantization}"
 # Non-empty => pass --trust_remote_code to lm_eval (dataset-side trust).
 LM_EVAL_TRC="{lm_eval_trc}"
 VENV_PATH="{venv_path}"
+# CUDA_MODULE is cluster-specific (clusters.yaml); empty on clusters whose
+# venv/conda env already bundles its own nvcc, or that use a different
+# module name for it.
+CUDA_MODULE="$CUDA_MODULE"
+if [ -n "$VENV_PATH" ] && [ -n "$CUDA_MODULE" ] && command -v module >/dev/null 2>&1; then
+    module load "$CUDA_MODULE" 2>/dev/null || true
+fi
 LM_EVAL_INCLUDE_PATH="{lm_eval_include_path}"
 LM_EVAL_BATCH_SIZE="{lm_eval_batch_size}"
 TASKS_PER_JOB={tasks_per_job}
@@ -316,12 +323,25 @@ do
                 _lmms_extra_args+=",max_num_frames=${{MAX_NUM_FRAMES:-8}}"
             fi
 
+            # vLLM owns its own request concurrency (tensor_parallel_size,
+            # max_num_seqs in model_args); lmms-eval's --batch_size just
+            # controls how many requests it hands to vLLM per call, which
+            # defaults to 1 (strictly sequential) if left unset. Other
+            # lmms-eval adapters (HF-backed) keep their existing default —
+            # their memory profile per batched image differs and isn't
+            # something we've tuned here.
+            _lmms_batch_size_args=()
+            if [[ "$_lmms_adapter" == "vllm" ]]; then
+                _lmms_batch_size_args=(--batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}")
+            fi
+
             run_python -m lmms_eval \
                 --model "$_lmms_adapter" \
                 --model_args "{lmms_eval_model_args}" \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
                 --output_path "$OUTPUT_JSON" \
+                "${{_lmms_batch_size_args[@]}}" \
                 ${{LIMIT:+--limit $LIMIT}}
             rc=$?
             ;;
