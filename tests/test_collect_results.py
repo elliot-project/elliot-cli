@@ -791,3 +791,40 @@ class TestCounters:
         counters = {"sample_len": 10, "samples": 499, "gpt_eval_score,none": None}
         data = {"model_name": "m", "results": {"x": counters}, "n-shot": {"x": 0}}
         assert run_collect(tmp_path, data).empty
+
+
+class TestJudgeArenaResults:
+    def test_metadata_is_collected_without_reading_artifact_json(self, tmp_path):
+        model = "EleutherAI/pythia-70m"
+        metadata = {
+            "schema_version": "judgearena-run-metadata/v1",
+            "run": {
+                "task": "arena-hard-v2.0",
+                "model": {"name": f"VLLM/{model}"},
+                "judge": {"model": "OpenRouter/example-judge"},
+            },
+            "results": {
+                "task": "arena-hard-v2.0",
+                "metrics": {"arena_hard_v20": {"winrate": 0.625, "num_battles": 500}},
+            },
+        }
+        run = tmp_path / "run"
+        result_dir = run / "results" / "0a1b2c3d4e"
+        (result_dir / "run").mkdir(parents=True)
+        (result_dir / "run" / "run-metadata.v1.json").write_text(json.dumps(metadata))
+        # JudgeArena's other JSON output is not a result
+        (result_dir / "results-native.json").write_text(json.dumps(metadata["results"]))
+        (run / "jobs.csv").write_text(
+            "model_path,task_path,n_shot,eval_suite\n"
+            f"{model},arena-hard-v2.0,0,judgearena\n"
+        )
+
+        collect_results(str(run), output_csv=str(tmp_path / "out.csv"), check=True)
+
+        df = pd.read_csv(tmp_path / "out.csv")
+        assert set(df["model_name"]) == {model}
+        assert dict(zip(df["metric_name"], df["performance"], strict=True)) == {
+            "arena_hard_v20.winrate": 0.625,
+            "arena_hard_v20.num_battles": 500,
+        }
+        assert not (tmp_path / "out_missing.csv").exists()

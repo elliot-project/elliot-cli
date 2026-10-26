@@ -91,10 +91,11 @@ task_groups:
         subset: "{lang}"
 
   xcsqa-eu:
-    description: "XCSQA EU commonsense QA (0-shot MCQ, acc_norm)"
+    description: "XCSQA EU commonsense QA (10-shot MCQ, acc)"
     suite: lm-eval-harness
-    metric: acc_norm
-    n_shots: [0]
+    # The task file scores the answer letter and reports only acc (#142).
+    metric: acc
+    n_shots: [10]
     dataset: INK-USC/xcsr
     tasks:
       - task: xcsqa_deu_Latn
@@ -1165,7 +1166,135 @@ task_groups:
       - task: timeseriesexam
         dataset: AutonLab/TimeSeriesExam1
 
+  judgearena-default:
+    description: "JudgeArena tasks used when no language filter is given."
+    suite: judgearena
+    n_shots: [0]
+    tasks:
+      - task: alpaca-eval
+      - task: arena-hard-v0.1
+      - task: arena-hard-v2.0
+      - task: elo-comparia
+      - task: elo-lmarena
+      - task: elo-lmarena-100k
+      - task: elo-lmarena-140k
+      - task: fluency
+      - task: m-arena-hard-v0.1
+      - task: m-arena-hard-v2.0
+      - task: mt-bench
+
+  judgearena-comparia:
+    description: "JudgeArena ComparIA ELO language variants."
+    suite: judgearena
+    n_shots: [0]
+    valid_langs: [fr, en]
+    tasks:
+      - task: "elo-comparia-{lang}"
+        subset: "{lang}"
+
+  judgearena-lmarena:
+    description: "JudgeArena LMSYS Arena ELO language variants."
+    suite: judgearena
+    n_shots: [0]
+    valid_langs: [en, pl, ru, zh, de, ja, es, fr, ko, pt, fa, it, tr, vi, cs, ar, uk]
+    tasks:
+      - task: "elo-lmarena-{lang}"
+        subset: "{lang}"
+      - task: "elo-lmarena-100k-{lang}"
+        subset: "{lang}"
+      - task: "elo-lmarena-140k-{lang}"
+        subset: "{lang}"
+
+  elo-en:
+    description: "English ComparIA and LMSYS Arena ELO tasks."
+    suite: judgearena
+    n_shots: [0]
+    tasks:
+      - task: elo-comparia-en
+        subset: en
+      - task: elo-lmarena-en
+        subset: en
+      - task: elo-lmarena-100k-en
+        subset: en
+      - task: elo-lmarena-140k-en
+        subset: en
+
+  elo-eu:
+    description: "ComparIA and LMSYS Arena ELO tasks in supported OpenEuroLLM European languages."
+    suite: judgearena
+    n_shots: [0]
+    valid_langs: [en, pl, de, es, fr, pt, it, tr, cs, uk]
+    tasks:
+      - task: elo-comparia-en
+        subset: en
+      - task: elo-comparia-fr
+        subset: fr
+      - task: "elo-lmarena-{lang}"
+        subset: "{lang}"
+      - task: "elo-lmarena-100k-{lang}"
+        subset: "{lang}"
+      - task: "elo-lmarena-140k-{lang}"
+        subset: "{lang}"
+
+  judgearena-m-arena-hard:
+    description: "JudgeArena m-ArenaHard language variants."
+    suite: judgearena
+    n_shots: [0]
+    valid_langs: [ar, cs, de, el, en, es, fa, fr, he, hi, id, it, ja, ko, nl, pl, pt, ro, ru, tr, uk, vi, zh]
+    tasks:
+      - task: "m-arena-hard-v0.1-{lang}"
+        subset: "{lang}"
+      - task: "m-arena-hard-v2.0-{lang}"
+        subset: "{lang}"
+
+  judgearena-fluency:
+    description: "JudgeArena fluency language variants."
+    suite: judgearena
+    n_shots: [0]
+    valid_langs: [albanian, basque, bengali, bosnian, bulgarian, catalan, croatian, czech, danish, dutch, english, estonian, finnish, french, galician, georgian, german, greek, hindi, hungarian, icelandic, indonesian, irish, italian, japanese, latvian, lithuanian, macedonian, maltese, mandarin-chinese, norwegian, polish, portuguese, romanian, russian, serbian, slovak, slovene, spanish, standard-arabic, swedish, turkish, ukrainian]
+    tasks:
+      - task: "fluency-{lang}"
+        subset: "{lang}"
+
+  judgearena-additional:
+    description: "Other packaged JudgeArena tasks."
+    suite: judgearena
+    n_shots: [0]
+    tasks:
+      - task: mt-bench-101
+      - task: m-arena-hard-v0.1-EU
+      - task: m-arena-hard-v2.0-EU
+
+  # Multilingual GPQA Diamond from LumiOpen, defined as custom lighteval tasks
+  # in custom_lighteval_tasks/reasoning/reasoning.py. Generative, 0-shot, greedy pass@1
+  # with up to 32768 new tokens: meant for instruct/reasoning checkpoints.
+  # Long generations need a small lighteval BATCH_SIZE, see README
+  # "Lighteval Batch Size".
+  gpqa-diamond:
+    description: "GPQA Diamond, generative 0-shot pass@1 (en: gated Idavidrein/gpqa, fi: LumiOpen/GPQA-FI)."
+    suite: lighteval
+    metric: "gpqa_pass@k:k=1"
+    n_shots: [0]
+    tasks:
+      - task: "gpqa_diamond:en"
+        dataset: Idavidrein/gpqa
+        subset: gpqa_diamond
+      - task: "gpqa_diamond:fi"
+        dataset: LumiOpen/GPQA-FI
+        subset: default
+
 super_groups:
+  judgearena:
+    description: "JudgeArena base tasks."
+    task_groups:
+      - task: judgearena-default
+
+  elo-multilingual:
+    description: "All language-specific ComparIA and LMSYS Arena ELO tasks."
+    task_groups:
+      - task: judgearena-comparia
+      - task: judgearena-lmarena
+
   oellm-multilingual:
     description: "Combined Belebele EU set plus multilingual benchmarks"
     task_groups:

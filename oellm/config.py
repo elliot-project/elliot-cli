@@ -85,6 +85,7 @@ class EvalConfig:
     trust_remote_code: bool = True
     venv_path: str | None = None
     lm_eval_include_path: str | None = None
+    lighteval_custom_tasks: str | None = None
     local: bool = False
     # Quantized model loading (bitsandbytes) for the HF-style engines
     # (lm_eval / lmms_eval / evalchemy). NVIDIA-first: ROCm (LUMI) support
@@ -93,6 +94,8 @@ class EvalConfig:
     # scheduler warns when such rows are scheduled with a flag set.
     load_in_4bit: bool = False
     load_in_8bit: bool = False
+    # Extra JudgeArena CLI arguments, e.g. {"judge.model": "VLLM/Qwen/Qwen3-4B"}.
+    judgearena_kwargs: dict[str, Any] | None = None
 
     # ---- SLURM overrides ----
     slurm: SlurmOverrides = field(default_factory=SlurmOverrides)
@@ -153,10 +156,12 @@ class EvalConfig:
         trust_remote_code: bool | None = None,
         venv_path: str | None = None,
         lm_eval_include_path: str | None = None,
+        lighteval_custom_tasks: str | None = None,
         local: bool | None = None,
         load_in_4bit: bool | None = None,
         load_in_8bit: bool | None = None,
         slurm_template_var: str | None = None,
+        judgearena_kwargs: str | dict[str, Any] | None = None,
     ) -> EvalConfig:
         """Build an ``EvalConfig`` from the loose CLI parameters.
 
@@ -188,6 +193,23 @@ class EvalConfig:
         elif isinstance(n_shot, list):
             n_shot_list = n_shot
 
+        # A JSON object on the CLI; Python callers may pass the dict itself.
+        judgearena_dict: dict[str, Any] | None = None
+        if isinstance(judgearena_kwargs, dict):
+            judgearena_dict = judgearena_kwargs
+        elif judgearena_kwargs:
+            try:
+                judgearena_dict = json.loads(judgearena_kwargs)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"judgearena_kwargs must be a valid JSON object: {e}"
+                ) from e
+            if not isinstance(judgearena_dict, dict):
+                raise ValueError(
+                    "judgearena_kwargs must be a JSON object, e.g. "
+                    '{"judge.model":"VLLM/Qwen/Qwen3-4B"}'
+                )
+
         provided: set[str] = set()
         for field_name, value in (
             ("models", models_list),
@@ -204,9 +226,11 @@ class EvalConfig:
             ("trust_remote_code", trust_remote_code),
             ("venv_path", venv_path),
             ("lm_eval_include_path", lm_eval_include_path),
+            ("lighteval_custom_tasks", lighteval_custom_tasks),
             ("local", local),
             ("load_in_4bit", load_in_4bit),
             ("load_in_8bit", load_in_8bit),
+            ("judgearena_kwargs", judgearena_dict),
         ):
             if value is not None:
                 provided.add(field_name)
@@ -259,9 +283,11 @@ class EvalConfig:
             else True,
             venv_path=venv_path,
             lm_eval_include_path=lm_eval_include_path,
+            lighteval_custom_tasks=lighteval_custom_tasks,
             local=bool(local) if local is not None else False,
             load_in_4bit=bool(load_in_4bit) if load_in_4bit is not None else False,
             load_in_8bit=bool(load_in_8bit) if load_in_8bit is not None else False,
+            judgearena_kwargs=judgearena_dict,
             slurm=slurm,
         )
         cfg._cli_provided = provided
@@ -283,9 +309,11 @@ class EvalConfig:
             "trust_remote_code",
             "venv_path",
             "lm_eval_include_path",
+            "lighteval_custom_tasks",
             "local",
             "load_in_4bit",
             "load_in_8bit",
+            "judgearena_kwargs",
             "slurm",
         }
     )
@@ -340,9 +368,11 @@ class EvalConfig:
             trust_remote_code=bool(raw.get("trust_remote_code", True)),
             venv_path=raw.get("venv_path"),
             lm_eval_include_path=raw.get("lm_eval_include_path"),
+            lighteval_custom_tasks=raw.get("lighteval_custom_tasks"),
             local=bool(raw.get("local", False)),
             load_in_4bit=bool(raw.get("load_in_4bit", False)),
             load_in_8bit=bool(raw.get("load_in_8bit", False)),
+            judgearena_kwargs=raw.get("judgearena_kwargs"),
             slurm=slurm,
         )
 
@@ -388,6 +418,14 @@ class EvalConfig:
         if self.tasks_per_job < 1:
             raise ValueError(
                 f"tasks_per_job must be at least 1, got: {self.tasks_per_job}"
+            )
+
+        if self.judgearena_kwargs is not None and not isinstance(
+            self.judgearena_kwargs, dict
+        ):
+            raise ValueError(
+                "judgearena_kwargs must be a mapping of JudgeArena argument names "
+                f"to values, got: {type(self.judgearena_kwargs).__name__}"
             )
 
         if self.eval_csv_path:

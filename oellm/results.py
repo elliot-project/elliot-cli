@@ -42,6 +42,7 @@ METRIC_NATIVE_SCALE: dict[str, float] = {
     "mme_realworld_score": 1.0,
     "average": 1.0,  # MMStar headline = mean of per-category accuracies
     "seed_image": 1.0,  # SEED-Bench image submetric
+    "gpqa_pass@k:k=1": 1.0,  # gpqa-diamond (custom lighteval task)
     # ── 0–100 scale (no scaling needed) ──
     "gpt_eval_score": 100.0,
     "llm_as_judge_eval": 100.0,
@@ -195,6 +196,21 @@ def _extract_all_metrics(result_dict: dict) -> list[tuple[str, float]]:
         seen.add(key)
         pairs.append((key, float(value)))
     return pairs
+
+
+def _flatten_numeric_metrics(value: object, prefix: str = "") -> list[tuple[str, float]]:
+    """Flatten numeric dictionary leaves while leaving large arrays untouched."""
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        return [(prefix, float(value))] if prefix else []
+    if not isinstance(value, dict):
+        return []
+    metrics: list[tuple[str, float]] = []
+    for key, child in value.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        metrics.extend(_flatten_numeric_metrics(child, name))
+    return metrics
 
 
 def _split_task_and_nshot(name: str) -> tuple[str, int | None]:
@@ -562,6 +578,19 @@ def collect_results(
             quantization=_quantization(data),
             evaluated_at=_evaluated_at(data, json_file),
         )
+
+        # JudgeArena writes reports and annotations next to its metadata file;
+        # only the metadata file is a result, and every numeric metric in it
+        # is kept (JudgeArena tasks declare no primary metric).
+        if data.get("schema_version") == "judgearena-run-metadata/v1":
+            run_config = data["run"]
+            _emit(
+                run_config["model"]["name"].removeprefix("VLLM/"),
+                run_config["task"],
+                0,
+                _flatten_numeric_metrics(data["results"].get("metrics", {})),
+            )
+            continue
 
         # First-chance: a contrib suite may claim this file outright via its
         # parse_results() protocol member and own the format end-to-end.

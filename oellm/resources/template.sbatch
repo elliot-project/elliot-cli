@@ -27,7 +27,10 @@ LM_EVAL_TRC="{lm_eval_trc}"
 VENV_PATH="{venv_path}"
 LM_EVAL_INCLUDE_PATH="{lm_eval_include_path}"
 LM_EVAL_BATCH_SIZE="{lm_eval_batch_size}"
+LIGHTEVAL_CUSTOM_TASKS="{lighteval_custom_tasks}"
 TASKS_PER_JOB={tasks_per_job}
+JUDGEARENA_ARGS=({judgearena_args})
+export JUDGEARENA_DATA={judgearena_data}
 
 # Compute nodes are air-gapped — every dataset must be cache-resolved.
 export HF_HOME=$HF_HOME
@@ -41,6 +44,23 @@ export HF_DATASETS_OFFLINE={hf_hub_offline}
 # /tmp by default; set this to force it to use the shared cache instead.
 # See lmms_eval/api/task.py::_resolve_hf_datasets_cache_dir.
 export LMMS_EVAL_DATASETS_CACHE="$HF_DATASETS_CACHE"
+
+# Neither harness caches under HF_HOME on its own. lighteval hardcodes
+# ~/.cache/huggingface/lighteval and never reads HF_HOME, which fills the user's
+# home directory and fails mid-run on clusters with a small home quota
+# ("OSError: [Errno 122] Disk quota exceeded"). lm-eval keeps request caches
+# inside its own install directory, which is read-only in the container. Point
+# both at the shared cache instead.
+export LIGHTEVAL_CACHE_DIR="$HF_HOME/lighteval"
+export LM_HARNESS_CACHE_PATH="$HF_HOME/lm_eval"
+mkdir -p "$LIGHTEVAL_CACHE_DIR" "$LM_HARNESS_CACHE_PATH"
+
+# lighteval caches unconditionally, so it always uses LIGHTEVAL_CACHE_DIR.
+# lm-eval only caches with --cache_requests, which stays opt-in: set
+# CACHE_REQUESTS=true to enable it, or =refresh to rebuild entries after editing
+# a task YAML (the cache key covers task, shots and tokenizer, but not the task
+# definition). Leaving it off keeps --limit runs fast -- lm-eval ignores --limit
+# while building contexts whenever caching is on.
 
 # Path to the shared Singularity image that contains all runtime deps (container mode)
 export EVAL_SIF_PATH="$EVAL_BASE_DIR/$EVAL_CONTAINER_IMAGE"
@@ -137,7 +157,7 @@ do
 
     # Build bind paths: always mount the shared eval directory, and additionally
     # bind the directory that contains the model checkpoint when the path exists
-    BIND_PATHS="$EVAL_BASE_DIR:$EVAL_BASE_DIR,$HF_HOME:$HF_HOME,$HF_DATASETS_CACHE:$HF_DATASETS_CACHE${{LM_EVAL_INCLUDE_PATH:+,$$LM_EVAL_INCLUDE_PATH:$$LM_EVAL_INCLUDE_PATH}}"
+    BIND_PATHS="$EVAL_BASE_DIR:$EVAL_BASE_DIR,$HF_HOME:$HF_HOME,$HF_DATASETS_CACHE:$HF_DATASETS_CACHE${{LM_EVAL_INCLUDE_PATH:+,$$LM_EVAL_INCLUDE_PATH:$$LM_EVAL_INCLUDE_PATH}}${{LIGHTEVAL_CUSTOM_TASKS:+,$$LIGHTEVAL_CUSTOM_TASKS:$$LIGHTEVAL_CUSTOM_TASKS}}"
 
     if [ -e "$model_path" ]; then
         # If the model_path is a file, bind its parent directory; otherwise bind the dir itself
@@ -158,7 +178,7 @@ do
         JOB_HOME="$EVAL_BASE_DIR/$USER/container_home/$SLURM_JOB_ID"
         mkdir -p "$JOB_HOME"
         SINGULARITY_HOME_ARG="--home $JOB_HOME"
-        SINGULARITY_ENV_ARGS="--env HF_HOME=$HF_HOME --env HF_DATASETS_CACHE=$HF_DATASETS_CACHE --env HF_HUB_OFFLINE=$HF_HUB_OFFLINE --env HF_DATASETS_OFFLINE=$HF_DATASETS_OFFLINE --env TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE --env NLTK_DATA=$NLTK_DATA --env LMMS_EVAL_DATASETS_CACHE=$LMMS_EVAL_DATASETS_CACHE"
+        SINGULARITY_ENV_ARGS="--env HF_HOME=$HF_HOME --env HF_DATASETS_CACHE=$HF_DATASETS_CACHE --env HF_HUB_OFFLINE=$HF_HUB_OFFLINE --env HF_DATASETS_OFFLINE=$HF_DATASETS_OFFLINE --env TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE --env NLTK_DATA=$NLTK_DATA --env LMMS_EVAL_DATASETS_CACHE=$LMMS_EVAL_DATASETS_CACHE --env LM_HARNESS_CACHE_PATH=$LM_HARNESS_CACHE_PATH"
     fi
 
     GPU_DEVICES=$(seq -s, 0 $(($GPUS_PER_NODE - 1)))
@@ -201,7 +221,7 @@ do
             _maybe_timeout singularity exec $SINGULARITY_ARGS \
                 $SINGULARITY_ENV_ARGS \
                 $SINGULARITY_HOME_ARG \
-                --bind $BIND_PATHS \
+                --bind "$BIND_PATHS" \
                 $EVAL_SIF_PATH \
                 env CUDA_VISIBLE_DEVICES=$GPU_DEVICES \
                 python "$@" < /dev/null
@@ -230,6 +250,7 @@ do
                 ${{LM_EVAL_TRC:+--trust_remote_code}} \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $$LM_EVAL_INCLUDE_PATH}} \
                 --batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}" \
+                ${{CACHE_REQUESTS:+--cache_requests $CACHE_REQUESTS}} \
                 ${{LIMIT:+--limit $LIMIT}}
             rc=$?
             echo "----------------------------------------------------"
@@ -260,22 +281,24 @@ do
             if [ -n "$VENV_PATH" ]; then
                 source "$VENV_PATH/bin/activate"
                 _maybe_timeout lighteval accelerate \
-                    "model_name=$model_path,{lighteval_trc}{additional_model_args}" \
+                    "model_name=$model_path,{lighteval_trc}cache_dir=$LIGHTEVAL_CACHE_DIR,{additional_model_args}" \
                     "$LIGHT_TASK_ARG" \
                     --load-tasks-multilingual \
+                    --custom-tasks "$$LIGHTEVAL_CUSTOM_TASKS" \
                     --output-dir "$RESULTS_SUBDIR" \
                     ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
             else
                 _maybe_timeout singularity exec $SINGULARITY_ARGS \
                     $SINGULARITY_ENV_ARGS \
                     $SINGULARITY_HOME_ARG \
-                    --bind $BIND_PATHS \
+                    --bind "$BIND_PATHS" \
                     $EVAL_SIF_PATH \
                     env CUDA_VISIBLE_DEVICES=$GPU_DEVICES \
                     lighteval accelerate \
-                        "model_name=$model_path,{lighteval_trc}{additional_model_args}" \
+                        "model_name=$model_path,{lighteval_trc}cache_dir=$LIGHTEVAL_CACHE_DIR,{additional_model_args}" \
                         "$LIGHT_TASK_ARG" \
                         --load-tasks-multilingual \
+                        --custom-tasks "$$LIGHTEVAL_CUSTOM_TASKS" \
                         --output-dir "$RESULTS_SUBDIR" \
                         ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
             fi
@@ -349,6 +372,42 @@ do
                 echo "[error] evalchemy suite requires --venv-path (not supported in container mode)."
                 rc=1
             fi
+            ;;
+        judgearena)
+            mkdir -p "$JUDGEARENA_DATA"
+            RESULTS_SUBDIR="{evals_dir}/$(openssl rand -hex 5)"
+            mkdir -p "$RESULTS_SUBDIR"
+            EVAL_OUT_DIR="$RESULTS_SUBDIR"
+            EVAL_OUT_PAT="run-metadata.v1.json"
+
+            JUDGEARENA_BIND_PATHS="$BIND_PATHS,$JUDGEARENA_DATA:$JUDGEARENA_DATA"
+
+            if [ -n "$VENV_PATH" ]; then
+                source "$VENV_PATH/bin/activate"
+                _maybe_timeout judgearena \
+                    "${{JUDGEARENA_ARGS[@]}}" \
+                    --task "$task_path" \
+                    --model.name "VLLM/$model_path" \
+                    --run.result_folder "$RESULTS_SUBDIR" \
+                    ${{LIMIT:+--generation.n_instructions $LIMIT}} < /dev/null
+            else
+                _maybe_timeout singularity exec $SINGULARITY_ARGS \
+                    $SINGULARITY_ENV_ARGS \
+                    $SINGULARITY_HOME_ARG \
+                    --bind "$JUDGEARENA_BIND_PATHS" \
+                    "$EVAL_SIF_PATH" \
+                    env CUDA_VISIBLE_DEVICES=$GPU_DEVICES \
+                        JUDGEARENA_DATA="$JUDGEARENA_DATA" \
+                        HF_HOME="$HF_HOME" \
+                        HF_DATASETS_CACHE="$HF_DATASETS_CACHE" \
+                    judgearena \
+                        "${{JUDGEARENA_ARGS[@]}}" \
+                        --task "$task_path" \
+                        --model.name "VLLM/$model_path" \
+                        --run.result_folder "$RESULTS_SUBDIR" \
+                        ${{LIMIT:+--generation.n_instructions $LIMIT}} < /dev/null
+            fi
+            rc=$?
             ;;
         *)
             # Contrib suite: dispatch to the Python plugin registry.

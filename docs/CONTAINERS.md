@@ -75,3 +75,24 @@ Then set `EVAL_CONTAINER_IMAGE` in `clusters.yaml` to point to this image.
    ```
 
 4. Push to `main` to trigger the build.
+
+## JudgeArena on LUMI
+
+`containers/lumi.def` includes lm-eval, lighteval, JudgeArena, and VLLM.
+Use the combined image with `SINGULARITY_ARGS=""`:
+
+```bash
+export SINGULARITY_ARGS=""
+
+oellm-eval schedule \
+  --models <model> \
+  --task-groups judgearena \
+  --download-only
+
+oellm-eval schedule \
+  --models <model> \
+  --tasks arena-hard-v0.1 \
+  --n-shot 0 \
+  --limit 1 \
+  --judgearena-kwargs '{"judge.model":"VLLM/<judge>"}'
+```
