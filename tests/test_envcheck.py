@@ -76,6 +76,10 @@ class TestContainerMode:
     def test_lm_eval_and_lighteval_are_fine(self):
         assert collect_problems({"lm_eval", "lighteval"}, venv_path=None) == []
 
+    def test_judgearena_is_fine(self):
+        # The Leonardo, LUMI and CI images ship the judgearena command.
+        assert collect_problems({"judgearena"}, venv_path=None) == []
+
     def test_lmms_eval_is_rejected(self):
         problems = collect_problems({"lmms_eval:llava_hf"}, venv_path=None)
         assert len(problems) == 1
@@ -148,6 +152,11 @@ class TestVenvMode:
         assert len(problems) == 1
         assert "9.9.9" in problems[0]
         assert "silently wrong" in problems[0]
+
+    def test_missing_judgearena_command_is_reported(self):
+        problems = collect_problems({"judgearena"}, venv_path=TEST_VENV)
+        assert len(problems) == 1
+        assert "judgearena" in problems[0]
 
     def test_missing_executable_reported(self):
         fake = {

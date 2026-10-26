@@ -213,5 +213,7 @@ class TestAdapterRenderedModelArgs:
         assert "trust_remote_code=True" not in sbatch
         assert 'pretrained="$model_path",trust_remote_code=False' in sbatch
         assert 'LM_EVAL_TRC=""' in sbatch
-        assert "model_name=$model_path,batch_size" in sbatch
+        assert (
+            "model_name=$model_path,cache_dir=$LIGHTEVAL_CACHE_DIR,batch_size" in sbatch
+        )
         assert prov["trust_remote_code"] is False

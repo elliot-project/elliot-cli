@@ -159,10 +159,21 @@ class TestFromCliKwargs:
         with pytest.raises(ValueError, match="JSON object"):
             EvalConfig.from_cli_kwargs(models="m", slurm_template_var="[1, 2, 3]")
 
+    # ---------------------------------------------------------------------------
+    # merge (YAML base + CLI overrides)
+    # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# merge (YAML base + CLI overrides)
-# ---------------------------------------------------------------------------
+    def test_judgearena_kwargs_json(self):
+        cfg = EvalConfig.from_cli_kwargs(
+            judgearena_kwargs='{"judge.model": "VLLM/Qwen/Qwen3-4B"}'
+        )
+        assert cfg.judgearena_kwargs == {"judge.model": "VLLM/Qwen/Qwen3-4B"}
+
+    def test_judgearena_kwargs_must_be_a_json_object(self):
+        with pytest.raises(ValueError, match="valid JSON object"):
+            EvalConfig.from_cli_kwargs(judgearena_kwargs="judge.model=x")
+        with pytest.raises(ValueError, match="must be a JSON object"):
+            EvalConfig.from_cli_kwargs(judgearena_kwargs='["judge.model"]')
 
 
 class TestMerge:
@@ -447,6 +458,24 @@ class TestMergeProvenance:
         assert yaml_cfg.merge(EvalConfig.from_cli_kwargs()).tasks_per_job == 2
         cli_cfg = EvalConfig.from_cli_kwargs(tasks_per_job=8)
         assert yaml_cfg.merge(cli_cfg).tasks_per_job == 8
+
+    def test_judgearena_and_custom_tasks_from_yaml_and_cli(self):
+        yaml_cfg = self._yaml_cfg(
+            lighteval_custom_tasks="/tasks/custom.py",
+            judgearena_kwargs={"judge.model": "VLLM/a"},
+        )
+        merged = yaml_cfg.merge(EvalConfig.from_cli_kwargs())
+        assert merged.lighteval_custom_tasks == "/tasks/custom.py"
+        assert merged.judgearena_kwargs == {"judge.model": "VLLM/a"}
+        cli_cfg = EvalConfig.from_cli_kwargs(
+            judgearena_kwargs='{"judge.model": "VLLM/b"}'
+        )
+        assert yaml_cfg.merge(cli_cfg).judgearena_kwargs == {"judge.model": "VLLM/b"}
+
+    def test_yaml_judgearena_kwargs_must_be_a_mapping(self):
+        cfg = self._yaml_cfg(judgearena_kwargs="judge.model=VLLM/a")
+        with pytest.raises(ValueError, match="judgearena_kwargs must be a mapping"):
+            cfg.validate()
 
 
 # ---------------------------------------------------------------------------

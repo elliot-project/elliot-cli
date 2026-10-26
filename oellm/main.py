@@ -7,7 +7,7 @@ from typer import rich_utils
 from oellm.config import EvalConfig
 from oellm.push import push_results
 from oellm.results import collect_results
-from oellm.utils import _filter_warnings, _setup_logging
+from oellm.utils import _filter_warnings, _setup_logging, version_info
 
 # Override Typer's default cyan colour scheme with colours that are readable
 # on both light (white) and dark terminal backgrounds.
@@ -29,6 +29,26 @@ app = typer.Typer(
 )
 
 
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(f"oellm-eval {version_info()}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _app_options(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_print_version,
+        is_eager=True,
+        help="Print the version, the commit it was installed from and the harness "
+        "versions, then exit. Include it in bug reports.",
+    ),
+) -> None:
+    pass
+
+
 def schedule_evals(
     models: str | None = None,
     tasks: str | None = None,
@@ -47,10 +67,12 @@ def schedule_evals(
     trust_remote_code: bool | None = None,
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
+    lighteval_custom_tasks: str | None = None,
     local: bool | None = None,
     load_in_4bit: bool | None = None,
     load_in_8bit: bool | None = None,
     slurm_template_var: str | None = None,
+    judgearena_kwargs: str | None = None,
     allow_missing_judge: bool = False,
     nodelist: str | None = None,
 ) -> None:
@@ -67,8 +89,9 @@ def schedule_evals(
               all models in subdirectories will be automatically discovered
             - For each model directory, if it has an `hf/iter_XXXXX` structure, all checkpoints will be expanded
             - This allows passing a single directory containing multiple models to evaluate them all
-        tasks: A string of comma-separated task names (lm_eval) or paths.
-            Requires `n_shot` to be provided. Tasks here are assumed to be lm_eval unless otherwise handled via CSV.
+        tasks: A string of comma-separated task names or paths. The suite is
+            taken from `task-groups.yaml`; unregistered tasks default to lm_eval.
+            Requires `n_shot` to be provided.
         task_groups: A string of comma-separated task group names defined in `task-groups.yaml`.
             Each group expands into concrete (task, n_shots, suite) entries and sets its own shots;
             `n_shot` applies to `tasks` only. Given together, `tasks` and `task_groups` are both scheduled.
@@ -91,7 +114,8 @@ def schedule_evals(
             call if one task raises, so this caps how many tasks a single failure takes
             down; 1 restores one call per task. Default 8.
         limit: If set, limit the number of samples per task (useful for quick testing).
-            Passes --limit to lm_eval and --max_samples to lighteval.
+            Passes --limit to lm_eval, --max_samples to lighteval, and
+            --generation.n_instructions to JudgeArena.
         download_only: If True, only download the datasets and models and exit.
         dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
         skip_checks: If True, skip container image, environment pre-flight (engine availability
@@ -107,6 +131,9 @@ def schedule_evals(
             Passed as --include_path to lm_eval. Defaults to the bundled custom_lm_eval_tasks
             directory shipped with the package, which overrides broken upstream tasks
             (e.g. mgsm_native_cot_fr/de/es). Override to point at additional task YAMLs.
+        lighteval_custom_tasks: Path to a Python file of custom lighteval task definitions.
+            Passed as --custom-tasks to lighteval. Defaults to the bundled
+            custom_lighteval_tasks/reasoning/reasoning.py (multilingual GPQA Diamond).
         local: If True, run evaluations directly on the local machine using bash instead of
             submitting to SLURM. Requires --venv-path. Skips cluster environment detection and
             runs all evaluations sequentially in a single process.
@@ -120,6 +147,9 @@ def schedule_evals(
         slurm_template_var: JSON object of template variable overrides. Use exact env var names
             (PARTITION, ACCOUNT, GPUS_PER_NODE, SLURM_MEM, NODES). "TIME" overrides the time limit.
             Example: '{"PARTITION":"dev-g","ACCOUNT":"FOO","TIME":"02:00:00","GPUS_PER_NODE":2,"SLURM_MEM":"96G","NODES":"1"}'
+        judgearena_kwargs: Extra JudgeArena CLI arguments as a JSON object, with names
+            such as `judge.model`, e.g. '{"judge.model":"VLLM/Qwen/Qwen3-4B"}'.
+            oellm-eval sets the task, candidate model, result folder and sample limit.
         allow_missing_judge: If True, allow scheduling tasks that need an LLM judge
             (e.g. activitynetqa, AudioBench chat-style tasks) when ``OPENAI_API_KEY``
             is not set. Those tasks will emit null performance values. Default False —
@@ -146,10 +176,12 @@ def schedule_evals(
         trust_remote_code=trust_remote_code,
         venv_path=venv_path,
         lm_eval_include_path=lm_eval_include_path,
+        lighteval_custom_tasks=lighteval_custom_tasks,
         local=local,
         load_in_4bit=load_in_4bit,
         load_in_8bit=load_in_8bit,
         slurm_template_var=slurm_template_var,
+        judgearena_kwargs=judgearena_kwargs,
     )
 
     if config:
@@ -182,8 +214,10 @@ def schedule_evals(
         trust_remote_code=cfg.trust_remote_code,
         venv_path=cfg.venv_path,
         lm_eval_include_path=cfg.lm_eval_include_path,
+        lighteval_custom_tasks=cfg.lighteval_custom_tasks,
         local=cfg.local,
         slurm_template_var=cfg.slurm_template_var_json,
+        judgearena_kwargs=cfg.judgearena_kwargs,
         allow_missing_judge=allow_missing_judge,
         nodelist=nodelist,
         load_in_4bit=cfg.load_in_4bit,
@@ -399,10 +433,12 @@ def eval_command(
     trust_remote_code: bool | None = None,
     venv_path: str | None = None,
     lm_eval_include_path: str | None = None,
+    lighteval_custom_tasks: str | None = None,
     local: bool | None = None,
     load_in_4bit: bool | None = None,
     load_in_8bit: bool | None = None,
     slurm_template_var: str | None = None,
+    judgearena_kwargs: str | None = None,
     allow_missing_judge: bool = False,
     nodelist: str | None = None,
 ) -> None:
@@ -426,8 +462,10 @@ def eval_command(
         trust_remote_code: Trust remote code when downloading datasets.
         venv_path: Python venv path. When set, runs in venv instead of Singularity.
         lm_eval_include_path: Path to custom lm_eval task YAML definitions directory.
+        lighteval_custom_tasks: Python file of custom lighteval tasks (default: bundled).
         local: Run evaluations locally instead of submitting to SLURM.
         slurm_template_var: JSON object of SLURM overrides.
+        judgearena_kwargs: JSON object of extra JudgeArena CLI arguments.
         nodelist: Optional SLURM nodelist to constrain the job to specific node(s).
         verbose: Enable verbose logging.
     """
@@ -448,10 +486,12 @@ def eval_command(
         trust_remote_code=trust_remote_code,
         venv_path=venv_path,
         lm_eval_include_path=lm_eval_include_path,
+        lighteval_custom_tasks=lighteval_custom_tasks,
         local=local,
         load_in_4bit=load_in_4bit,
         load_in_8bit=load_in_8bit,
         slurm_template_var=slurm_template_var,
+        judgearena_kwargs=judgearena_kwargs,
         allow_missing_judge=allow_missing_judge,
         nodelist=nodelist,
     )

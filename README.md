@@ -95,6 +95,8 @@ Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/reso
 | `xcsqa-eu` | X-CSQA commonsense QA (8 EU languages) | lm-eval |
 | `generic-multilingual` | XWinograd, XCOPA, XStoryCloze | lm-eval |
 | `include` | INCLUDE benchmarks (44 languages) | lm-eval |
+| `gpqa-diamond` | GPQA Diamond, generative 0-shot pass@1, in English (gated `Idavidrein/gpqa`, the HF token needs access) and Finnish (`LumiOpen/GPQA-FI`); needs a small `BATCH_SIZE`, see [Long generations](#long-generations-gpqa-diamond) | lighteval |
+| `judgearena`, `elo-en`, `elo-eu`, `elo-multilingual`, `judgearena-*` | LLM-judge benchmarks (Arena-Hard, AlpacaEval, MT-Bench, fluency, ELO), see [LLM Judge benchmarks](#llm-judge-benchmarks-judgearena) | JudgeArena |
 
 Super groups: `oellm-multilingual` (all multilingual benchmarks combined) and
 `multilingual-oellm-eu` (every multilingual benchmark restricted to the 36
@@ -332,6 +334,43 @@ oellm-eval schedule --models "model-name" --task-groups "open-sci-0.01" \
 
 Use exact env var names: `PARTITION`, `ACCOUNT`, `GPUS_PER_NODE`, `SLURM_MEM`. `TIME` (HH:MM:SS) overrides the time limit.
 
+## LLM Judge benchmarks (JudgeArena)
+
+LLM judge benchmarks are available through JudgeArena. Packaged tasks are
+registered in `task-groups.yaml`, so they use the JudgeArena runner
+automatically:
+
+```bash
+oellm-eval schedule \
+  --models /path/to/model \
+  --tasks arena-hard-v2.0 \
+  --n-shot 0 \
+  --judgearena-kwargs '{"judge.model":"OpenRouter/google/gemma-4-31b-it"}'
+```
+
+Use `--task-groups elo-en`, `elo-eu`, or `elo-multilingual` to schedule the
+language-specific ELO tasks. The standalone `-ja` task variants are not
+registered.
+
+Pass JudgeArena runtime settings such as the judge model through
+`--judgearena-kwargs`. Use `--limit` to set the number of instructions. Local
+task files, prompt overrides, and `meta-eval-*` tasks are not supported.
+
+The selected venv or container must include the `judgearena` command (of the
+cluster images, Leonardo, LUMI and CI include it). Use
+`--download-only` to download each selected task into the shared
+`JUDGEARENA_DATA` and `HF_HOME` directories before an offline cluster run:
+
+```bash
+oellm-eval schedule \
+  --models /path/to/model \
+  --task-groups judgearena \
+  --download-only
+```
+
+`oellm-eval collect` reads `run-metadata.v1.json` and adds its numeric metrics to
+the result CSV. It leaves JudgeArena's reports and annotations unchanged.
+
 ## Lighteval Batch Size
 
 For lighteval runs, generated jobs default to `batch_size=1` for local runs and
@@ -355,6 +394,28 @@ for example:
 MODEL_ARGS='batch_size=8' oellm-eval schedule \
   --models "model-name" --task-groups "belebele-eu-cf" --venv-path /path/to/.venv
 ```
+
+### Long generations (`gpqa-diamond`)
+
+These tasks generate up to 32768 tokens per sample, and `lighteval accelerate`
+keeps a float32 score vector the size of the vocabulary for every generated
+token of every sequence in the batch. At 32k tokens that is ~20 GB per
+sequence for a 150k-token vocabulary (Qwen, Llama 3), plus ~5 GB of KV cache
+for a 7-8B model, on top of the weights. Reasoning models write that much: with
+Qwen3-8B, `batch_size=8` ran out of memory on a 256 GB MI325X, so the default
+`batch_size=32` does not fit either. Schedule the group on its own with a batch
+size that fits, for example:
+
+```bash
+# 64 GB GPU (one LUMI MI250X GCD): Qwen2.5-7B-Instruct completed both languages
+BATCH_SIZE=1 oellm-eval schedule --models "model-name" --task-groups "gpqa-diamond"
+# 256 GB GPU (MI325X): Qwen3-8B completed 40 Finnish questions
+BATCH_SIZE=4 oellm-eval schedule --models "model-name" --task-groups "gpqa-diamond"
+```
+
+Expect hours per language: a batch runs until its longest sample stops, so one
+long answer holds up the whole batch. With `BATCH_SIZE=1` on one MI250X GCD,
+Qwen2.5-7B-Instruct took 1.5 h for English and 2.8 h for Finnish.
 
 ## lm-eval Tasks per Call
 
@@ -440,7 +501,7 @@ oellm-eval schedule --eval-csv-path results_missing.csv
 
 ## CSV-Based Scheduling
 
-For full control, provide a CSV file with columns: `model_path`, `task_path`, `n_shot`, and optionally `eval_suite` (one of `lm_eval` — the default, `lighteval`, `lmms_eval`, `evalchemy`, or a contrib suite name):
+For full control, provide a CSV file with columns: `model_path`, `task_path`, `n_shot`, and optionally `eval_suite` (one of `lm_eval` — the default, `lighteval`, `lmms_eval`, `evalchemy`, `judgearena`, or a contrib suite name):
 
 ```bash
 oellm-eval schedule --eval-csv-path custom_evals.csv
@@ -522,6 +583,7 @@ oellm-eval doctor --venv-path /path/to/.venv --task-groups "image-vqa,open-sci-0
 
 ```bash
 oellm-eval schedule --help
+oellm-eval --version   # version, install commit and harness versions, for bug reports
 ```
 
 ## Development

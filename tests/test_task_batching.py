@@ -51,10 +51,13 @@ TEMPLATE_FIELDS = {
     "limit": "",
     "venv_path": "",
     "lm_eval_include_path": "/tmp/tasks",
+    "lighteval_custom_tasks": "/tmp/custom_tasks.py",
     "hf_hub_offline": 1,
     "additional_model_args": "batch_size=32",
     "evalchemy_dir": "/opt/evalchemy",
     "tasks_per_job": 8,
+    "judgearena_args": "",
+    "judgearena_data": "/tmp/judgearena-data",
 }
 
 requires_awk = pytest.mark.skipif(shutil.which("awk") is None, reason="awk not available")

@@ -88,7 +88,7 @@ from the model name. No manual override is needed.
 | Field | Required | Level | Description |
 |-------|----------|-------|-------------|
 | `description` | Yes | group | Short description of the task group |
-| `suite` | Yes (group) | group or task | Evaluation suite; a task-level value overrides the group |
+| `suite` | Yes (group) | group or task | Evaluation suite: `lm-eval-harness`, `lighteval`, `lmms-eval`, `judgearena`, or a contrib suite; a task-level value overrides the group |
 | `n_shots` | Yes | group or task | List of shot counts; must be set at group or task level |
 | `dataset` | Recommended | group or task | HuggingFace dataset repo ID — without it, nothing is pre-downloaded for the task |
 | `task` | Yes | task | Task name as recognized by the evaluation suite |
@@ -96,6 +96,7 @@ from the model name. No manual override is needed.
 | `revisions` | No | task | HF dataset revisions/branches to pre-fetch (default `["main"]`; e.g. MVBench keeps videos on a `video` branch) |
 | `hf_models` | No | task | Auxiliary HF *model* repos to pre-download (e.g. a task router or SAM checkpoint) |
 | `hf_dataset_files` | No | task | Specific files to fetch from a dataset repo: `{repo_id, patterns, revision?}` — use for large repos where only a subset is needed |
+| `metric` | Recommended | group or task | The metric `oellm-eval collect` reports for the task. Without it, collect takes the first common metric key it finds (`--fetch-all-metrics` keeps all of them). JudgeArena tasks need none: collect keeps every metric they report |
 
 ## Language filtering (`group[lang]` brackets)
 
@@ -130,7 +131,10 @@ code (e.g. `deu_Latn`) from, in order:
    for new multilingual groups — see the template expansion above).
 3. **The task's `subset`** (e.g. `de`, `german`, `deu_Latn` all fold to
    `deu_Latn`).
-4. A **trailing language code in the task name** (e.g. `arc_challenge_mt_de`),
+4. A **lighteval-style `:lang` name suffix** (e.g. `gpqa_diamond:fi`), used when
+   the `subset` is an HF config name that is not a language (`gpqa_diamond`,
+   `default`).
+5. A **trailing language code in the task name** (e.g. `arc_challenge_mt_de`),
    used only when no `subset` is given.
 
 The normaliser (`oellm/task_groups.py`) folds the many spellings benchmarks use
@@ -153,7 +157,9 @@ about (some languages simply lack certain benchmarks).
 **Provide the `dataset` field** (at group or task level) wherever possible:
 compute nodes run with `HF_HUB_OFFLINE=1`, so anything not cached on the
 login node before submission fails at eval time. Tasks without a `dataset`
-field are simply skipped by the pre-download step.
+field are simply skipped by the pre-download step. JudgeArena tasks are the
+exception: they have no `dataset`, and `judgearena tasks download` fetches
+their task data and scoring files instead.
 
 Two details worth knowing:
 
@@ -167,6 +173,27 @@ Two details worth knowing:
    needs network access and is therefore excluded from the offline CI run —
    execute it locally when adding datasets:
    `uv run pytest tests/test_datasets.py -k my-group`.
+
+## Custom lighteval tasks
+
+lighteval tasks that are not built into lighteval live in
+`oellm/resources/custom_lighteval_tasks/reasoning/reasoning.py` and are passed to every
+lighteval run as `--custom-tasks` (override with `--lighteval-custom-tasks` or
+`LIGHTEVAL_CUSTOM_TASKS`). The file must expose a `TASKS_TABLE`; lighteval
+rejects names that collide with its built-in tasks. Each registry entry's
+`dataset`/`subset` must equal the task's `hf_repo`/`hf_subset`, because compute
+nodes can only read what was pre-downloaded.
+`tests/test_custom_lighteval_tasks.py` checks this and the prompts and metrics;
+it needs lighteval installed, which CI's `eval-base` environment does not have,
+so run it locally after changing the file.
+
+The `gpqa-diamond` group is separate from the English-only evalchemy
+`GPQADiamond` in the `reasoning` group (sampled, three repeats, its own prompt)
+and from lighteval's built-in `gpqa:diamond`. Its English task keeps the
+built-in's prompt and answer extraction, its Finnish task those of the LumiOpen
+lighteval fork, so the two languages are scored the same way. Both fix the
+answer order per question from a hash of the question; the built-in draws it
+from the process-global RNG, so it depends on the other tasks in the same run.
 
 ## Custom Benchmarks (contrib plugins)
 

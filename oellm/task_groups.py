@@ -50,6 +50,15 @@ _LANG_ALIAS = {
     "uk": "ukr_Cyrl",
     "he": "heb_Hebr",
     "en": "eng_Latn",
+    # JudgeArena language selectors
+    "ar": "arb_Arab",
+    "fa": "pes_Arab",
+    "hi": "hin_Deva",
+    "id": "ind_Latn",
+    "ja": "jpn_Jpan",
+    "ko": "kor_Hang",
+    "vi": "vie_Latn",
+    "zh": "zho_Hans",
     "bg": "bul_Cyrl",
     "da": "dan_Latn",
     "et": "est_Latn",
@@ -73,6 +82,28 @@ _LANG_ALIAS = {
     "pt_br": "por_Latn",
     # full English names (include)
     "albanian": "als_Latn",
+    "bengali": "ben_Beng",
+    "bosnian": "bos_Latn",
+    "catalan": "cat_Latn",
+    "czech": "ces_Latn",
+    "danish": "dan_Latn",
+    "english": "eng_Latn",
+    "galician": "glg_Latn",
+    "hindi": "hin_Deva",
+    "icelandic": "isl_Latn",
+    "indonesian": "ind_Latn",
+    "irish": "gle_Latn",
+    "japanese": "jpn_Jpan",
+    "latvian": "lvs_Latn",
+    "macedonian": "mkd_Cyrl",
+    "maltese": "mlt_Latn",
+    "mandarin-chinese": "zho_Hans",
+    "norwegian": "nob_Latn",
+    "romanian": "ron_Latn",
+    "slovak": "slk_Latn",
+    "slovene": "slv_Latn",
+    "standard-arabic": "arb_Arab",
+    "swedish": "swe_Latn",
     "armenian": "hye_Armn",
     "azerbaijani": "aze_Latn",
     "basque": "eus_Latn",
@@ -144,6 +175,10 @@ _LANG_ALIAS = {
 # Distinct individual-language codes folded into a macrolanguage code.
 _LANG_SPECIAL = {"ekk_Latn": "est_Latn"}  # global-piqa uses ekk (Standard Estonian)
 
+# Task names whose trailing ``_xx`` is not a language code: ``lsat_ar`` is LSAT
+# Analytical Reasoning, and ``ar`` became an alias for Arabic with JudgeArena.
+_NOT_A_LANGUAGE_SUFFIX = {"agieval_lsat_ar"}
+
 
 def _canonical_language(code: str | None) -> str | None:
     """Normalise any language spelling to a canonical ``lang_Scri`` code."""
@@ -169,8 +204,9 @@ def _resolve_task_languages(name: str, subset: str | None) -> list[str]:
 
     Translation pairs (``flores200:src-tgt`` and
     ``opensubtitles_multi40_src_to_tgt``) resolve to their non-English side;
-    every other task resolves via its ``subset``. Tasks with no recognisable
-    language (e.g. English-only standard benchmarks) return [].
+    every other task resolves via its ``subset``, then via a lighteval-style
+    ``benchmark:lang`` name suffix. Tasks with no recognisable language (e.g.
+    English-only standard benchmarks) return [].
     """
     if name.startswith("flores200:"):
         pair = name.split(":", 1)[1]
@@ -185,9 +221,16 @@ def _resolve_task_languages(name: str, subset: str | None) -> list[str]:
     lang = _canonical_language(subset)
     if lang:
         return [lang]
+    # lighteval-style ``benchmark:lang`` names (e.g. ``gpqa_diamond:fi``), whose
+    # subset is an HF config name such as ``gpqa_diamond`` or ``default``.
+    m = re.search(r":([a-z]{2,3})$", name)
+    if m:
+        lang = _canonical_language(m.group(1))
+        if lang:
+            return [lang]
     # Some explicitly-listed tasks omit `subset` and encode the language as a
     # trailing code in the task name (e.g. ``arc_challenge_mt_is``).
-    if subset is None:
+    if subset is None and name not in _NOT_A_LANGUAGE_SUFFIX:
         m = re.search(r"_([a-z]{2})$", name)
         if m:
             lang = _canonical_language(m.group(1))

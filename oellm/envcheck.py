@@ -29,10 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # Engines the cluster Singularity images contain (see containers/*.def:
-# lm-eval on the system python, lighteval as an isolated uv tool). Everything
-# else — lmms-eval, the oellm package itself (contrib dispatch), evalchemy —
-# is NOT in the images and requires --venv-path.
-_CONTAINER_SUPPORTED_SUITES = frozenset({"lm_eval", "lighteval"})
+# lm-eval on the system python, lighteval as an isolated uv tool, and
+# JudgeArena in its own venv — only in the Leonardo, LUMI and CI images).
+# Everything else — lmms-eval, the oellm package itself (contrib dispatch),
+# evalchemy — is NOT in the images and requires --venv-path.
+_CONTAINER_SUPPORTED_SUITES = frozenset({"lm_eval", "lighteval", "judgearena"})
 
 # Task groups that only produce valid numbers on a pinned engine version.
 # Running them on any other version does not fail — it silently changes the
@@ -75,6 +76,12 @@ SUITE_REQUIREMENTS: dict[str, SuiteRequirements] = {
         container_ok=False,
         hint="lmms-eval is not in the cluster containers; create the general "
         "venv (docs/VENV.md) and pass --venv-path",
+    ),
+    "judgearena": SuiteRequirements(
+        executables=("judgearena",),
+        container_ok=True,
+        hint="install JudgeArena in the venv so `judgearena` is in its bin/; of "
+        "the cluster images only Leonardo, LUMI and CI include it",
     ),
     "evalchemy": SuiteRequirements(
         modules=("accelerate",),
@@ -205,7 +212,7 @@ def collect_problems(
     """Return a human-readable problem list for the scheduled suite set.
 
     ``venv_path=None`` means container mode (the cluster Singularity image),
-    which only supports lm-eval and lighteval. In venv mode each requirement
+    which only supports lm-eval, lighteval and JudgeArena. In venv mode each requirement
     is probed against the venv's own interpreter, so the check reflects what
     will actually run on the compute node.
     """
@@ -229,7 +236,7 @@ def collect_problems(
             if not req.container_ok:
                 problems.append(
                     f"suite '{suite}': not available in the cluster container "
-                    f"image (it only ships lm-eval and lighteval). {req.hint}"
+                    f"image (it only ships lm-eval, lighteval and JudgeArena). {req.hint}"
                 )
             # Container contents can't be probed cheaply from the login node;
             # the static container_ok flag is the contract.
@@ -498,10 +505,12 @@ def run_doctor_checks(
                     "runtime mode",
                     FAIL,
                     f"no --venv-path, and the container image cannot run: "
-                    f"{', '.join(missing)} (it only ships lm-eval + lighteval)",
+                    f"{', '.join(missing)} (it only ships lm-eval, lighteval and JudgeArena)",
                 )
             else:
-                d.add("runtime mode", OK, "container mode (lm-eval + lighteval)")
+                d.add(
+                    "runtime mode", OK, "container mode (lm-eval, lighteval, JudgeArena)"
+                )
             return
 
         venv = Path(venv_path).expanduser()
