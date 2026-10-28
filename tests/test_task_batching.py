@@ -238,7 +238,9 @@ def test_only_lm_eval_rows_move_as_a_group(tmp_path: Path) -> None:
     keys = list(zip(df["model_path"], df["n_shot"], suites, strict=True))
     runs = [key for index, key in enumerate(keys) if index == 0 or key != keys[index - 1]]
     lm_eval_runs = [key for key in runs if key[2] == "lm_eval"]
-    assert len(lm_eval_runs) == len(set(lm_eval_runs)) == 2
+    # one contiguous run per model and shot count
+    lm_eval_keys = {key for key in keys if key[2] == "lm_eval"}
+    assert len(lm_eval_runs) == len(set(lm_eval_runs)) == len(lm_eval_keys)
     assert len(runs) > len(set(runs)), "lighteval rows were kept together"
 
 

@@ -31,8 +31,10 @@ text = [
     # task-groups.yaml follow it (0.4.13 renamed and moved some).
     "lm-eval==0.4.12",
     "latex2sympy2_extended",  # required by the polymath tasks
+    "word2number",  # required by the polymath scorer
     "torch",
-    "transformers",
+    # 5.20 removed transformers.data.metrics, which lm-eval tasks still import.
+    "transformers<5.20",
     "accelerate",
 ]
 # NOTE: lmms-eval is NOT a pip dep — its wheel drops `_default_template_yaml`
