@@ -21,9 +21,13 @@ it before comparing runs made with different versions.
 
 ### Added
 
+- lm-eval runs pass `--write_out` by default, and `--log_samples` saves every sample when requested.
+
 ### Changed
 
 ### Fixed
+
+- `--limit` now shortens evalchemy's benchmarks (`reasoning`: MATH500, GPQADiamond, AIME24, ...). They ignored it and ran in full; they now get `--debug`, which runs the first 2 questions (10 for LiveCodeBench) whatever the limit, and `schedule` warns about it (#154).
 
 ### Removed
 

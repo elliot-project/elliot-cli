@@ -78,6 +78,8 @@ class EvalConfig:
     # Cap on lm-eval-harness tasks per lm_eval call (1 = one call per task).
     tasks_per_job: int = 8
     limit: int | None = None
+    # Save every sample (lm_eval --log_samples, lighteval --save-details).
+    log_samples: bool = False
     verbose: bool = False
     download_only: bool = False
     dry_run: bool = False
@@ -149,6 +151,7 @@ class EvalConfig:
         max_array_len: int | None = None,
         tasks_per_job: int | None = None,
         limit: int | None = None,
+        log_samples: bool | None = None,
         verbose: bool | None = None,
         download_only: bool | None = None,
         dry_run: bool | None = None,
@@ -219,6 +222,7 @@ class EvalConfig:
             ("eval_csv_path", eval_csv_path),
             ("tasks_per_job", tasks_per_job),
             ("limit", limit),
+            ("log_samples", log_samples),
             ("verbose", verbose),
             ("download_only", download_only),
             ("dry_run", dry_run),
@@ -274,6 +278,7 @@ class EvalConfig:
             eval_csv_path=eval_csv_path,
             tasks_per_job=tasks_per_job if tasks_per_job is not None else 8,
             limit=limit,
+            log_samples=bool(log_samples) if log_samples is not None else False,
             verbose=bool(verbose) if verbose is not None else False,
             download_only=bool(download_only) if download_only is not None else False,
             dry_run=bool(dry_run) if dry_run is not None else False,
@@ -302,6 +307,7 @@ class EvalConfig:
             "eval_csv_path",
             "tasks_per_job",
             "limit",
+            "log_samples",
             "verbose",
             "download_only",
             "dry_run",
@@ -361,6 +367,7 @@ class EvalConfig:
             eval_csv_path=raw.get("eval_csv_path"),
             tasks_per_job=int(raw.get("tasks_per_job", 8)),
             limit=_optional_int(raw.get("limit")),
+            log_samples=bool(raw.get("log_samples", False)),
             verbose=bool(raw.get("verbose", False)),
             download_only=bool(raw.get("download_only", False)),
             dry_run=bool(raw.get("dry_run", False)),

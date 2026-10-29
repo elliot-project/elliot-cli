@@ -1009,10 +1009,10 @@ task_groups:
         dataset: mideind/icelandic-arc-challenge  # not in LumiOpen/arc_challenge_mt
 
   hellaswag-eu:
-    description: "Okapi HellaSwag multilingual (16 EU languages, 0-shot)."
+    description: "Okapi HellaSwag multilingual (16 EU languages, 10-shot)."
     suite: lm-eval-harness
     metric: acc_norm
-    n_shots: [0]
+    n_shots: [10]
     dataset: alexandrainst/m_hellaswag
     valid_langs: [da, nl, fr, de, hu, it, pt, ro, sk, es, sv, hr,
                   ca, eu, sr, uk]
@@ -1021,7 +1021,7 @@ task_groups:
         subset: "{lang}"
 
   reasoning:
-    description: "Reasoning tasks: GSM8k (4-shot), IFEval (0-shot), MBPP (3-shot), GPQA-Diamond (0-shot), MATH500 (0-shot), LiveCodeBench (0-shot), HumanEval (0-shot), AIME24 (0-shot), AIME25 (0-shot), AMC23 (0-shot)"
+    description: "Reasoning tasks: GSM8k (8-shot), IFEval (0-shot), MBPP (3-shot), GPQA-Diamond (0-shot), MATH500 (0-shot), LiveCodeBench (0-shot), HumanEval (0-shot), AIME24 (0-shot), AIME25 (0-shot), AMC23 (0-shot)"
     suite: lm-eval-harness
     # The evalchemy-routed tasks (GPQADiamond, MATH500, LiveCodeBench, HumanEval,
     # AIME24/25, AMC23) declare no metric: output key shape unverified; the
@@ -1029,7 +1029,7 @@ task_groups:
     tasks:
       - task: gsm8k
         metric: exact_match,strict-match  # the benchmark's original strict answer extraction; English output is format-stable
-        n_shots: [4]
+        n_shots: [8]
         dataset: openai/gsm8k
         subset: main
       - task: ifeval
