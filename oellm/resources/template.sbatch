@@ -19,6 +19,9 @@ TOTAL_EVALS={total_evals}
 # via oellm.contrib.dispatch) can read it from os.environ.  Built-in suites
 # below still interpolate $LIMIT directly into their CLI flags.
 export LIMIT="{limit}"
+# Non-empty only when every sample should be saved. Full sample dumps are
+# large, so this stays off unless explicitly requested.
+LOG_SAMPLES="{log_samples}"
 # Quantization request ("4bit" / "8bit" / empty). HF-style engines receive it
 # via --model_args below; contrib plugins may opt in by reading this variable.
 export OELLM_QUANTIZATION="{quantization}"
@@ -250,8 +253,10 @@ do
                 ${{LM_EVAL_TRC:+--trust_remote_code}} \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $$LM_EVAL_INCLUDE_PATH}} \
                 --batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}" \
+                --write_out \
                 ${{CACHE_REQUESTS:+--cache_requests $CACHE_REQUESTS}} \
-                ${{LIMIT:+--limit $LIMIT}}
+                ${{LIMIT:+--limit $LIMIT}} \
+                ${{LOG_SAMPLES:+--log_samples}}
             rc=$?
             echo "----------------------------------------------------"
             ;;
@@ -286,7 +291,8 @@ do
                     --load-tasks-multilingual \
                     --custom-tasks "$$LIGHTEVAL_CUSTOM_TASKS" \
                     --output-dir "$RESULTS_SUBDIR" \
-                    ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
+                    ${{LIMIT:+--max-samples $LIMIT}} \
+                    ${{LOG_SAMPLES:+--save-details}} < /dev/null
             else
                 _maybe_timeout singularity exec $SINGULARITY_ARGS \
                     $SINGULARITY_ENV_ARGS \
@@ -300,7 +306,8 @@ do
                         --load-tasks-multilingual \
                         --custom-tasks "$$LIGHTEVAL_CUSTOM_TASKS" \
                         --output-dir "$RESULTS_SUBDIR" \
-                        ${{LIMIT:+--max-samples $LIMIT}} < /dev/null
+                        ${{LIMIT:+--max-samples $LIMIT}} \
+                        ${{LOG_SAMPLES:+--save-details}} < /dev/null
             fi
             rc=$?
             ;;
@@ -358,6 +365,9 @@ do
                 (
                     source "$VENV_PATH/bin/activate"
                     cd "$EVALCHEMY_WORK_DIR" || exit 1
+                    # evalchemy passes --limit only to lm-eval tasks; its own benchmarks
+                    # (MATH500, AIME24, ...) ignore it and shrink only under --debug
+                    # No sample logging: evalchemy's benchmarks crash on it.
                     _maybe_timeout accelerate launch --num-processes "$GPUS_PER_NODE" --num-machines 1 \
                         $MULTI_GPU_FLAG -m eval.eval \
                         --model hf \
@@ -365,7 +375,7 @@ do
                         --model_args "{evalchemy_model_args}" \
                         --batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}" \
                         --output_path "$RESULTS_SUBDIR" \
-                        ${{LIMIT:+--limit $LIMIT}} < /dev/null
+                        ${{LIMIT:+--limit $LIMIT --debug}} < /dev/null
                 )
                 rc=$?
             else

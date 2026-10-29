@@ -68,6 +68,17 @@ def test_eval_with_config_yaml(tmp_path: Path) -> None:
     )
 
 
+def test_eval_forwards_log_samples() -> None:
+    with patch("oellm.scheduler.schedule_evals") as mock_sched:
+        eval_command(
+            models="EleutherAI/pythia-70m",
+            task_groups="open-sci-0.01",
+            log_samples=True,
+            dry_run=True,
+        )
+    assert mock_sched.call_args.kwargs["log_samples"] is True
+
+
 # ---------------------------------------------------------------------------
 # CLI overrides YAML
 # ---------------------------------------------------------------------------

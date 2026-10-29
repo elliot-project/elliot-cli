@@ -60,6 +60,7 @@ def schedule_evals(
     max_array_len: int | None = None,
     tasks_per_job: int | None = None,
     limit: int | None = None,
+    log_samples: bool | None = None,
     verbose: bool | None = None,
     download_only: bool | None = None,
     dry_run: bool | None = None,
@@ -115,7 +116,15 @@ def schedule_evals(
             down; 1 restores one call per task. Default 8.
         limit: If set, limit the number of samples per task (useful for quick testing).
             Passes --limit to lm_eval, --max_samples to lighteval, and
-            --generation.n_instructions to JudgeArena.
+            --generation.n_instructions to JudgeArena. evalchemy's own benchmarks
+            ignore the value: they get --debug, which runs a fixed subset (the first
+            2 questions, 10 for LiveCodeBench).
+        log_samples: If True, save every sample (prompt, model output, and
+            per-sample metrics) instead of only the aggregated scores. Passes
+            --log_samples to lm-eval-harness and --save-details to lighteval,
+            but nothing to evalchemy, whose benchmarks crash on it, or to
+            lmms-eval. Off by default. lm-eval-harness always gets --write_out,
+            which logs each task's first sample either way.
         download_only: If True, only download the datasets and models and exit.
         dry_run: If True, generate the SLURM script but don't submit it to the scheduler.
         skip_checks: If True, skip container image, environment pre-flight (engine availability
@@ -169,6 +178,7 @@ def schedule_evals(
         max_array_len=max_array_len,
         tasks_per_job=tasks_per_job,
         limit=limit,
+        log_samples=log_samples,
         verbose=verbose,
         download_only=download_only,
         dry_run=dry_run,
@@ -207,6 +217,7 @@ def schedule_evals(
         max_array_len=cfg.slurm.max_array_len,
         tasks_per_job=cfg.tasks_per_job,
         limit=cfg.limit,
+        log_samples=cfg.log_samples,
         verbose=cfg.verbose,
         download_only=cfg.download_only,
         dry_run=cfg.dry_run,
@@ -426,6 +437,7 @@ def eval_command(
     max_array_len: int | None = None,
     tasks_per_job: int | None = None,
     limit: int | None = None,
+    log_samples: bool | None = None,
     verbose: bool | None = None,
     download_only: bool | None = None,
     dry_run: bool | None = None,
@@ -456,6 +468,7 @@ def eval_command(
         max_array_len: Maximum concurrent SLURM array jobs.
         tasks_per_job: Maximum lm-eval-harness tasks per `lm_eval` call (default 8).
         limit: Limit samples per task.
+        log_samples: Save every sample (lm-eval-harness and lighteval only).
         download_only: Only pre-download models and datasets, then exit.
         dry_run: Generate the SLURM script without submitting.
         skip_checks: Skip container/model/dataset validation.
@@ -479,6 +492,7 @@ def eval_command(
         max_array_len=max_array_len,
         tasks_per_job=tasks_per_job,
         limit=limit,
+        log_samples=log_samples,
         verbose=verbose,
         download_only=download_only,
         dry_run=dry_run,

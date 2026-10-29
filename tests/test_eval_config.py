@@ -459,6 +459,12 @@ class TestMergeProvenance:
         cli_cfg = EvalConfig.from_cli_kwargs(tasks_per_job=8)
         assert yaml_cfg.merge(cli_cfg).tasks_per_job == 8
 
+    def test_log_samples_from_yaml_and_cli(self):
+        yaml_cfg = self._yaml_cfg(log_samples=True)
+        assert yaml_cfg.merge(EvalConfig.from_cli_kwargs()).log_samples is True
+        cli_cfg = EvalConfig.from_cli_kwargs(log_samples=False)
+        assert yaml_cfg.merge(cli_cfg).log_samples is False
+
     def test_judgearena_and_custom_tasks_from_yaml_and_cli(self):
         yaml_cfg = self._yaml_cfg(
             lighteval_custom_tasks="/tasks/custom.py",

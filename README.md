@@ -283,6 +283,8 @@ lmms-eval tasks (image, video, audio) target MPS automatically on macOS; set
 `LMMS_MODEL_ARGS` (for example `device=cpu,device_map=cpu`) to override the
 device arguments on any host. See [docs/VENV.md](docs/VENV.md).
 
+lm-eval-harness runs always pass `--write_out`, so the job log includes the prompt and gold target for the first sample of each task. To also save every sample, pass `--log-samples`. That writes `samples_*.jsonl` for lm-eval-harness and passes `--save-details` to lighteval. It is off by default because those files are large. evalchemy does not get the flag, because its benchmarks crash on it. Most of them (not HumanEval or LiveCodeBench) keep every question and model output in their results file anyway. lmms-eval does not get it either.
+
 **Air-gapped cluster nodes (no internet):** batch jobs set `HF_HUB_OFFLINE=1` and get `HF_HOME` from your cluster env. With `--local`, the CLI defaults `HF_HOME` to `~/.cache/huggingface` if unset and would otherwise allow Hub access—so on a compute node without network, export your real cache and offline flag before running, for example:
 
 ```bash
