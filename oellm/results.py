@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from oellm import decontaminated, sample_exclusion
 from oellm.constants import METRIC_FALLBACK_KEYS
 from oellm.utils import _setup_logging
 
@@ -412,12 +413,38 @@ def _evaluated_at(data: dict, path: Path) -> str:
     return moment.isoformat(timespec="seconds")
 
 
+def _pair_clean_with_full(rows: list[dict]) -> list[dict]:
+    """Keep a clean score of ``collect --exclude-samples`` only if the full score
+    kept for the same task and metric comes from the same run."""
+
+    def key(row: dict) -> tuple:
+        return (row["model_name"], row["task"], row["n_shot"], row["metric_name"])
+
+    run_of = {key(r): r.get("_source") for r in rows if r.get("subset") == "full"}
+    kept = []
+    missing = set()
+    for r in rows:
+        if r.get("subset") == "clean" and run_of.get(key(r)) != r.get("_source"):
+            missing.add(f"{r['model_name']} | {r['task']} | n_shot={r['n_shot']}")
+            continue
+        kept.append(r)
+    if missing:
+        logging.warning(
+            "No scores without blocklisted samples for "
+            + ", ".join(sorted(missing))
+            + ": the full score kept comes from another run of the same task, "
+            "which cannot be filtered."
+        )
+    return kept
+
+
 def collect_results(
     results_dir: str,
     output_csv: str = "eval_results.csv",
     *,
     check: bool = False,
     fetch_all_metrics: bool = False,
+    exclude_samples: str | None = None,
     push: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -430,10 +457,31 @@ def collect_results(
         check: Check for missing evaluations and create a missing jobs CSV
         fetch_all_metrics: Emit one row per numeric metric the engine reported
             instead of only the task's primary metric
+        exclude_samples: Directory of blocklisted dataset rows, one
+            ``<benchmark>.jsonl`` per benchmark (e.g. contaminated test rows).
+            Tasks holding such rows are also reported without them, recomputed
+            from the samples saved with ``--log-samples``, in rows with
+            ``subset`` ``clean`` and ``n_excluded`` set. These rows go to the
+            CSV and the Markdown report, not to the JSON envelope. See the README.
         push: Also push the collected results to the dashboard (see `oellm-eval push`)
         verbose: Enable verbose logging
     """
     _setup_logging(verbose)
+
+    if exclude_samples:
+        match_fields = sample_exclusion.load_match_fields()
+        blocklist = sample_exclusion.load_blocklist(exclude_samples, match_fields)
+        exclusion_task_map = sample_exclusion.load_task_map()
+        exclusion_alignments = sample_exclusion.load_alignments()
+        exclusion_normalized = sample_exclusion.load_normalized()
+        exclusion_match_on = set(match_fields)
+        exclusion_targets = {t for tasks in exclusion_task_map.values() for t in tasks}
+        unmapped = sorted(b for b in blocklist if b not in exclusion_task_map)
+        if unmapped:
+            logging.info(
+                "Blocklisted benchmarks with no oellm-eval task, ignored: "
+                + ", ".join(unmapped)
+            )
 
     task_metrics = _load_task_metrics()
 
@@ -497,8 +545,12 @@ def collect_results(
                 ],
                 ignore_index=True,
             )
+            if "decontaminated" in jobs_df.columns:
+                jobs_df["decontaminated"] = jobs_df["decontaminated"].fillna("")
             dup_cols = [
-                c for c in ("model_path", "task_path", "n_shot") if c in jobs_df.columns
+                c
+                for c in ("model_path", "task_path", "n_shot", "decontaminated")
+                if c in jobs_df.columns
             ]
             if dup_cols:
                 # A job scheduled with and without --limit counts as full.
@@ -508,7 +560,7 @@ def collect_results(
             logging.info(f"Merged jobs.csv: {len(jobs_df)} unique scheduled jobs")
 
     rows = []
-    # (model, task, n_shot) -> a full result exists
+    # (model, task, n_shot, decontaminated list or "") -> a full result exists
     completed_jobs: dict[tuple, bool] = {}
     file_ctx: dict = {}
     row_run: dict[int, Path] = {}
@@ -523,7 +575,7 @@ def collect_results(
 
     def _emit(model: str, task: str, n_shot, pairs: list[tuple[str, float]]) -> None:
         if check and pairs:
-            key = (model, task, n_shot)
+            key = (model, task, n_shot, file_ctx["decontaminated"] or "")
             completed_jobs[key] = completed_jobs.get(key, False) or (
                 file_ctx["limit"] is None
             )
@@ -546,9 +598,11 @@ def collect_results(
             if file_ctx["run_dir"] is not None:
                 row_run[id(row)] = file_ctx["run_dir"]
 
+    decontaminated_lists = {f"samples-{name}.json" for name in decontaminated.names()}
     for json_file in json_files:
-        # Provenance sidecars are consumed separately above, not result files.
-        if json_file.name == "provenance.json":
+        # Provenance sidecars are consumed separately above, and the lists a
+        # decontaminated run passes to lm-eval as --samples are no results.
+        if json_file.name == "provenance.json" or json_file.name in decontaminated_lists:
             continue
         # A truncated file (OOM-killed / timed-out SLURM task) must not abort
         # the whole collection; skip it and let --check report the job missing.
@@ -577,6 +631,7 @@ def collect_results(
             limit=_sample_limit(data, provenance),
             quantization=_quantization(data),
             evaluated_at=_evaluated_at(data, json_file),
+            decontaminated=None,
         )
 
         # JudgeArena writes reports and annotations next to its metadata file;
@@ -606,6 +661,14 @@ def collect_results(
                     f"{json_file.name} — check the suite's task_metrics entry"
                 )
             continue
+
+        try:
+            # The list of marked documents the run left out, if any.
+            decontaminated_by = decontaminated.run_of(json_file, data)
+        except ValueError as e:
+            logging.warning(f"Skipped {json_file}, a decontaminated run: {e}")
+            continue
+        file_ctx["decontaminated"] = decontaminated_by
 
         # Model name lives in different keys depending on the harness:
         # - lmms-eval: model_name_or_path is the checkpoint, model_name is the
@@ -808,14 +871,124 @@ def collect_results(
                 f"--check will keep reporting its jobs as missing."
             )
 
+        if decontaminated_by:
+            excluded_by_task = decontaminated.load(decontaminated_by)["tasks"]
+            for r in rows[rows_before_file:]:
+                r["subset"] = f"decontaminated:{decontaminated_by}"
+                r["n_excluded"] = sum(
+                    len(excluded_by_task[leaf]["excluded"])
+                    for leaf in sample_exclusion._leaves(r["task"], group_subtasks_map)
+                    if leaf in excluded_by_task
+                )
+
+        if exclude_samples and not decontaminated_by:
+            # Report each task that loses blocklisted samples again, without them.
+            file_rows = rows[rows_before_file:]
+            for r in file_rows:
+                # Pairs each clean score with its run's full score.
+                r["_source"] = str(json_file)
+            try:
+                clean = sample_exclusion.clean_results(
+                    json_file,
+                    data,
+                    blocklist,
+                    exclusion_task_map,
+                    exclusion_alignments,
+                    exclusion_normalized,
+                    exclusion_match_on,
+                )
+            except sample_exclusion.RunNotFilterable as e:
+                # E.g. an older run without --log-samples: no clean rows.
+                logging.warning(f"No scores without blocklisted samples: {e}")
+                clean = {}
+            for name, (clean_result, n_excluded) in clean.items():
+                full_rows = [r for r in file_rows if r["task"] == name]
+                if not full_rows:
+                    # MMLU subjects are reported through their group; only a
+                    # mapped task without a row is logged.
+                    if name in exclusion_targets:
+                        logging.info(
+                            f"{model_name} | {name}: {n_excluded} blocklisted "
+                            "documents, but the task is only reported as part of "
+                            "a larger group, so it gets no score without them"
+                        )
+                    continue
+                wanted = {r["metric_name"] for r in full_rows}
+                clean_metrics = {
+                    m: v for m, v in _extract_all_metrics(clean_result) if m in wanted
+                }
+                missing = wanted - clean_metrics.keys()
+
+                # Metric names keep the engine's ",<filter>" suffix.
+                def _stem(m: str) -> str:
+                    base, sep, filter_name = m.partition(",")
+                    return base.removesuffix("_stderr") + sep + filter_name
+
+                # Bootstrapped stderrs (perplexity, corpus BLEU) are left out.
+                bootstrapped = {
+                    m
+                    for m in missing
+                    if m.partition(",")[0].endswith("_stderr")
+                    and _stem(m) in clean_metrics
+                }
+                # lighteval's chrF(++) and TER score the first sample alone (None).
+                first_sample_only = {
+                    m
+                    for m in missing
+                    if _stem(m) in clean_result and clean_result[_stem(m)] is None
+                }
+                unrecomputable = missing - bootstrapped - first_sample_only
+                if unrecomputable:
+                    raise sample_exclusion.SampleExclusionError(
+                        f"{name}: {sorted(unrecomputable)} cannot be "
+                        "recomputed without the blocklisted samples; only metrics "
+                        "aggregated from a number saved for every sample (a mean, "
+                        "perplexity, ifeval's instruction-level accuracy) can."
+                    )
+                if bootstrapped:
+                    logging.warning(
+                        f"{model_name} | {name}: no score without blocklisted samples "
+                        f"for {', '.join(sorted(bootstrapped))}, which the harness "
+                        "estimates by bootstrapping"
+                    )
+                if first_sample_only:
+                    logging.warning(
+                        f"{model_name} | {name}: no score without blocklisted samples "
+                        f"for {', '.join(sorted(first_sample_only))}, which lighteval "
+                        "computes from its first sample alone"
+                    )
+                logging.info(
+                    f"{model_name} | {name}: {n_excluded} blocklisted documents excluded"
+                )
+                rows.extend(
+                    {
+                        **r,
+                        "performance": clean_metrics[r["metric_name"]],
+                        "performance_normalized": _normalize_to_100(
+                            clean_metrics[r["metric_name"]], r["metric_name"], r["task"]
+                        ),
+                        "subset": "clean",
+                        "n_excluded": n_excluded,
+                    }
+                    for r in full_rows
+                    if r["metric_name"] in clean_metrics
+                )
+
     if not rows and not check:
         logging.warning("No results extracted from JSON files")
         return
 
     if rows:
-        # One row per (model, task, n_shot, metric): a full evaluation beats a
-        # --limit run, then the newest wins. Dedup the list, not a DataFrame,
-        # so None in performance_normalized doesn't become NaN.
+        # Scores without blocklisted or decontaminated samples are reported
+        # next to the full ones, in a subset of their own.
+        if exclude_samples or any("subset" in r for r in rows):
+            for r in rows:
+                r.setdefault("subset", "full")
+                r.setdefault("n_excluded", 0)
+
+        # One row per (model, task, n_shot, metric, subset): a full evaluation
+        # beats a --limit run, then the newest wins. Dedup the list, not a
+        # DataFrame, so None in performance_normalized doesn't become NaN.
         _deduped: dict[tuple, tuple[tuple, dict]] = {}
         for _i, _row in enumerate(rows):
             _key = (
@@ -823,6 +996,7 @@ def collect_results(
                 _row.get("task"),
                 _row.get("n_shot"),
                 _row.get("metric_name"),
+                _row.get("subset"),
             )
             _rank = (_row.get("limit") is None, _row.get("evaluated_at") or "", _i)
             if _key not in _deduped:
@@ -834,7 +1008,7 @@ def collect_results(
                 _where = (
                     f"model={_key[0]!r} task={_key[1]!r} n_shot={_key[2]!r} "
                     f"metric={_key[3]!r}"
-                )
+                ) + (f" subset={_key[4]!r}" if _key[4] not in (None, "full") else "")
                 if _kept.get("limit") is None and _dropped.get("limit") is not None:
                     logging.warning(
                         f"Kept the full evaluation for {_where} "
@@ -851,6 +1025,10 @@ def collect_results(
             if _kept is _row:
                 _deduped[_key] = (_rank, _row)
         rows = [_row for _, _row in _deduped.values()]
+        if exclude_samples:
+            rows = _pair_clean_with_full(rows)
+        for r in rows:
+            r.pop("_source", None)
 
         limited = [r for r in rows if r.get("limit") is not None]
         if limited:
@@ -859,9 +1037,18 @@ def collect_results(
                 f"runs, not full evaluations (marked in the outputs)"
             )
 
+        # The dashboard keys a score by model, task, n_shot and metric, so the
+        # JSON envelope keeps the full scores only.
+        full_rows = [r for r in rows if r.get("subset", "full") == "full"]
+        if len(full_rows) < len(rows):
+            logging.info(
+                f"{len(rows) - len(full_rows)} scores without blocklisted or "
+                "decontaminated samples are in the CSV and Markdown only, not in "
+                "the JSON envelope"
+            )
         run_provenance = [
             {**provenance_cache[_dir], "_path": str(_dir / "provenance.json")}
-            for _dir in sorted({row_run[id(r)] for r in rows if id(r) in row_run})
+            for _dir in sorted({row_run[id(r)] for r in full_rows if id(r) in row_run})
         ]
 
         df = pd.DataFrame(rows)
@@ -872,7 +1059,7 @@ def collect_results(
         output_stem = Path(output_csv).with_suffix("")
         json_path = Path(f"{output_stem}.json")
         md_path = Path(f"{output_stem}.md")
-        write_results_json(rows, json_path, run_provenance=run_provenance)
+        write_results_json(full_rows, json_path, run_provenance=run_provenance)
         write_results_markdown(rows, md_path)
         logging.info(f"Results JSON: {json_path}")
         logging.info(f"Results Markdown: {md_path}")
@@ -898,7 +1085,15 @@ def collect_results(
         missing_jobs = []
 
         for _, job in jobs_df.iterrows():
-            job_tuple = (job["model_path"], job["task_path"], job["n_shot"])
+            decontaminated_job = job.get("decontaminated")
+            if not isinstance(decontaminated_job, str):  # absent, or NaN
+                decontaminated_job = ""
+            job_tuple = (
+                job["model_path"],
+                job["task_path"],
+                job["n_shot"],
+                decontaminated_job,
+            )
             needs_full = bool(job.get("_needs_full"))
 
             is_completed = False
@@ -909,11 +1104,17 @@ def collect_results(
                 is_completed = True
             else:
                 for completed_job, has_full in completed_jobs.items():
-                    completed_model, completed_task, completed_n_shot = completed_job
+                    (
+                        completed_model,
+                        completed_task,
+                        completed_n_shot,
+                        completed_decontaminated,
+                    ) = completed_job
 
                     if (
                         job["n_shot"] == completed_n_shot
                         and job["task_path"] == completed_task
+                        and decontaminated_job == completed_decontaminated
                         and (has_full or not needs_full)
                         and _model_paths_match(
                             str(job["model_path"]), str(completed_model)
@@ -1045,10 +1246,13 @@ def write_results_markdown(
     ]
     has_raw_fallback = False
     has_lower_is_better = False
+    has_bits_per_byte = False
     has_limited = False
     for row in rows:
         model = row.get("model_name", "")
         task = row.get("task", "")
+        if row.get("subset", "full") != "full":
+            task = f"{task} ({row['subset']})"
         n_shot = row.get("n_shot", 0)
         metric = row.get("metric_name", "")
         normalized = row.get("performance_normalized")
@@ -1063,6 +1267,8 @@ def write_results_markdown(
             has_limited = True
         if any(k in metric.lower() for k in ("wer", "mer", "cer")):
             has_lower_is_better = True
+        if metric.split(",")[0] == "bits_per_byte":
+            has_bits_per_byte = True
         lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf_cell} |")
 
     # Only emit footnotes that apply to this report.
@@ -1073,6 +1279,8 @@ def write_results_markdown(
         footnotes.append("> `†` = test run with --limit, not a full evaluation.")
     if has_lower_is_better:
         footnotes.append("> WER/MER/CER are lower-is-better.")
+    if has_bits_per_byte:
+        footnotes.append("> bits_per_byte is lower-is-better.")
     if footnotes:
         lines.append("")
         lines.extend(footnotes)

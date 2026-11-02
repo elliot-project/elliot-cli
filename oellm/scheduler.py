@@ -14,7 +14,7 @@ from string import Template
 
 import pandas as pd
 
-from oellm import __version__
+from oellm import __version__, decontaminated
 from oellm.constants import EvaluationJob
 from oellm.core import DefaultHFAdapter
 from oellm.results import _collector_git_commit, _load_task_metrics
@@ -214,6 +214,25 @@ def _download_judgearena_tasks(
     subprocess.run(command, check=True, env=env)
 
 
+def _holds_decontaminated_tasks(include_path: Path) -> bool:
+    """Whether *include_path* holds oellm's MMMLU tasks
+    (custom_lm_eval_tasks/mmmlu_decontaminated), whose few-shot examples skip
+    the documents a decontaminated run leaves out; lm-eval's own do not."""
+    bundled = Path(
+        str(files("oellm.resources") / "custom_lm_eval_tasks" / "mmmlu_decontaminated")
+    )
+    expected = {p.name: p.read_bytes() for p in bundled.iterdir() if p.is_file()}
+    marker = min(name for name in expected if name.endswith(".yaml"))
+    return any(
+        all(
+            (found.parent / name).is_file()
+            and (found.parent / name).read_bytes() == content
+            for name, content in expected.items()
+        )
+        for found in include_path.rglob(marker)
+    )
+
+
 @capture_third_party_output_from_kwarg("verbose")
 def schedule_evals(
     models: str | None = None,
@@ -373,6 +392,9 @@ def schedule_evals(
             df["eval_suite"] = "lm_eval"
         else:
             df["eval_suite"] = df["eval_suite"].fillna("lm_eval")
+        if "decontaminated" not in df.columns:
+            df["decontaminated"] = ""
+        df["decontaminated"] = df["decontaminated"].fillna("")
 
         eval_jobs.extend(
             [
@@ -381,6 +403,7 @@ def schedule_evals(
                     task_path=row["task_path"],
                     n_shot=row["n_shot"],
                     eval_suite=row["eval_suite"],
+                    decontaminated=row["decontaminated"],
                 )
                 for _, row in df.iterrows()
             ]
@@ -403,6 +426,7 @@ def schedule_evals(
                         task_path=result.task,
                         n_shot=result.n_shot,
                         eval_suite=result.suite,
+                        decontaminated=result.decontaminated or "",
                     )
                     for model in models
                     for result in expanded
@@ -414,7 +438,12 @@ def schedule_evals(
             # regiondial_refcocog_all`` (contrib) get routed correctly.
             # Tasks not in any group default to lm_eval.
             task_suite_map = _build_task_suite_map()
-            scheduled = {(j.model_path, j.task_path, j.n_shot) for j in eval_jobs}
+            # A decontaminated group's row does not stand in for the whole task.
+            scheduled = {
+                (j.model_path, j.task_path, j.n_shot)
+                for j in eval_jobs
+                if not j.decontaminated
+            }
             eval_jobs.extend(
                 [
                     EvaluationJob(
@@ -453,6 +482,7 @@ def schedule_evals(
                         task_path=job.task_path,
                         n_shot=job.n_shot,
                         eval_suite=job.eval_suite,
+                        decontaminated=job.decontaminated,
                     )
                 )
 
@@ -589,6 +619,47 @@ def schedule_evals(
             limit,
         )
     judgearena_rows = df["eval_suite"].eq("judgearena")
+    decontaminated_rows = df["decontaminated"].ne("")
+    if decontaminated_rows.any():
+        if limit:
+            raise ValueError(
+                "Decontaminated task groups run lm-eval with --samples, which "
+                "cannot be combined with --limit."
+            )
+        if not log_samples:
+            logging.info(
+                "Saving samples (--log-samples): collect checks that a decontaminated "
+                "run's samples are the documents its list keeps."
+            )
+            log_samples = True
+        not_lm_eval = df.loc[
+            decontaminated_rows
+            & ~df["eval_suite"].isin(["lm_eval", "lm-eval", "lm-eval-harness"]),
+            "task_path",
+        ]
+        if not not_lm_eval.empty:
+            raise ValueError(
+                "Only lm-eval tasks can run decontaminated: "
+                + ", ".join(sorted(set(not_lm_eval)))
+            )
+        for name in df.loc[decontaminated_rows, "decontaminated"].unique():
+            decontaminated.load(name)  # an unknown list fails here
+        include_path = Path(
+            lm_eval_include_path
+            or os.environ.get("LM_EVAL_INCLUDE_PATH")
+            or str(files("oellm.resources") / "custom_lm_eval_tasks")
+        )
+        if not _holds_decontaminated_tasks(include_path):
+            raise ValueError(
+                f"The lm-eval include path {include_path} lacks oellm's MMMLU tasks "
+                "for decontaminated runs (oellm/resources/custom_lm_eval_tasks/"
+                "mmmlu_decontaminated); copy them into it, or schedule "
+                "decontaminated task groups with oellm's own (neither "
+                "--lm-eval-include-path nor LM_EVAL_INCLUDE_PATH)."
+            )
+    else:
+        # jobs.csv keeps its columns when no task runs decontaminated.
+        df = df.drop(columns="decontaminated")
     df.loc[judgearena_rows, "n_shot"] = 0
 
     judgearena_values = judgearena_kwargs or {}
@@ -726,6 +797,9 @@ def schedule_evals(
     df["_batch"] = range(len(df))
     df.loc[lm_eval_rows, "_batch"] = -1
     batch_key = ["model_path", "n_shot", "_batch"]
+    if "decontaminated" in df.columns:
+        # A decontaminated run gets its own lm-eval call, with --samples.
+        batch_key.append("decontaminated")
     group_order = (
         df[batch_key]
         .drop_duplicates()
@@ -745,6 +819,12 @@ def schedule_evals(
     )
 
     df.to_csv(csv_path, index=False)
+    if "decontaminated" in df.columns:
+        for name in df["decontaminated"].unique():
+            if name:
+                (evals_dir / f"samples-{name}.json").write_text(
+                    json.dumps(decontaminated.samples(name))
+                )
 
     sbatch_template = (files("oellm.resources") / "template.sbatch").read_text()
 
@@ -871,6 +951,7 @@ def schedule_evals(
         time_limit=time_limit,  # Dynamic time limit
         slurm_mem=slurm_mem,
         limit=limit if limit else "",  # Sample limit for quick testing
+        samples_dir=str(evals_dir),
         log_samples="true" if log_samples else "",
         venv_path=venv_path or "",
         lm_eval_include_path=str(

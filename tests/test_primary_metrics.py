@@ -110,3 +110,25 @@ def test_missing_declared_metric_drops_the_task(tmp_path, caplog, monkeypatch):
         collect_results(str(run), str(out), fetch_all_metrics=False)
     assert not out.exists()
     assert "No numeric metric for 'arc_easy'" in caplog.text
+
+
+def test_bpb_corpus_reports_bits_per_byte(tmp_path):
+    """wikitext reports three perplexity metrics. Only bits_per_byte is kept, and
+    lm-eval's "N/A" stderr for it is not numeric, so it is skipped."""
+    run = _write_result(
+        tmp_path,
+        "wikitext",
+        {
+            "word_perplexity,none": 40.0,
+            "word_perplexity_stderr,none": "N/A",
+            "byte_perplexity,none": 1.8,
+            "byte_perplexity_stderr,none": "N/A",
+            "bits_per_byte,none": 0.85,
+            "bits_per_byte_stderr,none": "N/A",
+        },
+    )
+    out = tmp_path / "out.csv"
+    collect_results(str(run), str(out), fetch_all_metrics=False)
+    df = pd.read_csv(out)
+    assert list(df["metric_name"]) == ["bits_per_byte,none"]
+    assert list(df["performance"]) == [0.85]

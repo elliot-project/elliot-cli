@@ -10,6 +10,8 @@ class EvaluationJob:
     task_path: str
     n_shot: int
     eval_suite: str
+    # The list of marked documents left out of the run (oellm/decontaminated.py).
+    decontaminated: str = ""
 
 
 # Mapping of model path patterns to lmms-eval adapter class names.

@@ -84,6 +84,10 @@ Task groups are pre-defined evaluation suites in [`task-groups.yaml`](oellm/reso
 |---|---|---|
 | `open-sci-0.01` | COPA, MMLU, HellaSwag, ARC, etc. | lm-eval |
 | `crows-pairs` | CrowS-Pairs social bias benchmark (English, 0-shot, `pct_stereotype`) | lm-eval |
+| `bpb-corpus` | Bits-per-byte on held-out text (WikiText-2, 0-shot, `bits_per_byte`, lower is better). For your own text, see [docs/TASKS.md](docs/TASKS.md#bits-per-byte-on-your-own-text) | lm-eval |
+| `bpb-flores-eu` | Bits-per-byte on FLORES-200 devtest in the 36 OpenEuroLLM target languages (0-shot, lower is better). Each source article's sentences are scored as one document. `facebook/flores` is gated, so the HF token needs access | lm-eval |
+| `bpb-mc-en` | Bits-per-byte of the gold answer on English multiple-choice tasks (ARC-Easy/Challenge, HellaSwag, OpenBookQA, PIQA, Social IQa, Winogrande; 5-shot, lower is better) | lm-eval |
+| `decontaminated-agenttrove-0.0` | The tasks holding test rows agenttrove-0.0 flagged as contaminated, run without those rows, see [Evaluating without contaminated samples](#evaluating-without-contaminated-samples) | lm-eval |
 | `belebele-eu-5-shot` | Belebele in 23 European languages | lm-eval |
 | `flores-200-eu-to-eng` | EU to English translation | lighteval |
 | `flores-200-eng-to-eu` | English to EU translation | lighteval |
@@ -500,6 +504,32 @@ The `--check` flag outputs a `results_missing.csv` that can be used to re-schedu
 ```bash
 oellm-eval schedule --eval-csv-path results_missing.csv
 ```
+
+### Scores without contaminated samples
+
+To report scores without blocklisted test rows, schedule the runs with `--log-samples`, then run:
+
+```bash
+oellm-eval collect /path/to/eval-output-dir --exclude-samples /path/to/blocklist
+```
+
+The blocklist is a directory with one `<benchmark>.jsonl` per benchmark, holding the original dataset rows. [`sample-exclusion.yaml`](oellm/resources/sample-exclusion.yaml) lists the tasks each benchmark appears in.
+
+Each affected task gets extra rows with `subset=clean`, recomputed without the blocklisted rows, and an `n_excluded` column. A contaminated sample is removed from every language, and from copies of the benchmark in other suites (for example GSM8K questions in MGSM and PolyMath). These rows, and those of the decontaminated runs below, go to the CSV and the Markdown report only. `eval_results.json`, which `push` sends to the dashboard, keeps only the full scores, because the dashboard has no column to tell them apart.
+
+Some scores can't be recomputed exactly, so `collect` leaves them out with a warning: bootstrapped standard errors, and lighteval's chrF, chrF++ and TER. It stops with an error if a metric can't be recomputed at all (such as SQuAD v2's F1), or if the saved samples don't reproduce the reported score. Runs made with `--limit`, or without saved samples, get no clean rows.
+
+### Evaluating without contaminated samples
+
+```bash
+oellm-eval schedule --models "my-model" --task-groups decontaminated-agenttrove-0.0
+```
+
+This group runs the lm-eval tasks on all their test questions except the ones the decontamination pipeline flagged in agenttrove-0.0. The list of questions is in [`oellm/resources/decontaminated/agenttrove-0.0.json`](oellm/resources/decontaminated/agenttrove-0.0.json), so the pipeline output isn't needed. `collect` reports these results with `subset=decontaminated:agenttrove-0.0`. The `all` group doesn't include it.
+
+Its scores match `collect --exclude-samples` for 0-shot tasks and for tasks whose few-shot examples are the first documents. Tasks that draw examples at random (GSM8K, BoolQ, MGSM) differ slightly.
+
+One flagged question is among the first five few-shot examples of MMMLU's `high_school_mathematics`. This group uses the next question instead ([`mmmlu_decontaminated/`](oellm/resources/custom_lm_eval_tasks/mmmlu_decontaminated)), so the clean score from `collect --exclude-samples` still shows the flagged question as an example, and `collect` logs that.
 
 ## CSV-Based Scheduling
 
