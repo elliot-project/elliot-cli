@@ -260,8 +260,6 @@ class _Task:
     revisions: list[str] = field(default_factory=lambda: ["main"])
     hf_models: list[str] | None = None
     hf_dataset_files: list[dict] | None = None
-    # The list of marked documents the task runs without (decontaminated.py).
-    decontaminated: str | None = None
 
 
 @dataclass
@@ -272,11 +270,9 @@ class TaskGroup:
     description: str
     n_shots: list[int] | None = None
     dataset: str | None = None
-    decontaminated: str | None = None
 
     def __post_init__(self):
         for task in self.tasks:
-            task.decontaminated = self.decontaminated
             if task.n_shots is None and self.n_shots is not None:
                 task.n_shots = self.n_shots
             elif task.n_shots is None and self.n_shots is None:
@@ -315,7 +311,6 @@ class TaskGroup:
             description=data["description"],
             n_shots=data.get("n_shots"),
             dataset=data.get("dataset"),
-            decontaminated=data.get("decontaminated"),
         )
 
 
@@ -471,8 +466,7 @@ def _parse_task_groups(
     if "all" not in task_groups and "all" not in super_groups:
         super_groups["all"] = TaskSuperGroup(
             name="all",
-            # A decontaminated group reruns tasks other groups hold.
-            task_groups=[g for g in task_groups.values() if not g.decontaminated],
+            task_groups=list(task_groups.values()),
             description="Every task group (auto-generated)",
         )
 
@@ -489,7 +483,6 @@ class TaskGroupResult:
     task: str
     n_shot: int
     suite: str
-    decontaminated: str | None = None
 
 
 def _iter_group_tasks(
@@ -626,7 +619,7 @@ def _select_tasks(group_names: Iterable[str]) -> list[tuple[str, _Task]]:
         raise ValueError(f"Unknown task group(s): {', '.join(sorted(missing))}")
 
     selected: list[tuple[str, _Task]] = []
-    seen: dict[tuple[str, str, str | None], int] = {}
+    seen: dict[tuple[str, str], int] = {}
     for name, filt in specs:
         group_pairs = list(_iter_group_tasks({name: parsed[name]}))
         if filt is None:
@@ -651,8 +644,7 @@ def _select_tasks(group_names: Iterable[str]) -> list[tuple[str, _Task]]:
         # spans groups whose benchmarks overlap), so they are scheduled once,
         # with every group's shots.
         for suite, t in kept:
-            # A decontaminated run is a separate evaluation.
-            key = (suite, t.name, t.decontaminated)
+            key = (suite, t.name)
             if key not in seen:
                 seen[key] = len(selected)
                 selected.append((suite, t))
@@ -671,11 +663,7 @@ def _expand_task_groups(group_names: Iterable[str]) -> list[TaskGroupResult]:
     results: list[TaskGroupResult] = []
     for suite, t in _select_tasks(group_names):
         for shot in (int(s) for s in (t.n_shots or [])):
-            results.append(
-                TaskGroupResult(
-                    task=t.name, n_shot=shot, suite=suite, decontaminated=t.decontaminated
-                )
-            )
+            results.append(TaskGroupResult(task=t.name, n_shot=shot, suite=suite))
     return results
 
 

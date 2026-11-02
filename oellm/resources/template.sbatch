@@ -109,20 +109,19 @@ fi
 # loads with one. TASKS_PER_JOB caps how many tasks share a call: lm_eval aborts
 # the whole invocation if one task raises, so the cap bounds what a single
 # failure takes down. Suites other than lm_eval pass through one row at a time.
-# The output is tab-separated because a joined task list contains commas. The
-# optional fifth column names a decontaminated list; such rows get their own calls.
+# The output is tab-separated because a joined task list contains commas.
 BATCH_ROWS_AWK='
-    function flush() {{ if (tasks != "") print model, tasks, shots, suite, decon }}
+    function flush() {{ if (tasks != "") print model, tasks, shots, suite }}
     {{
         gsub(/\r/, "")
         if ($1 == "") next
         row_suite = ($4 == "" ? "lm_eval" : $4)
         lowered = tolower(row_suite)
         batchable = (lowered == "lm_eval" || lowered == "lm-eval" || lowered == "lm-eval-harness")
-        row_key = batchable ? ($1 SUBSEP $3 SUBSEP $5) : ("unbatched" SUBSEP NR)
+        row_key = batchable ? ($1 SUBSEP $3) : ("unbatched" SUBSEP NR)
         if (row_key != key || count >= max_tasks) {{
             flush()
-            key = row_key; model = $1; shots = $3; suite = row_suite; decon = $5; tasks = $2; count = 1
+            key = row_key; model = $1; shots = $3; suite = row_suite; tasks = $2; count = 1
         }} else {{
             tasks = tasks "," $2; count++
         }}
@@ -133,7 +132,7 @@ BATCH_ROWS_AWK='
 # Process substitution (not a pipe) keeps the loop in the current shell so
 # FAILED_ROWS survives past `done` and the job can exit non-zero on failures.
 FAILED_ROWS=0
-while IFS=$'\t' read -r model_path task_path n_shot eval_suite decontaminated
+while IFS=$'\t' read -r model_path task_path n_shot eval_suite
 do
     rc=0
     # Strip CR (Windows line endings) from every field.
@@ -142,7 +141,6 @@ do
     n_shot=${{n_shot%$'\r'}}
     eval_suite=${{eval_suite:-lm_eval}}
     eval_suite=${{eval_suite%$'\r'}}
-    decontaminated=${{decontaminated%$'\r'}}
 
     # Skip empty lines
     if [ -z "$model_path" ]; then
@@ -158,9 +156,6 @@ do
     echo "  Task: $task_path"
     echo "  N-shot: $n_shot"
     echo "  Suite: $eval_suite"
-    if [ -n "$decontaminated" ]; then
-        echo "  Leaving out the documents marked in: $decontaminated"
-    fi
     echo "----------------------------------------------------"
 
     # Build bind paths: always mount the shared eval directory, and additionally
@@ -250,35 +245,17 @@ do
             RUN_ID=$(openssl rand -hex 5)
             EVAL_OUT_DIR="{evals_dir}"
             EVAL_OUT_PAT="$RUN_ID*.json"
-            # lm-eval does not record --samples, so the file name tells collect
-            # which documents the run left out.
-            RUN_NAME="$RUN_ID${{decontaminated:+--decontaminated--$decontaminated}}"
-            # lm-eval's request cache ignores --samples.
-            CACHE_ARGS="${{CACHE_REQUESTS:+--cache_requests $CACHE_REQUESTS}}"
-            if [ -n "$decontaminated" ]; then
-                # For the few-shot examples of oellm's MMMLU high_school_mathematics
-                # tasks; SINGULARITYENV_ for a container with a clean env.
-                export OELLM_DECONTAMINATED_SAMPLES="{samples_dir}/samples-$decontaminated.json"
-                export SINGULARITYENV_OELLM_DECONTAMINATED_SAMPLES="$$OELLM_DECONTAMINATED_SAMPLES"
-                if [ -n "$$CACHE_ARGS" ]; then
-                    echo "Not caching requests: the run leaves out documents ($decontaminated)"
-                    CACHE_ARGS=""
-                fi
-            else
-                unset OELLM_DECONTAMINATED_SAMPLES SINGULARITYENV_OELLM_DECONTAMINATED_SAMPLES
-            fi
             run_python -m lm_eval --model hf \
                 --model_args {lm_eval_model_args} \
                 --tasks "$task_path" \
                 --num_fewshot "$n_shot" \
-                --output_path "$EVAL_OUT_DIR/$RUN_NAME.json" \
+                --output_path "$EVAL_OUT_DIR/$RUN_ID.json" \
                 ${{LM_EVAL_TRC:+--trust_remote_code}} \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $$LM_EVAL_INCLUDE_PATH}} \
                 --batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}" \
                 --write_out \
-                $$CACHE_ARGS \
+                ${{CACHE_REQUESTS:+--cache_requests $CACHE_REQUESTS}} \
                 ${{LIMIT:+--limit $LIMIT}} \
-                ${{decontaminated:+--samples "{samples_dir}/samples-$decontaminated.json"}} \
                 ${{LOG_SAMPLES:+--log_samples}}
             rc=$?
             echo "----------------------------------------------------"
