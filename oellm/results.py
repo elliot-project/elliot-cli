@@ -1045,6 +1045,7 @@ def write_results_markdown(
     ]
     has_raw_fallback = False
     has_lower_is_better = False
+    has_bits_per_byte = False
     has_limited = False
     for row in rows:
         model = row.get("model_name", "")
@@ -1063,6 +1064,8 @@ def write_results_markdown(
             has_limited = True
         if any(k in metric.lower() for k in ("wer", "mer", "cer")):
             has_lower_is_better = True
+        if metric.split(",")[0] == "bits_per_byte":
+            has_bits_per_byte = True
         lines.append(f"| {model} | {task} | {n_shot} | {metric} | {perf_cell} |")
 
     # Only emit footnotes that apply to this report.
@@ -1073,6 +1076,8 @@ def write_results_markdown(
         footnotes.append("> `†` = test run with --limit, not a full evaluation.")
     if has_lower_is_better:
         footnotes.append("> WER/MER/CER are lower-is-better.")
+    if has_bits_per_byte:
+        footnotes.append("> bits_per_byte is lower-is-better.")
     if footnotes:
         lines.append("")
         lines.extend(footnotes)
