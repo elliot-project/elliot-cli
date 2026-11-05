@@ -103,3 +103,53 @@ class DefaultHFAdapter(BaseModelAdapter):
 
     def to_evalchemy_args(self) -> str:
         return f"trust_remote_code={self._trust},pretrained={self._path}{self._extra}"
+
+
+class VLLMAdapter(BaseModelAdapter):
+    """vLLM backend adapter for lmms-eval (``--model vllm``).
+
+    Builds a self-contained ``--model_args`` string — unlike
+    :class:`DefaultHFAdapter`, it never references template.sbatch's
+    ``$_lmms_extra_args`` (which defaults to ``device_map=auto``, not a vLLM
+    argument). lm-eval/evalchemy args are unused for this engine; the
+    vLLM-only suite never routes there.
+    """
+
+    def __init__(
+        self,
+        model_path: str | Path = "$model_path",
+        *,
+        tensor_parallel_size: int = 1,
+        gpu_memory_utilization: float = 0.9,
+        max_num_seqs: int = 512,
+        max_model_len: int | None = None,
+        chat_template: str | None = None,
+        extra_args: str = "",
+    ) -> None:
+        self._path = model_path
+        self._tp = tensor_parallel_size
+        self._gmu = gpu_memory_utilization
+        self._mns = max_num_seqs
+        self._mml = max_model_len
+        self._chat_template = chat_template
+        self._extra = extra_args
+
+    @property
+    def model_path(self) -> str | Path:
+        return self._path
+
+    def to_lm_eval_args(self) -> str:
+        raise NotImplementedError("VLLMAdapter only supports the lmms_eval engine")
+
+    def to_lmms_eval_args(self) -> str:
+        args = (
+            f"model={self._path},"
+            f"tensor_parallel_size={self._tp},"
+            f"gpu_memory_utilization={self._gmu},"
+            f"max_num_seqs={self._mns}"
+        )
+        if self._mml is not None:
+            args += f",max_model_len={self._mml}"
+        if self._chat_template:
+            args += f",chat_template={self._chat_template}"
+        return args + self._extra
