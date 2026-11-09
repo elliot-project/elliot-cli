@@ -48,6 +48,10 @@ export HF_DATASETS_OFFLINE={hf_hub_offline}
 # See lmms_eval/api/task.py::_resolve_hf_datasets_cache_dir.
 export LMMS_EVAL_DATASETS_CACHE="$HF_DATASETS_CACHE"
 
+# lm-eval's code tasks (mbpp, humaneval) run the generated code, which needs
+# --confirm_run_unsafe_code and, for HF's code_eval metric, this variable.
+export HF_ALLOW_CODE_EVAL=1
+
 # Neither harness caches under HF_HOME on its own. lighteval hardcodes
 # ~/.cache/huggingface/lighteval and never reads HF_HOME, which fills the user's
 # home directory and fails mid-run on clusters with a small home quota
@@ -181,7 +185,7 @@ do
         JOB_HOME="$EVAL_BASE_DIR/$USER/container_home/$SLURM_JOB_ID"
         mkdir -p "$JOB_HOME"
         SINGULARITY_HOME_ARG="--home $JOB_HOME"
-        SINGULARITY_ENV_ARGS="--env HF_HOME=$HF_HOME --env HF_DATASETS_CACHE=$HF_DATASETS_CACHE --env HF_HUB_OFFLINE=$HF_HUB_OFFLINE --env HF_DATASETS_OFFLINE=$HF_DATASETS_OFFLINE --env TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE --env NLTK_DATA=$NLTK_DATA --env LMMS_EVAL_DATASETS_CACHE=$LMMS_EVAL_DATASETS_CACHE --env LM_HARNESS_CACHE_PATH=$LM_HARNESS_CACHE_PATH"
+        SINGULARITY_ENV_ARGS="--env HF_HOME=$HF_HOME --env HF_DATASETS_CACHE=$HF_DATASETS_CACHE --env HF_HUB_OFFLINE=$HF_HUB_OFFLINE --env HF_DATASETS_OFFLINE=$HF_DATASETS_OFFLINE --env TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE --env NLTK_DATA=$NLTK_DATA --env LMMS_EVAL_DATASETS_CACHE=$LMMS_EVAL_DATASETS_CACHE --env LM_HARNESS_CACHE_PATH=$LM_HARNESS_CACHE_PATH --env HF_ALLOW_CODE_EVAL=1"
     fi
 
     GPU_DEVICES=$(seq -s, 0 $(($GPUS_PER_NODE - 1)))
@@ -251,6 +255,7 @@ do
                 --num_fewshot "$n_shot" \
                 --output_path "$EVAL_OUT_DIR/$RUN_ID.json" \
                 ${{LM_EVAL_TRC:+--trust_remote_code}} \
+                --confirm_run_unsafe_code \
                 ${{LM_EVAL_INCLUDE_PATH:+--include_path $$LM_EVAL_INCLUDE_PATH}} \
                 --batch_size "${{LM_EVAL_BATCH_SIZE:-auto}}" \
                 --write_out \
