@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from oellm.core.base_model_adapter import DefaultHFAdapter
+from oellm.core.base_model_adapter import DefaultHFAdapter, VLLMAdapter
 from oellm.main import schedule_evals
 
 
@@ -16,6 +16,17 @@ def test_lmms_args_leave_device_to_the_job_script():
     assert args.startswith("pretrained=$model_path")
     assert "device_map" not in args
     assert "$_lmms_extra_args" in args
+
+    vllm_args = VLLMAdapter(
+        gpu_memory_utilization=0.93, max_num_seqs=96, max_model_len=65536
+    ).to_lmms_eval_args()
+    assert vllm_args.startswith("model=$model_path")
+    assert "device_map" not in vllm_args
+    assert "$_lmms_extra_args" not in vllm_args
+    assert "tensor_parallel_size=1" in vllm_args
+    assert "gpu_memory_utilization=0.93" in vllm_args
+    assert "max_num_seqs=96" in vllm_args
+    assert "max_model_len=65536" in vllm_args
 
 
 def _render(tmp_path: Path) -> Path:

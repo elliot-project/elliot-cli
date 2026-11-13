@@ -17,6 +17,11 @@ class EvaluationJob:
 # Order matters: more specific patterns must come before general ones.
 # Adapter names must exist in the target venv's lmms-eval; pre-flight checks that.
 LMMS_MODEL_ADAPTERS: list[tuple[list[str], str]] = [
+    ## CVC - UC 6.1 checkpoints
+    (
+        ["qwen3_5", "qwen3.5", "35b-a3b", "2b_instruct", "cvc-", "moe_instruct"],
+        "vllm",
+    ),
     # ── Audio / speech models (must come before generic "qwen" catch-all) ──
     (["qwen2-audio", "qwen2_audio"], "qwen2_audio"),
     (["qwen2.5-omni", "qwen2_5_omni"], "qwen2_5_omni"),

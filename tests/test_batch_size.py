@@ -44,8 +44,8 @@ class TestBatchSizeReachesTheScript:
         sbatch = _schedule(
             tmp_path, monkeypatch, models="org/m", tasks="hellaswag", n_shot=0
         )
-        # lm_eval and evalchemy both defer to it, and the literal is gone
-        assert sbatch.count('--batch_size "${LM_EVAL_BATCH_SIZE:-auto}"') == 2
+        # new arg for VLLM backend
+        assert sbatch.count('--batch_size "${LM_EVAL_BATCH_SIZE:-auto}"') == 3
         assert "--batch_size auto" not in sbatch
 
     def test_cluster_run_keeps_auto(self, tmp_path, monkeypatch):
